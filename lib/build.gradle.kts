@@ -10,6 +10,9 @@ repositories {
 
 dependencies {
     api("org.slf4j:slf4j-api:2.+")
+    api("jakarta.annotation:jakarta.annotation-api:3.0.0")
+    api("net.jcip:jcip-annotations:1.0")
+    implementation("org.apache.cassandra:cassandra-all:5.0.7")
     implementation("org.apache.cassandra:java-driver-core:4.19.2")
     implementation("org.apache.cassandra:java-driver-query-builder:4.19.2")
     implementation("com.google.guava:guava:33.5.0-jre")
