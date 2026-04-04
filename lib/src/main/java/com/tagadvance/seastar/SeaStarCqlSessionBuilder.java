@@ -19,9 +19,14 @@ import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import javax.net.ssl.SSLContext;
+import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
-public final class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
+/**
+ * {@link SeaStarCqlSessionBuilder} is analogous to {@link CqlSessionBuilder}.
+ */
+@NotThreadSafe
+public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 
 	// TODO: populate metadata with ClassPathSchema, File Schema, ResourceSchema, CQL schema
 
