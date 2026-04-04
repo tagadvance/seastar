@@ -12,7 +12,6 @@ import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.token.Token;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
-import com.datastax.oss.driver.internal.core.data.ValuesHelper;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
