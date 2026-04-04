@@ -4,6 +4,7 @@ import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
+import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
@@ -11,6 +12,7 @@ import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.tagadvance.tools.Locks;
 import com.tagadvance.tools.Locks.SeaStarReadWriteLock;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -19,8 +21,10 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
@@ -35,6 +39,7 @@ public class VolatileTable implements SeaStarTable {
 	private final CqlIdentifier keyspace;
 	private final CqlIdentifier name;
 	private final List<VolatileColumn> columns;
+	private final List<Row> rows;
 	private final AtomicBoolean isDetached;
 
 	public VolatileTable(final SeaStarDriverContext context, final CqlIdentifier keyspace,
@@ -43,12 +48,33 @@ public class VolatileTable implements SeaStarTable {
 		this.keyspace = requireNonNull(keyspace, "keyspace must not be null");
 		this.name = requireNonNull(name, "name must not be null");
 		this.columns = List.copyOf(requireNonNull(columns, "columns must not be null"));
+		this.rows = new ArrayList<>();
 		this.isDetached = new AtomicBoolean(isDetached);
 	}
 
 	@Override
 	public SeaStarDriverContext context() {
 		return context;
+	}
+
+	@Override
+	public void truncate() {
+		rows.clear();
+	}
+
+	@Override
+	public void addRow(final Row row) {
+		rows.add(row);
+	}
+
+	@Override
+	public void removeRowIf(final Predicate<Row> predicate) {
+		rows.removeIf(predicate);
+	}
+
+	@Override
+	public Stream<Row> rows() {
+		return rows.stream();
 	}
 
 	@Override

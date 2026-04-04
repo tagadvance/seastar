@@ -1,5 +1,6 @@
 package com.tagadvance.seastar;
 
+import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.addresstranslation.AddressTranslator;
 import com.datastax.oss.driver.api.core.auth.AuthProvider;
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
@@ -144,6 +145,12 @@ public class SeaStarDriverContext extends DefaultDriverContext {
 	@NonNull
 	public NodeStateListener getNodeStateListener() {
 		return new NoopNodeStateListener(this);
+	}
+
+	@Override
+	@NonNull
+	public ProtocolVersion getProtocolVersion() {
+		return ProtocolVersion.DEFAULT;
 	}
 
 }

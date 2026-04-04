@@ -4,25 +4,23 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
-import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.tracker.RequestIdGenerator;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
-import com.datastax.oss.driver.internal.core.cql.DefaultRow;
 import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
-import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.stream.Collectors;
 import net.jcip.annotations.ThreadSafe;
+import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.exceptions.AlreadyExistsException;
@@ -70,95 +68,74 @@ public class SeaStarCqlRequestHandler {
 	}
 
 	public CompletionStage<AsyncResultSet> handle() {
-		Queue<List<ByteBuffer>> data = new LinkedList<>();
-
-		final var asyncResultSet = new AsyncResultSet() {
-			@Override
-			@NonNull
-			public ColumnDefinitions getColumnDefinitions() {
-				return EmptyColumnDefinitions.INSTANCE; // FIXME: default
-			}
-
-			@Override
-			@NonNull
-			public ExecutionInfo getExecutionInfo() {
-				return new SeaStarExecutionInfo(initialStatement, errors, session, context);
-			}
-
-			@Override
-			public int remaining() {
-				return data.size();
-			}
-
-			@Override
-			@NonNull
-			public Iterable<Row> currentPage() {
-				return data.stream()
-					.map(rowData -> new DefaultRow(getColumnDefinitions(), rowData, context))
-					.map(Row.class::cast)
-					.toList();
-			}
-
-			@Override
-			public boolean hasMorePages() {
-				// SeaStar always returns all data on the first page to keep things simple
-				return false;
-			}
-
-			@Override
-			@NonNull
-			public CompletionStage<AsyncResultSet> fetchNextPage()
-				throws IllegalStateException {
-				return CompletableFuture.failedFuture(
-					new IllegalStateException("No more pages"));
-			}
-
-			@Override
-			public boolean wasApplied() {
-				return true; // TODO: detect errors
-			}
-		};
-
-		// TODO: simple statement
 		// TODO: batch statement
+
+		final String query;
+		final Object[] values;
 		if (initialStatement instanceof SimpleStatement simpleStatement) {
-			final var query = simpleStatement.getQuery();
-			final var raw = QueryProcessor.parseStatement(query);
-			if (raw instanceof CreateKeyspaceStatement.Raw statement) {
-				final var name = CqlIdentifier.fromInternal(statement.keyspaceName);
-				final var ifNotExists = getDeclaredField(statement, "ifNotExists",
-					Boolean.class).orElse(false);
-				context.node.getSeaStarKeyspace(name).ifPresentOrElse(existing -> {
-					if (ifNotExists) {
-						LOG.debug("Keyspace {} already exists, skipping creation", name);
-					} else {
-						throw new AlreadyExistsException(
-							"Keyspace %s already exists".formatted(name));
-					}
-				}, () -> context.node.newSeaStarKeyspace(name));
-
-				return CompletableFuture.completedStage(asyncResultSet);
-			}
-		}
-		if (initialStatement instanceof SeaStarBoundStatement boundStatement) {
+			query = simpleStatement.getQuery();
+			values = new Object[]{};
+		} else if (initialStatement instanceof SeaStarBoundStatement boundStatement) {
 			final var preparedStatement = boundStatement.getPreparedStatement();
-			final var query = preparedStatement.getQuery();
-			final var raw = QueryProcessor.parseStatement(query);
-			if (raw instanceof SelectStatement.RawStatement selectStatement) {
-				if (selectStatement.name() != null && selectStatement.selectClause.isEmpty()
-					&& selectStatement.whereClause.equals(WhereClause.empty())) {
-					final var isDistinct = selectStatement.parameters.isDistinct;
-					// TODO: processs simple select
-					System.gc();
-				}
-			}
-
-			return CompletableFuture.completedStage(asyncResultSet);
+			query = preparedStatement.getQuery();
+			values = boundStatement.getValues().toArray();
+		} else {
+			throw new UnsupportedOperationException(
+				"Statement of type %s is not currently supported".formatted(
+					initialStatement.getClass().getSimpleName()));
 		}
 
-		throw new UnsupportedOperationException(
+		final CQLStatement.Raw raw;
+		try {
+			raw = QueryProcessor.parseStatement(query);
+		} catch (final Exception e) {
+			return CompletableFuture.failedStage(e);
+		}
+
+		if (raw instanceof CreateKeyspaceStatement.Raw statement) {
+			final var name = CqlIdentifier.fromInternal(statement.keyspaceName);
+			final var ifNotExists = getDeclaredField(statement, "ifNotExists",
+				Boolean.class).orElse(false);
+			final var optionalKeyspace = context.node.getSeaStarKeyspace(name);
+			if (optionalKeyspace.isPresent()) {
+				if (ifNotExists) {
+					LOG.debug("Keyspace {} already exists, skipping creation", name);
+				} else {
+					return CompletableFuture.failedStage(
+						new AlreadyExistsException("Keyspace %s already exists".formatted(name)));
+				}
+			} else {
+				context.node.newSeaStarKeyspace(name);
+			}
+
+			return CompletableFuture.completedStage(newAsyncResultSet(true));
+		}
+
+		if (raw instanceof SelectStatement.RawStatement selectStatement) {
+			final var isDistinct = selectStatement.parameters.isDistinct;
+
+			return context.node.getSeaStarKeyspace(
+					CqlIdentifier.fromInternal(selectStatement.keyspace()))
+				.flatMap(keyspace -> keyspace.getSeaStarTable(
+					CqlIdentifier.fromInternal(selectStatement.name())))
+				.map(table -> {
+					if (isDistinct) {
+						LOG.warn("DISTINCT is not supported, ignoring");
+					}
+
+					// ignore select clause because we always return everything
+					// TODO: where clause filtering
+					var rows = table.rows().collect(Collectors.toCollection(LinkedList::new));
+
+					return CompletableFuture.completedStage(newAsyncResultSet(true, table, rows));
+				})
+				.orElseGet(
+					() -> CompletableFuture.failedStage(new UnsupportedOperationException()));
+		}
+
+		return CompletableFuture.failedStage(new UnsupportedOperationException(
 			"Statement of type %s is not currently supported".formatted(
-				initialStatement.getClass().getSimpleName()));
+				initialStatement.getClass().getSimpleName())));
 	}
 
 //	private void logServerWarnings(Statement<?> statement, DriverExecutionProfile executionProfile,
@@ -202,6 +179,56 @@ public class SeaStarCqlRequestHandler {
 //			}
 //		}
 //	}
+
+	private AsyncResultSet newAsyncResultSet(final boolean wasApplied) {
+		return newAsyncResultSet(wasApplied, EmptyColumnDefinitions.INSTANCE, new LinkedList<>());
+	}
+
+	private AsyncResultSet newAsyncResultSet(final boolean wasApplied,
+		final @NonNull ColumnDefinitions columnDefinitions, final @NonNull Queue<Row> data) {
+		return new AsyncResultSet() {
+
+			@Override
+			@NonNull
+			public ColumnDefinitions getColumnDefinitions() {
+				return columnDefinitions;
+			}
+
+			@Override
+			@NonNull
+			public ExecutionInfo getExecutionInfo() {
+				return new SeaStarExecutionInfo(initialStatement, errors, session, context);
+			}
+
+			@Override
+			public int remaining() {
+				return data.size();
+			}
+
+			@Override
+			@NonNull
+			public Iterable<Row> currentPage() {
+				return data;
+			}
+
+			@Override
+			public boolean hasMorePages() {
+				// SeaStar always returns all data on the first page to keep things simple
+				return false;
+			}
+
+			@Override
+			@NonNull
+			public CompletionStage<AsyncResultSet> fetchNextPage() throws IllegalStateException {
+				return CompletableFuture.failedFuture(new IllegalStateException("No more pages"));
+			}
+
+			@Override
+			public boolean wasApplied() {
+				return wasApplied;
+			}
+		};
+	}
 
 	@SuppressWarnings("unchecked")
 	private static <V> Optional<V> getDeclaredField(final Object o, final String name,
