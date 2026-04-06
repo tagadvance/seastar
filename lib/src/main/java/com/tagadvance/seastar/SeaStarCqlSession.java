@@ -27,7 +27,14 @@ public class SeaStarCqlSession implements CqlSession {
 		final @Nullable CqlIdentifier keyspace) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace.set(keyspace);
-		this.registry = context.getSeaStarRequestProcessorRegistry();
+		this.registry = buildSeaStarRequestProcessorRegistry();
+	}
+
+	private SeaStarRequestProcessorRegistry buildSeaStarRequestProcessorRegistry() {
+		final var processors = SeaStarBuiltInRequestProcessors.createDefaultProcessors(context)
+			.toArray(SeaStarRequestProcessor[]::new);
+
+		return new SeaStarRequestProcessorRegistry(getName(), processors);
 	}
 
 	@Override
@@ -39,7 +46,7 @@ public class SeaStarCqlSession implements CqlSession {
 	@Override
 	@NonNull
 	public Metadata getMetadata() {
-		return context.node;
+		return context;
 	}
 
 	@Override
@@ -50,14 +57,14 @@ public class SeaStarCqlSession implements CqlSession {
 	@Override
 	@NonNull
 	public CompletionStage<Metadata> setSchemaMetadataEnabled(final Boolean newValue) {
-		return CompletableFuture.completedFuture(context.node);
+		return CompletableFuture.completedFuture(context);
 	}
 
 	@Override
 	@NonNull
 	public CompletionStage<Metadata> refreshSchemaAsync() {
 		// TODO: perform refresh
-		return CompletableFuture.completedFuture(context.node);
+		return CompletableFuture.completedFuture(context);
 	}
 
 	@Override

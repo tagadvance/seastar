@@ -25,7 +25,7 @@ public class SeaStarCqlRequestAsyncProcessor implements
 	public CompletionStage<AsyncResultSet> process(final Statement<?> request,
 		final SeaStarCqlSession session, final SeaStarDriverContext context,
 		final String sessionLogPrefix) {
-		return new SeaStarCqlRequestHandler(request, session, context, sessionLogPrefix).handle();
+		return new SeaStarCqlRequestHandler(request, session, context).handle();
 	}
 
 	@Override

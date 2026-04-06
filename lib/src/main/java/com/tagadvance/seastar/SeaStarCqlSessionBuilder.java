@@ -182,7 +182,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	@Override
 	protected SeaStarDriverContext buildContext(final DriverConfigLoader configLoader,
 		final ProgrammaticArguments programmaticArguments) {
-		return new SeaStarDriverContext(configLoader, programmaticArguments);
+		return new VolatileDriverContext(configLoader, programmaticArguments);
 	}
 
 }

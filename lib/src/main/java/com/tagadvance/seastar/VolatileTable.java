@@ -4,14 +4,11 @@ import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
-import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
-import com.datastax.oss.driver.api.core.type.DataType;
-import com.tagadvance.tools.Locks;
-import com.tagadvance.tools.Locks.SeaStarReadWriteLock;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -19,37 +16,44 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
 @ThreadSafe
 public class VolatileTable implements SeaStarTable {
 
-	private final SeaStarReadWriteLock lock = Locks.newLock();
+	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 	private final UUID uuid = UUID.randomUUID();
 
 	private final SeaStarDriverContext context;
-	private final CqlIdentifier keyspace;
+	private final SeaStarKeyspace keyspace;
 	private final CqlIdentifier name;
-	private final List<VolatileColumn> columns;
-	private final List<Row> rows;
-	private final AtomicBoolean isDetached;
+	private final List<SeaStarColumn> columns;
+	private final List<SeaStarRow> rows;
+	private AttachmentPoint attachmentPoint;
 
-	public VolatileTable(final SeaStarDriverContext context, final CqlIdentifier keyspace,
-		final CqlIdentifier name, final List<VolatileColumn> columns, final boolean isDetached) {
+	public VolatileTable(final SeaStarDriverContext context, final SeaStarKeyspace keyspace,
+		final CqlIdentifier name) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace = requireNonNull(keyspace, "keyspace must not be null");
 		this.name = requireNonNull(name, "name must not be null");
-		this.columns = List.copyOf(requireNonNull(columns, "columns must not be null"));
+		this.columns = new ArrayList<>();
 		this.rows = new ArrayList<>();
-		this.isDetached = new AtomicBoolean(isDetached);
+		this.attachmentPoint = context;
+	}
+
+	@Override
+	public ReadWriteLock lock() {
+		return lock;
 	}
 
 	@Override
@@ -58,22 +62,37 @@ public class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
-	public void truncate() {
-		rows.clear();
+	public SeaStarKeyspace keyspace() {
+		return keyspace;
 	}
 
 	@Override
-	public void addRow(final Row row) {
-		rows.add(row);
+	public void addColumn(final SeaStarColumn column) {
+		requireNonNull(column, "column must not be null");
+
+		writeLock(() -> {
+			columns.add(column);
+		});
 	}
 
 	@Override
-	public void removeRowIf(final Predicate<Row> predicate) {
-		rows.removeIf(predicate);
+	public void addRow(final SeaStarRow row) {
+		requireNonNull(row, "row must not be null");
+
+		writeLock(() -> {
+			rows.add(row);
+		});
 	}
 
 	@Override
-	public Stream<Row> rows() {
+	public void removeRowIf(final Predicate<SeaStarRow> predicate) {
+		writeLock(() -> {
+			rows.removeIf(predicate);
+		});
+	}
+
+	@Override
+	public Stream<SeaStarRow> rows() {
 		return rows.stream();
 	}
 
@@ -97,7 +116,7 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	@NonNull
 	public CqlIdentifier getKeyspace() {
-		return keyspace;
+		return keyspace.name();
 	}
 
 	@Override
@@ -128,7 +147,7 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, ColumnMetadata> getColumns() {
-		return lock.readLockUnchecked(() -> columns.stream()
+		return readLockUnchecked(() -> columns.stream()
 			.collect(Collectors.toUnmodifiableMap(ColumnMetadata::getName, Function.identity())));
 	}
 
@@ -140,13 +159,13 @@ public class VolatileTable implements SeaStarTable {
 
 	@Override
 	public int size() {
-		return lock.readLockUnchecked(columns::size);
+		return readLockUnchecked(columns::size);
 	}
 
 	@Override
 	@NonNull
 	public ColumnDefinition get(final int i) {
-		return lock.readLockUnchecked(() -> columns.get(i));
+		return readLockUnchecked(() -> columns.get(i));
 	}
 
 	@Override
@@ -156,7 +175,7 @@ public class VolatileTable implements SeaStarTable {
 
 	@Override
 	public boolean contains(final @NonNull CqlIdentifier id) {
-		return lock.readLockUnchecked(
+		return readLockUnchecked(
 			() -> columns.stream().map(ColumnMetadata::getName).anyMatch(id::equals));
 	}
 
@@ -167,27 +186,35 @@ public class VolatileTable implements SeaStarTable {
 
 	@Override
 	public int firstIndexOf(final @NonNull CqlIdentifier id) {
-		return lock.readLockUnchecked(() -> IntStream.range(0, columns.size())
+		return readLockUnchecked(() -> IntStream.range(0, columns.size())
 			.filter(index -> columns.get(index).getName().equals(id))
 			.findFirst()
 			.orElse(-1));
 	}
 
 	@Override
-	public void detach() {
-		this.isDetached.set(true);
+	public void drop() {
+		attach(AttachmentPoint.NONE);
+	}
+
+	@Override
+	public void truncate() {
+		writeLock(rows::clear);
 	}
 
 	@Override
 	public boolean isDetached() {
-		return isDetached.get();
+		return readLockUnchecked(() -> attachmentPoint == AttachmentPoint.NONE);
 	}
 
 	@Override
 	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
-		throw new UnsupportedOperationException();
+		writeLock(() -> {
+			this.attachmentPoint = requireNonNull(attachmentPoint,
+				"attachmentPoint must not be null");
+			columns.forEach(column -> column.attach(attachmentPoint));
+		});
 	}
-
 
 	/**
 	 * Create an {@link Iterator iterator} of a copy of the {@link ColumnDefinition} to avoid
@@ -198,67 +225,84 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	@NonNull
 	public Iterator<ColumnDefinition> iterator() {
-		return lock.readLockUnchecked(
+		return readLockUnchecked(
 			() -> columns.stream().map(ColumnDefinition.class::cast).toList().iterator());
 	}
 
-	public record VolatileColumn(@NonNull CqlIdentifier keyspace, @NonNull CqlIdentifier table,
-								 @NonNull CqlIdentifier name, @NonNull DataType type,
-								 boolean isStatic, boolean isDetached) implements ColumnDefinition,
-		ColumnMetadata {
+	@Override
+	public ColumnDefinitions snapshot() {
+		return readLockUnchecked(() -> {
+			final var columnDefinitions = StreamSupport.stream(spliterator(), false).toList();
+			final boolean isDetached = isDetached();
+			final int size = size();
 
-		public VolatileColumn {
-			requireNonNull(keyspace, "keyspace must not be null");
-			requireNonNull(table, "table must not be null");
-			requireNonNull(name, "name must not be null");
-			requireNonNull(type, "type must not be null");
-		}
+			return new ColumnDefinitions() {
 
-		@Override
-		@NonNull
-		public CqlIdentifier getKeyspace() {
-			return keyspace;
-		}
+				@Override
+				@NonNull
+				public Iterator<ColumnDefinition> iterator() {
+					return columnDefinitions.iterator();
+				}
 
-		@Override
-		@NonNull
-		public CqlIdentifier getParent() {
-			return table;
-		}
+				@Override
+				public boolean isDetached() {
+					return isDetached;
+				}
 
-		@Override
-		@NonNull
-		public CqlIdentifier getTable() {
-			return table;
-		}
+				@Override
+				public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+					throw new UnsupportedOperationException();
+				}
 
-		@Override
-		@NonNull
-		public CqlIdentifier getName() {
-			return name;
-		}
+				@Override
+				public int size() {
+					return size;
+				}
 
-		@Override
-		@NonNull
-		public DataType getType() {
-			return type;
-		}
+				@Override
+				@NonNull
+				public ColumnDefinition get(final int i) {
+					return columnDefinitions.get(i);
+				}
 
-		@Override
-		public boolean isStatic() {
-			return isStatic;
-		}
+				@Override
+				public boolean contains(final @NonNull String name) {
+					requireNonNull(name, "name must not be null");
 
-		@Override
-		public boolean isDetached() {
-			return isDetached;
-		}
+					return columnDefinitions.stream()
+						.map(ColumnDefinition::getName)
+						.map(CqlIdentifier::asInternal)
+						.anyMatch(name::equals);
+				}
 
-		@Override
-		public void attach(final @NonNull AttachmentPoint attachmentPoint) {
-			throw new UnsupportedOperationException();
-		}
+				@Override
+				public boolean contains(final @NonNull CqlIdentifier id) {
+					requireNonNull(id, "id must not be null");
 
+					return columnDefinitions.stream()
+						.map(ColumnDefinition::getName)
+						.anyMatch(id::equals);
+				}
+
+				@Override
+				public int firstIndexOf(final @NonNull String name) {
+					requireNonNull(name, "name must not be null");
+
+					return firstIndexOf(CqlIdentifier.fromInternal(name));
+				}
+
+				@Override
+				public int firstIndexOf(final @NonNull CqlIdentifier id) {
+					requireNonNull(id, "id must not be null");
+
+					return IntStream.range(0, columnDefinitions.size())
+						.filter(i -> columnDefinitions.get(i).getName().equals(id))
+						.findFirst()
+						.orElse(-1);
+				}
+
+			};
+		});
 	}
 
 }

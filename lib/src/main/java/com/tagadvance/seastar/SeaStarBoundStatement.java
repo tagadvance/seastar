@@ -26,7 +26,8 @@ public class SeaStarBoundStatement implements BoundStatement {
 	private final Object[] values;
 	private final AtomicLong timestamp = new AtomicLong();
 
-	public SeaStarBoundStatement(final SeaStarDriverContext context, final @NonNull PreparedStatement preparedStatement,
+	public SeaStarBoundStatement(final SeaStarDriverContext context,
+		final @NonNull PreparedStatement preparedStatement,
 		final Object @NonNull ... values) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.preparedStatement = requireNonNull(preparedStatement,

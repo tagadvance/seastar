@@ -3,21 +3,18 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
-import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
-import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
-import com.datastax.oss.driver.api.core.tracker.RequestIdGenerator;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
@@ -36,38 +33,23 @@ public class SeaStarCqlRequestHandler {
 
 	private static final Logger LOG = LoggerFactory.getLogger(SeaStarCqlRequestHandler.class);
 
-	protected final CompletableFuture<AsyncResultSet> result = new CompletableFuture<>();
-
-	private final String handlerLogPrefix;
 	private final Statement<?> initialStatement;
 	private final SeaStarCqlSession session;
-	private final CqlIdentifier keyspace;
 	private final SeaStarDriverContext context;
 	private final RequestTracker requestTracker;
-	private final Optional<RequestIdGenerator> requestIdGenerator;
-	private volatile List<Throwable> errors;
-	private final String sessionName;
-	private final String sessionRequestId;
+	private final List<Throwable> errors;
 
 	protected SeaStarCqlRequestHandler(final Statement<?> statement,
-		final SeaStarCqlSession session, final SeaStarDriverContext context,
-		final String sessionName) {
-		this.requestIdGenerator = context.getRequestIdGenerator();
-		this.sessionName = sessionName;
-		this.sessionRequestId = this.requestIdGenerator.map(RequestIdGenerator::getSessionRequestId)
-			.orElse(Integer.toString(this.hashCode()));
-		this.handlerLogPrefix = "%s|%s".formatted(sessionName, sessionRequestId);
-		LOG.trace("[{}] Creating new handler for request {}", handlerLogPrefix, statement);
-
+		final SeaStarCqlSession session, final SeaStarDriverContext context) {
 		this.initialStatement = statement;
 		this.session = session;
-		this.keyspace = session.getKeyspace().orElse(null);
 		this.context = context;
-
 		this.requestTracker = context.getRequestTracker();
+		this.errors = new LinkedList<>();
 	}
 
 	public CompletionStage<AsyncResultSet> handle() {
+		// TODO: add query processors
 		// TODO: batch statement
 
 		final String query;
@@ -96,7 +78,7 @@ public class SeaStarCqlRequestHandler {
 			final var name = CqlIdentifier.fromInternal(statement.keyspaceName);
 			final var ifNotExists = getDeclaredField(statement, "ifNotExists",
 				Boolean.class).orElse(false);
-			final var optionalKeyspace = context.node.getSeaStarKeyspace(name);
+			final var optionalKeyspace = context.getSeaStarKeyspace(name);
 			if (optionalKeyspace.isPresent()) {
 				if (ifNotExists) {
 					LOG.debug("Keyspace {} already exists, skipping creation", name);
@@ -105,16 +87,16 @@ public class SeaStarCqlRequestHandler {
 						new AlreadyExistsException("Keyspace %s already exists".formatted(name)));
 				}
 			} else {
-				context.node.newSeaStarKeyspace(name);
+				context.newSeaStarKeyspace(name);
 			}
 
-			return CompletableFuture.completedStage(newAsyncResultSet(true));
+			return CompletableFuture.completedStage(newAsyncResultSet());
 		}
 
 		if (raw instanceof SelectStatement.RawStatement selectStatement) {
 			final var isDistinct = selectStatement.parameters.isDistinct;
 
-			return context.node.getSeaStarKeyspace(
+			return context.getSeaStarKeyspace(
 					CqlIdentifier.fromInternal(selectStatement.keyspace()))
 				.flatMap(keyspace -> keyspace.getSeaStarTable(
 					CqlIdentifier.fromInternal(selectStatement.name())))
@@ -125,9 +107,10 @@ public class SeaStarCqlRequestHandler {
 
 					// ignore select clause because we always return everything
 					// TODO: where clause filtering
-					var rows = table.rows().collect(Collectors.toCollection(LinkedList::new));
+					// TODO: read lock on table
+					var rows = table.rows();
 
-					return CompletableFuture.completedStage(newAsyncResultSet(true, table, rows));
+					return CompletableFuture.completedStage(newAsyncResultSet(table, rows));
 				})
 				.orElseGet(
 					() -> CompletableFuture.failedStage(new UnsupportedOperationException()));
@@ -180,54 +163,18 @@ public class SeaStarCqlRequestHandler {
 //		}
 //	}
 
-	private AsyncResultSet newAsyncResultSet(final boolean wasApplied) {
-		return newAsyncResultSet(wasApplied, EmptyColumnDefinitions.INSTANCE, new LinkedList<>());
+	private AsyncResultSet newAsyncResultSet() {
+		return newAsyncResultSet(EmptyColumnDefinitions.INSTANCE, Stream.empty());
 	}
 
-	private AsyncResultSet newAsyncResultSet(final boolean wasApplied,
-		final @NonNull ColumnDefinitions columnDefinitions, final @NonNull Queue<Row> data) {
-		return new AsyncResultSet() {
+	private AsyncResultSet newAsyncResultSet(final @NonNull ColumnDefinitions columnDefinitions,
+		final @NonNull Stream<SeaStarRow> rows) {
+		final var executionInfo = new SeaStarExecutionInfo(initialStatement, errors, session,
+			context);
+		final var data = rows.map(SeaStarRow::snapshot)
+			.collect(Collectors.toCollection(LinkedList::new));
 
-			@Override
-			@NonNull
-			public ColumnDefinitions getColumnDefinitions() {
-				return columnDefinitions;
-			}
-
-			@Override
-			@NonNull
-			public ExecutionInfo getExecutionInfo() {
-				return new SeaStarExecutionInfo(initialStatement, errors, session, context);
-			}
-
-			@Override
-			public int remaining() {
-				return data.size();
-			}
-
-			@Override
-			@NonNull
-			public Iterable<Row> currentPage() {
-				return data;
-			}
-
-			@Override
-			public boolean hasMorePages() {
-				// SeaStar always returns all data on the first page to keep things simple
-				return false;
-			}
-
-			@Override
-			@NonNull
-			public CompletionStage<AsyncResultSet> fetchNextPage() throws IllegalStateException {
-				return CompletableFuture.failedFuture(new IllegalStateException("No more pages"));
-			}
-
-			@Override
-			public boolean wasApplied() {
-				return wasApplied;
-			}
-		};
+		return new SeaStarAsyncResultSet(columnDefinitions, executionInfo, data);
 	}
 
 	@SuppressWarnings("unchecked")

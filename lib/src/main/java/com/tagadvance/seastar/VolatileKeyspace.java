@@ -13,12 +13,16 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
 @ThreadSafe
 public class VolatileKeyspace implements SeaStarKeyspace {
+
+	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 	private final SeaStarDriverContext context;
 	private final CqlIdentifier name;
@@ -30,6 +34,11 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 		this.name = requireNonNull(name, "name must not be null");
 		this.userDefinedTypes = new ConcurrentHashMap<>();
 		this.tables = new ConcurrentHashMap<>();
+	}
+
+	@Override
+	public ReadWriteLock lock() {
+		return lock;
 	}
 
 	@Override
@@ -69,8 +78,8 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	@Override
-	public void putSeaStarTable(final CqlIdentifier id, final SeaStarTable Table) {
-		tables.put(id, Table);
+	public void putSeaStarTable(final CqlIdentifier id, final SeaStarTable table) {
+		tables.put(id, table);
 	}
 
 	@Override
