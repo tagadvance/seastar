@@ -1,53 +1,61 @@
 package com.tagadvance.seastar;
 
-import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
+import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
-import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
-import com.datastax.oss.driver.internal.core.cql.DefaultRow;
-import com.datastax.oss.driver.internal.core.data.ValuesHelper;
-import java.nio.ByteBuffer;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.List;
-import java.util.Spliterator;
-import java.util.Spliterators;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
+import org.jspecify.annotations.NonNull;
 
-public interface SeaStarTable extends TableMetadata, ColumnDefinitions {
+public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, ColumnDefinitions {
 
 	SeaStarDriverContext context();
 
-	void truncate();
+	SeaStarKeyspace keyspace();
 
-	default Row addRow(final Object... values) {
-		// TODO: validate values
-		final var spliterator = Spliterators.spliteratorUnknownSize(iterator(),
-			Spliterator.ORDERED);
-		final var types = StreamSupport.stream(spliterator, false)
-			.map(ColumnDefinition::getType)
-			.toList();
-
-		final var byteBuffers = ValuesHelper.encodeValues(values, types,
-			context().getCodecRegistry(), context().getProtocolVersion());
-
-		return addRow(List.of(byteBuffers));
+	default SeaStarColumn addColumn(final @NonNull String name, final @NonNull DataType type) {
+		return addColumn(CqlIdentifier.fromInternal(name), type);
 	}
 
-	default Row addRow(final List<ByteBuffer> byteBuffers) {
-		// TODO: validate byte buffers
-		final var row = new DefaultRow(this, byteBuffers, context());
+	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name,
+		final @NonNull DataType type) {
+		return addColumn(name, type, false);
+	}
+
+	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name, final @NonNull DataType type,
+		final boolean isStatic) {
+		final var column = new VolatileColumn(context(), this, name, type, isStatic);
+		addColumn(column);
+
+		return column;
+	}
+
+	void addColumn(final SeaStarColumn column);
+
+	default SeaStarRow addRow(final Object... values) {
+		return addRow(List.of(values));
+	}
+
+	default SeaStarRow addRow(final List<Object> values) {
+		final var row = new VolatileRow(context(), this, values);
 		addRow(row);
 
 		return row;
 	}
 
-	void addRow(Row row);
+	void addRow(final SeaStarRow row);
 
-	void removeRowIf(Predicate<Row> predicate);
+	void removeRowIf(Predicate<SeaStarRow> predicate);
 
-	Stream<Row> rows();
+	Stream<SeaStarRow> rows();
 
-	void detach();
+	void drop();
+
+	void truncate();
+
+	ColumnDefinitions snapshot();
 
 }

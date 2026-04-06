@@ -12,13 +12,11 @@ import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.datastax.oss.driver.internal.core.cql.CqlPrepareAsyncProcessor;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
 import com.datastax.oss.driver.internal.core.util.concurrent.CompletableFutures;
-import com.datastax.oss.driver.internal.core.util.concurrent.RunOrSchedule;
 import com.datastax.oss.driver.shaded.guava.common.base.Functions;
 import com.datastax.oss.driver.shaded.guava.common.cache.Cache;
 import com.datastax.oss.driver.shaded.guava.common.cache.CacheBuilder;
 import com.datastax.oss.driver.shaded.guava.common.collect.Iterables;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
-import io.netty.util.concurrent.EventExecutor;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -58,10 +56,11 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 		this.cache = decorator.apply(baseCache).build();
 		context.ifPresent((ctx) -> {
 			LOG.info("Adding handler to invalidate cached prepared statements on type changes");
-			EventExecutor adminExecutor = ctx.getNettyOptions().adminEventExecutorGroup().next();
-			ctx.getEventBus()
-				.register(TypeChangeEvent.class,
-					RunOrSchedule.on(adminExecutor, this::onTypeChanged));
+			// TODO
+//			EventExecutor adminExecutor = ctx.getNettyOptions().adminEventExecutorGroup().next();
+//			ctx.getEventBus()
+//				.register(TypeChangeEvent.class,
+//					RunOrSchedule.on(adminExecutor, this::onTypeChanged));
 		});
 	}
 

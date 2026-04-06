@@ -20,7 +20,8 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	private final ByteBuffer id;
 	private final PrepareRequest prepareRequest;
 
-	public SeaStarPreparedStatement(final SeaStarDriverContext context, final SimpleStatement statement) {
+	public SeaStarPreparedStatement(final SeaStarDriverContext context,
+		final SimpleStatement statement) {
 		this(context, new DefaultPrepareRequest(statement));
 	}
 

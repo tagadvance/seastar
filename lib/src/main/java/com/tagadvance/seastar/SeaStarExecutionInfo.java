@@ -53,6 +53,7 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 	@Override
 	@NonNull
 	public List<Entry<Node, Throwable>> getErrors() {
+		// TODO
 		return List.of();
 	}
 
