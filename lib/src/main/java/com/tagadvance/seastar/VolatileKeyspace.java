@@ -78,8 +78,8 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	@Override
-	public void putSeaStarTable(final CqlIdentifier id, final SeaStarTable table) {
-		tables.put(id, table);
+	public void putSeaStarTable(final SeaStarTable table) {
+		tables.put(table.getName(), table);
 	}
 
 	@Override

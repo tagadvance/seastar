@@ -3,11 +3,14 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.context.DriverContext;
 import com.datastax.oss.driver.api.core.metadata.Metadata;
+import com.datastax.oss.driver.api.core.metadata.Node;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.Map;
 import java.util.Optional;
 
 public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContext, Metadata {
+
+	Node getNode();
 
 	default Optional<SeaStarKeyspace> getSeaStarKeyspace(final String name) {
 		return getSeaStarKeyspace(CqlIdentifier.fromInternal(name));

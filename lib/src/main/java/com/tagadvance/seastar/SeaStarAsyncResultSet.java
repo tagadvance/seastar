@@ -74,13 +74,13 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 
 	@Override
 	public boolean wasApplied() {
-		if (iterator.hasNext()) {
-			return true;
-		} else {
+		if (!iterator.hasNext()) {
 			// preserve functionality from DefaultAsyncResultSet
 			throw new IllegalStateException(
 				"This method must be called before consuming all the rows");
 		}
+
+		return true;
 	}
 
 	public static AsyncResultSet empty(final ExecutionInfo executionInfo) {

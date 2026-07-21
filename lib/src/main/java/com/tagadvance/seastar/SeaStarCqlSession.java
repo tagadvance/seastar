@@ -85,6 +85,10 @@ public class SeaStarCqlSession implements CqlSession {
 		return Optional.of(keyspace).map(AtomicReference::get);
 	}
 
+	void setKeyspace(final CqlIdentifier identifier) {
+		keyspace.set(identifier);
+	}
+
 	@Override
 	@NonNull
 	public Optional<Metrics> getMetrics() {

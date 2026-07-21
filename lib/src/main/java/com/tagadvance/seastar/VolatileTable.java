@@ -70,25 +70,19 @@ public class VolatileTable implements SeaStarTable {
 	public void addColumn(final SeaStarColumn column) {
 		requireNonNull(column, "column must not be null");
 
-		writeLock(() -> {
-			columns.add(column);
-		});
+		writeLock(() -> columns.add(column));
 	}
 
 	@Override
 	public void addRow(final SeaStarRow row) {
 		requireNonNull(row, "row must not be null");
 
-		writeLock(() -> {
-			rows.add(row);
-		});
+		writeLock(() -> rows.add(row));
 	}
 
 	@Override
 	public void removeRowIf(final Predicate<SeaStarRow> predicate) {
-		writeLock(() -> {
-			rows.removeIf(predicate);
-		});
+		writeLock(() -> rows.removeIf(predicate));
 	}
 
 	@Override

@@ -1,27 +1,24 @@
 package com.tagadvance.seastar;
 
-import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
-import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
+import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
-import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
+import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
+import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
+import com.tagadvance.seastar.handlers.CreateTableHandler;
+import com.tagadvance.seastar.handlers.CreateTypeHandler;
+import com.tagadvance.seastar.handlers.SelectHandler;
+import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.cql3.statements.SelectStatement;
-import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
-import org.apache.cassandra.exceptions.AlreadyExistsException;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,13 +28,15 @@ import org.slf4j.LoggerFactory;
 @ThreadSafe
 public class SeaStarCqlRequestHandler {
 
-	private static final Logger LOG = LoggerFactory.getLogger(SeaStarCqlRequestHandler.class);
+	private static final Logger logger = LoggerFactory.getLogger(SeaStarCqlRequestHandler.class);
 
 	private final Statement<?> initialStatement;
 	private final SeaStarCqlSession session;
 	private final SeaStarDriverContext context;
 	private final RequestTracker requestTracker;
 	private final List<Throwable> errors;
+
+	private final CqlHandlerRegistry registry;
 
 	protected SeaStarCqlRequestHandler(final Statement<?> statement,
 		final SeaStarCqlSession session, final SeaStarDriverContext context) {
@@ -46,6 +45,12 @@ public class SeaStarCqlRequestHandler {
 		this.context = context;
 		this.requestTracker = context.getRequestTracker();
 		this.errors = new LinkedList<>();
+		// TODO: move this somewhere else, maybe the session or context, and add handlers for other statements
+		this.registry = new CqlHandlerRegistry(context.getSessionName(),
+			new CreateKeyspaceHandler(), new UseKeyspaceHandler(session::setKeyspace),
+			new CreateTypeHandler(session::getKeyspace),
+			new CreateTableHandler(session::getKeyspace),
+			new SelectHandler());
 	}
 
 	public CompletionStage<AsyncResultSet> handle() {
@@ -74,51 +79,10 @@ public class SeaStarCqlRequestHandler {
 			return CompletableFuture.failedStage(e);
 		}
 
-		if (raw instanceof CreateKeyspaceStatement.Raw statement) {
-			final var name = CqlIdentifier.fromInternal(statement.keyspaceName);
-			final var ifNotExists = getDeclaredField(statement, "ifNotExists",
-				Boolean.class).orElse(false);
-			final var optionalKeyspace = context.getSeaStarKeyspace(name);
-			if (optionalKeyspace.isPresent()) {
-				if (ifNotExists) {
-					LOG.debug("Keyspace {} already exists, skipping creation", name);
-				} else {
-					return CompletableFuture.failedStage(
-						new AlreadyExistsException("Keyspace %s already exists".formatted(name)));
-				}
-			} else {
-				context.newSeaStarKeyspace(name);
-			}
+		final var node = context.getNode();
+		final var executionInfo = new SeaStarExecutionInfo(node, initialStatement);
 
-			return CompletableFuture.completedStage(newAsyncResultSet());
-		}
-
-		if (raw instanceof SelectStatement.RawStatement selectStatement) {
-			final var isDistinct = selectStatement.parameters.isDistinct;
-
-			return context.getSeaStarKeyspace(
-					CqlIdentifier.fromInternal(selectStatement.keyspace()))
-				.flatMap(keyspace -> keyspace.getSeaStarTable(
-					CqlIdentifier.fromInternal(selectStatement.name())))
-				.map(table -> {
-					if (isDistinct) {
-						LOG.warn("DISTINCT is not supported, ignoring");
-					}
-
-					// ignore select clause because we always return everything
-					// TODO: where clause filtering
-					// TODO: read lock on table
-					var rows = table.rows();
-
-					return CompletableFuture.completedStage(newAsyncResultSet(table, rows));
-				})
-				.orElseGet(
-					() -> CompletableFuture.failedStage(new UnsupportedOperationException()));
-		}
-
-		return CompletableFuture.failedStage(new UnsupportedOperationException(
-			"Statement of type %s is not currently supported".formatted(
-				initialStatement.getClass().getSimpleName())));
+		return registry.processorFor(raw).processCql(context, executionInfo, raw, values);
 	}
 
 //	private void logServerWarnings(Statement<?> statement, DriverExecutionProfile executionProfile,
@@ -162,36 +126,5 @@ public class SeaStarCqlRequestHandler {
 //			}
 //		}
 //	}
-
-	private AsyncResultSet newAsyncResultSet() {
-		return newAsyncResultSet(EmptyColumnDefinitions.INSTANCE, Stream.empty());
-	}
-
-	private AsyncResultSet newAsyncResultSet(final @NonNull ColumnDefinitions columnDefinitions,
-		final @NonNull Stream<SeaStarRow> rows) {
-		final var executionInfo = new SeaStarExecutionInfo(initialStatement, errors, session,
-			context);
-		final var data = rows.map(SeaStarRow::snapshot)
-			.collect(Collectors.toCollection(LinkedList::new));
-
-		return new SeaStarAsyncResultSet(columnDefinitions, executionInfo, data);
-	}
-
-	@SuppressWarnings("unchecked")
-	private static <V> Optional<V> getDeclaredField(final Object o, final String name,
-		final Class<V> returnType) {
-		try {
-			final var field = o.getClass().getDeclaredField(name);
-			field.setAccessible(true);
-			final var value = field.get(o);
-			if (returnType.isInstance(value)) {
-				return Optional.of((V) value);
-			}
-		} catch (final NoSuchFieldException | IllegalAccessException e) {
-			LOG.error(e.getMessage(), e);
-		}
-
-		return Optional.empty();
-	}
 
 }

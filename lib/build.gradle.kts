@@ -12,9 +12,10 @@ dependencies {
     api("org.slf4j:slf4j-api:2.+")
     api("jakarta.annotation:jakarta.annotation-api:3.0.0")
     api("net.jcip:jcip-annotations:1.0")
-    implementation("org.apache.cassandra:cassandra-all:5.0.7")
-    implementation("org.apache.cassandra:java-driver-core:4.19.2")
-    implementation("org.apache.cassandra:java-driver-query-builder:4.19.2")
+    // cassandra-all is designed for running a Cassandra server/node
+    implementation("org.apache.cassandra:cassandra-all:5.+")
+    implementation("org.apache.cassandra:java-driver-core:4.+")
+    implementation("org.apache.cassandra:java-driver-query-builder:4.+")
     implementation("com.google.guava:guava:33.5.0-jre")
     implementation("com.google.code.gson:gson:2.+")
 }
