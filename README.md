@@ -4,7 +4,7 @@ Lightweight in-memory CqlSession driver for testing, essentially a mock for Cass
 ## Goals (in order of precedence)
 1. Maintain a robust test suite ensuring that functionality of a real cassandra database is mirrored correctly. If a query fails live it should fail in a similar fashion in seastar.
 2. Minimize start up time to act as a viable alternative for [TestContainers](https://java.testcontainers.org/modules/databases/cassandra/)
-3. All code should be thread-safe.
+3. All code should be thread-safe unless explicitly stated in the documentation.
 
 ## Future Improvements / TODO
 * SeaStar, as written, necessarily deserializes and re-serializes data. This is completely unnecessary. I was simply too lazy to implement/override all the default getters.

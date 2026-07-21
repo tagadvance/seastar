@@ -44,16 +44,12 @@ public interface SeaStarKeyspace extends SeaStarReadWriteLock, KeyspaceMetadata 
 
 	default SeaStarTable newSeaStarTable(final CqlIdentifier id) {
 		final var table = new VolatileTable(context(), this, id);
-		putSeaStarTable(id, table);
+		putSeaStarTable(table);
 
 		return table;
 	}
 
-	default void putSeaStarTable(final String name, final SeaStarTable table) {
-		putSeaStarTable(CqlIdentifier.fromInternal(name), table);
-	}
-
-	void putSeaStarTable(CqlIdentifier id, SeaStarTable table);
+	void putSeaStarTable(SeaStarTable table);
 
 	default void removeSeaStarTable(final String name) {
 		removeSeaStarTable(CqlIdentifier.fromInternal(name));

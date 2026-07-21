@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.cql.QueryTrace;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -16,17 +17,12 @@ import org.jspecify.annotations.NonNull;
 
 public class SeaStarExecutionInfo implements ExecutionInfo {
 
+	private final Node coordinator;
 	private final Statement<?> statement;
-	private final List<Throwable> errors;
-	private final SeaStarCqlSession session;
-	private final SeaStarDriverContext context;
 
-	public SeaStarExecutionInfo(final Statement<?> statement, final List<Throwable> errors,
-		final SeaStarCqlSession session, final SeaStarDriverContext context) {
+	public SeaStarExecutionInfo(final Node coordinator, final Statement<?> statement) {
+		this.coordinator = requireNonNull(coordinator, "coordinator must not be null");
 		this.statement = requireNonNull(statement, "statement must not be null");
-		this.errors = requireNonNull(errors, "errors must not be null");
-		this.session = requireNonNull(session, "session must not be null");
-		this.context = requireNonNull(context, "context must not be null");
 	}
 
 	@Override
@@ -37,7 +33,7 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 
 	@Override
 	public Node getCoordinator() {
-		return null;
+		return coordinator;
 	}
 
 	@Override
@@ -53,8 +49,7 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 	@Override
 	@NonNull
 	public List<Entry<Node, Throwable>> getErrors() {
-		// TODO
-		return List.of();
+		return Collections.emptyList();
 	}
 
 	@Override
@@ -71,8 +66,7 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 	@Override
 	@NonNull
 	public Map<String, ByteBuffer> getIncomingPayload() {
-		// TODO
-		return Map.of();
+		throw new UnsupportedOperationException();
 	}
 
 	@Override

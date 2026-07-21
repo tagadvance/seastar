@@ -37,6 +37,8 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 
 	private static final AtomicInteger SESSION_NAME_COUNTER = new AtomicInteger();
 
+	private final Node node = new VolatileNode();
+
 	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 	private final String sessionName;
@@ -139,6 +141,11 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 	}
 
 	@Override
+	public Node getNode() {
+		return node;
+	}
+
+	@Override
 	public Optional<SeaStarKeyspace> getSeaStarKeyspace(final CqlIdentifier id) {
 		return readLockUnchecked(() -> Optional.of(id).map(keyspaceById::get));
 	}
@@ -157,8 +164,9 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 
 	@Override
 	@NonNull
+	@SuppressWarnings("all")
 	public Map<UUID, Node> getNodes() {
-		throw new UnsupportedOperationException();
+		return Map.of(node.getHostId(), node);
 	}
 
 	@Override
