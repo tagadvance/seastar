@@ -27,6 +27,9 @@ testing {
             dependencies {
                 implementation("org.mockito:mockito-core:5.+")
                 implementation("org.mockito:mockito-junit-jupiter:5.+")
+                implementation("org.testcontainers:testcontainers:2.+")
+                implementation("org.testcontainers:testcontainers-junit-jupiter:2.+")
+                implementation("org.testcontainers:testcontainers-cassandra:2.+")
             }
         }
     }

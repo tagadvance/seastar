@@ -11,16 +11,11 @@ import org.apache.cassandra.cql3.UTName;
 record SeaStarRawType(UTName name, CQL3Type type, boolean isFrozen) {
 
 	public static SeaStarRawType from(final Object o) {
-		try {
-			final var name = Reflections.getDeclaredField(o, "name", UTName.class).orElse(null);
-			final var type = Reflections.getDeclaredField(o, "type", CQL3Type.class).orElse(null);
-			final var frozen = Reflections.getDeclaredField(o, "frozen", boolean.class).orElse(false);
+		final var name = Reflections.getDeclaredField(o, "name", UTName.class).orElse(null);
+		final var type = Reflections.getDeclaredField(o, "type", CQL3Type.class).orElse(null);
+		final var frozen = Reflections.getDeclaredField(o, "frozen", boolean.class).orElse(false);
 
-			return new SeaStarRawType(name, type, frozen);
-		} catch (Throwable t) {
-			t.printStackTrace();;
-			throw new RuntimeException(t);
-		}
+		return new SeaStarRawType(name, type, frozen);
 	}
 
 	public Optional<DataType> toDataType() {
