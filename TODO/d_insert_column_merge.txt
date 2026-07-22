@@ -1,0 +1,24 @@
+CONCEPT: INSERT upsert should merge non-null columns rather than replace the whole row
+PRIORITY: 4 (correctness fidelity for partial inserts)
+
+SOURCE COMMENT (now removed):
+- InsertHandler.java:132  "merge non-null columns rather than replacing the whole row" (// TODO)
+
+CURRENT STATE:
+A non-conditional INSERT removes any existing row sharing the primary key and adds a brand-new
+row built only from the columns named in the INSERT. Columns not named in the new INSERT are
+therefore wiped, even though CQL INSERT is an upsert that only writes the specified columns.
+
+WHAT REAL CASSANDRA DOES:
+INSERT writes only the specified columns; previously-set values for unspecified columns on the
+same primary key are preserved (last-write-wins per column, not per row).
+
+IMPLEMENTATION PLAN:
+1. In the non-conditional branch (InsertHandler.java ~130-135), instead of removeRowIf + addRow,
+   locate the existing row with the same primary key. If found, overwrite only the columns
+   present in this INSERT, leaving other columns untouched. If not found, add the new row.
+2. Keep null handling correct: an explicitly-inserted NULL deletes that column's value; an
+   unspecified column is left as-is.
+3. Verify interaction with the IF NOT EXISTS branch and with the LWT work in concept (c).
+
+DEPENDENCIES: touches the same writeLock block as (c); coordinate ordering if both are in flight.

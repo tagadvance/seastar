@@ -1,0 +1,30 @@
+CONCEPT: BoundStatement misc metadata accessors (routing, idempotence, custom payload)
+PRIORITY: 12 (peripheral statement attributes; rarely exercised by tests)
+
+SOURCE COMMENTS (now removed):
+- SeaStarBoundStatement.java:75   setRoutingKeyspace throws UnsupportedOperationException (// FIXME)
+- SeaStarBoundStatement.java:107  setIdempotent throws (// TODO)
+- SeaStarBoundStatement.java:248  getRoutingKeyspace throws (// TODO)
+- SeaStarBoundStatement.java:265  getCustomPayload returns Map.of() (// FIXME)
+- SeaStarBoundStatement.java:271  isIdempotent throws (// TODO)
+
+CURRENT STATE:
+These per-statement attributes throw UnsupportedOperationException or return empty defaults.
+They do not affect query execution in an in-memory fake (no real routing, tracing, or retry),
+but a client that sets/reads them fails unexpectedly.
+
+WHAT REAL DRIVER DOES:
+BoundStatement is immutable-with-copy: setX returns a copy carrying the new attribute; getX
+returns the stored value or a config default. Routing keyspace/key/token drive token-aware
+routing (irrelevant to SeaStar's single in-memory node). Idempotence and custom payload are
+client-side metadata.
+
+IMPLEMENTATION PLAN:
+1. Store routingKeyspace, idempotent (Boolean), and customPayload as fields on
+   SeaStarBoundStatement; have the setters record them (returning this, matching the existing
+   mutable-style setters like setQueryTimestamp) and the getters return them.
+2. getCustomPayload can keep returning an (immutable) empty map default until a setter is added.
+3. Since these do not affect execution, favor the simplest correct storage over routing behavior.
+4. Coordinate with concept (a), which rewrites the value-accessor half of this class.
+
+DEPENDENCIES: overlaps concept (a) in the same file; land (a) first or together.

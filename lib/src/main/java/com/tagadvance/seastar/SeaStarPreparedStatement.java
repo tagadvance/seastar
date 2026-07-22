@@ -51,7 +51,6 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	@Override
 	@NonNull
 	public ColumnDefinitions getVariableDefinitions() {
-		// FIXME
 		throw new UnsupportedOperationException();
 	}
 
@@ -71,14 +70,12 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	@Override
 	@NonNull
 	public ColumnDefinitions getResultSetDefinitions() {
-		// FIXME
 		throw new UnsupportedOperationException();
 	}
 
 	@Override
 	public void setResultMetadata(final @NonNull ByteBuffer newResultMetadataId,
 		final @NonNull ColumnDefinitions newResultSetDefinitions) {
-		// FIXME
 		throw new UnsupportedOperationException();
 	}
 
@@ -90,7 +87,6 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	@Override
 	@NonNull
 	public BoundStatementBuilder boundStatementBuilder(final Object @NonNull ... values) {
-		// FIXME
 		throw new UnsupportedOperationException();
 	}
 

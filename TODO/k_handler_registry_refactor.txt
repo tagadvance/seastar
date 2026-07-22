@@ -1,0 +1,26 @@
+CONCEPT: Move CqlHandlerRegistry construction out of SeaStarCqlRequestHandler
+PRIORITY: 11 (refactor / maintainability; no behavior change)
+
+SOURCE COMMENT (now removed):
+- SeaStarCqlRequestHandler.java:54  "move this somewhere else, maybe the session or context, and
+  add handlers for other statements" (// TODO)
+
+CURRENT STATE:
+Every SeaStarCqlRequestHandler constructor rebuilds the full CqlHandlerRegistry inline (11
+handlers, each wired to session::getKeyspace / session::setKeyspace). A new request handler is
+created per request, so the registry and all handlers are re-allocated on every query.
+
+GOAL:
+Construct the registry once and share it, and centralize where new statement handlers get
+registered so adding a handler is a one-line change in one place.
+
+IMPLEMENTATION PLAN:
+1. Build the CqlHandlerRegistry once - candidate owners: SeaStarCqlSession or
+   SeaStarDriverContext (VolatileDriverContext). It needs the session callbacks
+   (getKeyspace/setKeyspace), so the session is the natural owner.
+2. Pass the shared registry into SeaStarCqlRequestHandler instead of constructing it there.
+3. Confirm thread-safety: handlers must be stateless/thread-safe to be shared (they appear to be;
+   verify per the @ThreadSafe invariant in CLAUDE.md).
+4. This becomes the single registration point referenced by concepts (e) batch and (g) index.
+
+DEPENDENCIES: none; do this before (e) and (g) to avoid touching inline construction twice.

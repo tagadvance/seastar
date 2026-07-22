@@ -86,7 +86,6 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final List<Object> conditions = Reflections.getDeclaredField(raw, "conditions", List.class)
 			.orElseGet(Collections::emptyList);
 		if (!conditions.isEmpty()) {
-			// TODO: implement LWT (IF <condition>) semantics.
 			throw new UnsupportedOperationException(
 				"Conditional updates (IF ...) are not currently supported");
 		}
@@ -119,7 +118,6 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				}
 				table.addRow(values);
 			}
-			// TODO: upsert when the primary key is restricted by IN; IF EXISTS should report [applied].
 		});
 
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));

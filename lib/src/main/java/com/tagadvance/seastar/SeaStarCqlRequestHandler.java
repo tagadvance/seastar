@@ -51,7 +51,6 @@ public class SeaStarCqlRequestHandler {
 		this.context = context;
 		this.requestTracker = context.getRequestTracker();
 		this.errors = new LinkedList<>();
-		// TODO: move this somewhere else, maybe the session or context, and add handlers for other statements
 		this.registry = new CqlHandlerRegistry(context.getSessionName(),
 			new CreateKeyspaceHandler(), new UseKeyspaceHandler(session::setKeyspace),
 			new CreateTypeHandler(session::getKeyspace),
@@ -66,9 +65,6 @@ public class SeaStarCqlRequestHandler {
 	}
 
 	public CompletionStage<AsyncResultSet> handle() {
-		// TODO: add query processors
-		// TODO: batch statement
-
 		final String query;
 		final Object[] values;
 		if (initialStatement instanceof SimpleStatement simpleStatement) {

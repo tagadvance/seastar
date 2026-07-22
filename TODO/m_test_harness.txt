@@ -1,0 +1,35 @@
+CONCEPT: Test harness improvements - dual container/SeaStar runs, quoting, UDT and filtering tests
+PRIORITY: 13 (test infrastructure; enables verifying the other concepts)
+
+SOURCE COMMENTS (now removed):
+- AbstractCqlSessionTest.java:31  all tests should receive a CqlSession with both the container
+  session and the seastar session supplied, perhaps by nesting (// TODO)
+- AbstractCqlSessionTest.java:32  test with and without quotes (// TODO)
+- AbstractCqlSessionTest.java:33  user defined types (// TODO)
+- AbstractCqlSessionTest.java:34  simulate filtering failure (// TODO)
+- AbstractCqlSessionTest.java:133 refactor to pass both ContainerCqlSessionTest and
+  SeaStarCqlSessionTest (// TODO)
+- AbstractCqlSessionTest.java:140 TABLE BUILDER / populate from query (// TODO)
+
+CURRENT STATE:
+AbstractCqlSessionTest is subclassed by a Container (real Cassandra via TestContainers) and a
+SeaStar implementation, but several tests short-circuit with assumeTrue(... instanceof
+VolatileDriverContext) and populate data by reaching into the Volatile model, so they only run
+against SeaStar. Quoting, UDT, and ALLOW FILTERING behaviors are untested.
+
+GOAL:
+Every behavioral test should run against BOTH the real container and SeaStar from the same test
+body, so fidelity is verified by construction rather than asserted twice.
+
+IMPLEMENTATION PLAN:
+1. Parameterize the shared tests to run once per backend (container + seastar), e.g. nested test
+   classes or a parameterized CqlSession supplier, removing the VolatileDriverContext assumeTrue
+   guards where possible.
+2. Replace direct Volatile-model population (newSeaStarKeyspace/newSeaStarTable/addRow) with CQL
+   CREATE + INSERT so the same test drives both backends (depends on INSERT/CREATE fidelity).
+3. Add tests exercising: quoted vs unquoted identifiers (case sensitivity), user-defined types
+   (depends on concept (b)), and ALLOW FILTERING / filtering-failure behavior.
+4. All new tests need a short human-readable @DisplayName (per CLAUDE.md).
+
+DEPENDENCIES: exercises concepts (b) UDTs and (c) LWT; best sequenced after core handlers land.
+Keep the currently-uncommitted edit at AbstractCqlSessionTest.java as part of this work.

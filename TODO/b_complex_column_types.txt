@@ -1,0 +1,41 @@
+CONCEPT: Complex column types - collections, UDTs, tuples, vectors (parse -> DataType -> persist)
+PRIORITY: 2 (blocks realistic schemas; UDT creation is half-implemented)
+
+SOURCE COMMENTS (now removed):
+- SeaStarRawType.java:21   toDataType only handles CQL3Type.Native; returns empty otherwise (// FIXME)
+- CreateTableHandler.java:110  columns with unsupported type are logged and skipped (// FIXME)
+- CreateTypeHandler.java:79  isFrozen hardcoded false; "frozen is per reference not per type" (// FIXME)
+- CreateTypeHandler.java:81  UDT field definitions hardcoded to empty list (// FIXME)
+- SeaStarUserDefinedType.java:10  "mutability" (// TODO) - UDT interface exposes no field mutation
+
+CURRENT STATE:
+SeaStarRawType.toDataType() maps only native scalar types to driver DataTypes; collections,
+UDTs, tuples, and vectors return Optional.empty(). Consequently CreateTableHandler silently
+skips such columns and CreateTypeHandler creates UDTs with an EMPTY field-definition list, so
+the type name exists but has no fields. Frozen-ness is dropped.
+
+WHAT REAL CASSANDRA DOES:
+- CQL3Type has subtypes: Collection (list/set/map), UserDefined, Tuple, and Vector.
+- Frozen is a property of a column/field reference to a type, not of the type itself.
+- A CREATE TYPE persists an ordered list of (fieldName, fieldType) pairs.
+
+IMPLEMENTATION PLAN:
+1. Extend SeaStarRawType.toDataType() to handle non-native CQL3Type kinds:
+   - CQL3Type.Collection -> DataTypes.listOf/setOf/mapOf(elementType), recursing on element types.
+   - CQL3Type.UserDefined -> resolve the referenced UDT from the keyspace (VolatileUserDefinedType),
+     honoring frozen at the reference.
+   - CQL3Type.Tuple -> DataTypes.tupleOf(componentTypes).
+   - Vector -> driver vector DataType with dimension.
+   The method likely needs access to the keyspace to resolve UDT references; pass context/keyspace.
+2. CreateTypeHandler: replace the empty definitions list with the parsed fieldNames + fieldTypes
+   (both are already read via Reflections at lines 47-54) mapped to DataTypes, producing real
+   UserDefinedTypeDefinition entries. Remove the isFrozen=false hardcode; frozen belongs on the
+   referencing column, not the type.
+3. Add field mutability to SeaStarUserDefinedType (see TODO at line 10) so ALTER TYPE can add
+   fields later, and so VolatileUserDefinedType actually stores its definitions.
+4. CreateTableHandler: once toDataType resolves complex types, columns are no longer skipped;
+   remove the skip/continue branch (keep a guard that throws InvalidQueryException for a
+   genuinely unknown type, matching Cassandra).
+5. Fidelity: referencing an undefined UDT must throw InvalidQueryException as a live cluster does.
+
+DEPENDENCIES: none blocking; unblocks fuller (a) bind-marker typing and UDT test coverage in (m).

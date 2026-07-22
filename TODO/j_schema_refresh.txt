@@ -1,0 +1,23 @@
+CONCEPT: Metadata.refreshSchemaAsync should actually refresh
+PRIORITY: 10 (likely a no-op is acceptable for an in-memory model; verify)
+
+SOURCE COMMENT (now removed):
+- SeaStarCqlSession.java:66  "perform refresh" - refreshSchemaAsync just returns the context (// TODO)
+
+CURRENT STATE:
+refreshSchemaAsync() returns the existing context (which is also the Metadata) without doing
+anything. For SeaStar the model is always live and authoritative, so there is nothing to fetch.
+
+DECISION NEEDED:
+Determine whether any client code path depends on refresh recomputing derived metadata. If the
+Volatile* model is always current, the correct implementation is genuinely a no-op that returns
+the live metadata - in which case this concept is resolved by confirming and documenting that,
+not by adding work.
+
+IMPLEMENTATION PLAN:
+1. Confirm no cached/derived metadata needs recomputation on refresh.
+2. If confirmed, replace the TODO intent with a short doc comment stating the no-op is correct
+   because the in-memory model is always live.
+3. If some derived view does exist, recompute it here.
+
+DEPENDENCIES: none. Lowest-effort item; may close as "no action needed".

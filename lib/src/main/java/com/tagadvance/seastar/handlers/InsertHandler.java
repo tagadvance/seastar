@@ -129,13 +129,11 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 				}
 			} else {
 				// INSERT is an upsert; replace the existing row sharing this primary key.
-				// TODO: merge non-null columns rather than replacing the whole row.
 				table.removeRowIf(samePrimaryKey);
 				table.addRow(values);
 			}
 		});
 
-		// TODO: IF NOT EXISTS should return an [applied] result set (LWT semantics).
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 	}
 

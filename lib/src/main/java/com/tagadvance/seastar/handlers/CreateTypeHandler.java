@@ -76,9 +76,7 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 						"A user type with name '%s' already exists".formatted(udtName)));
 			}
 		} else {
-			// FIXME frozen is per reference not per type
 			final var isFrozen = false;
-			// FIXME: definitions
 			final var definitions = Collections.<UserDefinedTypeDefinition>emptyList();
 			final var udt = new VolatileUserDefinedType(context, ksx.name(), CqlIdentifier.fromInternal(udtName),
 				isFrozen, definitions);

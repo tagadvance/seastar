@@ -28,10 +28,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
-// TODO: all tests should receive an instance of CqlSession with the container session and seastar session being supplied, perhaps by nesting
-// TODO: test with and without quotes
-// TODO: user defined types;
-// TODO: simulate filtering failure
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 abstract class AbstractCqlSessionTest {
@@ -136,7 +132,6 @@ abstract class AbstractCqlSessionTest {
 		final var context = (VolatileDriverContext) session.getContext();
 		final var keyspace = context.newSeaStarKeyspace("foo");
 		final var tableName = CqlIdentifier.fromInternal("bar");
-		// TODO: TABLE BUILDER / populate from query
 		final var table = keyspace.newSeaStarTable(tableName);
 		table.addColumn("foo", DataTypes.TEXT);
 		table.addColumn("bar", DataTypes.TEXT);

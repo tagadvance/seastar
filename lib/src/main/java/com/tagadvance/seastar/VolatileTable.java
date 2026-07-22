@@ -128,7 +128,6 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, IndexMetadata> getIndexes() {
-		// FIXME
 		throw new UnsupportedOperationException("Indexes are not supported in SeaStarTable");
 	}
 
