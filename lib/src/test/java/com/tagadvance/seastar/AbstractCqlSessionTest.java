@@ -354,6 +354,76 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("INSERT INTO foo.people (name) VALUES ('Ann')"));
 	}
 
+	@Test
+	@Order(13)
+	@DisplayName("SELECT with a column list projects only the selected columns")
+	void testSelectProjection() {
+		final var resultSet = session.execute("SELECT name FROM foo.people WHERE id = " + ANN_ID);
+
+		final var definitions = resultSet.getColumnDefinitions();
+		assertEquals(1, definitions.size());
+		assertEquals("name", definitions.get(0).getName().asInternal());
+
+		final var all = resultSet.all();
+		assertEquals(1, all.size());
+		assertEquals("Ann", all.get(0).getString("name"));
+	}
+
+	@Test
+	@Order(14)
+	@DisplayName("SELECT WHERE = on the partition key returns the matching row")
+	void testSelectWhereEquals() {
+		final var prepared = session.prepare("SELECT * FROM foo.people WHERE id = ?");
+		final var all = session.execute(prepared.bind(BOB_ID)).all();
+
+		assertEquals(1, all.size());
+		assertEquals("Bob", all.get(0).getString("name"));
+	}
+
+	@Test
+	@Order(15)
+	@DisplayName("SELECT WHERE IN returns every matching row")
+	void testSelectWhereIn() {
+		final var prepared = session.prepare("SELECT * FROM foo.people WHERE id IN (?, ?)");
+		final var names = session.execute(prepared.bind(ANN_ID, CAROL_ID)).all().stream()
+			.map(row -> row.getString("name"))
+			.sorted()
+			.toList();
+
+		assertEquals(List.of("Ann", "Carol"), names);
+	}
+
+	@Test
+	@Order(16)
+	@DisplayName("SELECT filtering a non-key column requires ALLOW FILTERING")
+	void testSelectFilteringRequiresAllowFiltering() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.people WHERE name = 'Ann'"));
+
+		final var all = session.execute(
+			"SELECT * FROM foo.people WHERE name = 'Ann' ALLOW FILTERING").all();
+		assertEquals(1, all.size());
+		assertEquals("Ann", all.get(0).getString("name"));
+	}
+
+	@Test
+	@Order(17)
+	@DisplayName("SELECT LIMIT caps the row count and rejects a non-positive limit")
+	void testSelectLimit() {
+		assertEquals(1, session.execute("SELECT * FROM foo.people LIMIT 1").all().size());
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.people LIMIT 0"));
+	}
+
+	@Test
+	@Order(18)
+	@DisplayName("SELECT of an unknown column throws InvalidQueryException")
+	void testSelectUnknownColumn() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT nope FROM foo.people"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
