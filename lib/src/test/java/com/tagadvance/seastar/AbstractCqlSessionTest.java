@@ -520,6 +520,26 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("DELETE FROM foo.nope WHERE id = " + BOB_ID));
 	}
 
+	@Test
+	@Order(28)
+	@DisplayName("DROP TABLE removes the table; dropping it again throws unless IF EXISTS")
+	void testDropTable() {
+		session.execute(
+			"CREATE TABLE foo.doomed (id uuid PRIMARY KEY, name text)");
+
+		session.execute("DROP TABLE foo.doomed");
+
+		if (session.getContext() instanceof SeaStarDriverContext seaStarContext) {
+			assertTrue(seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("doomed")).isEmpty());
+		}
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TABLE foo.doomed"));
+
+		assertDoesNotThrow(() -> session.execute("DROP TABLE IF EXISTS foo.doomed"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
