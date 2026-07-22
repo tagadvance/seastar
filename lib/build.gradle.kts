@@ -45,6 +45,16 @@ tasks.named<Test>("test") {
     useJUnitPlatform()
 }
 
+tasks.register<JavaExec>("inspectRaw") {
+    description = "Parses a CQL query and prints its CQLStatement.Raw class and fields."
+    group = "verification"
+    mainClass = "com.tagadvance.seastar.tools.CqlRawInspector"
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("logback.configurationFile", layout.projectDirectory.file("logback-tools.xml").asFile.absolutePath)
+    args((project.findProperty("query") as String?)?.let { listOf(it) } ?: emptyList<String>())
+    notCompatibleWithConfigurationCache("reads -Pquery at execution time")
+}
+
 group = "com.tagadvance"
 version = "1.0.0-SNAPSHOT"
 

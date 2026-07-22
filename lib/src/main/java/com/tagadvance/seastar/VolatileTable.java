@@ -12,8 +12,10 @@ import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -38,6 +40,8 @@ public class VolatileTable implements SeaStarTable {
 	private final SeaStarKeyspace keyspace;
 	private final CqlIdentifier name;
 	private final List<SeaStarColumn> columns;
+	private final List<CqlIdentifier> partitionKey;
+	private final Map<CqlIdentifier, ClusteringOrder> clusteringColumns;
 	private final List<SeaStarRow> rows;
 	private AttachmentPoint attachmentPoint;
 
@@ -47,6 +51,8 @@ public class VolatileTable implements SeaStarTable {
 		this.keyspace = requireNonNull(keyspace, "keyspace must not be null");
 		this.name = requireNonNull(name, "name must not be null");
 		this.columns = new ArrayList<>();
+		this.partitionKey = new ArrayList<>();
+		this.clusteringColumns = new LinkedHashMap<>();
 		this.rows = new ArrayList<>();
 		this.attachmentPoint = context;
 	}
@@ -71,6 +77,25 @@ public class VolatileTable implements SeaStarTable {
 		requireNonNull(column, "column must not be null");
 
 		writeLock(() -> columns.add(column));
+	}
+
+	@Override
+	public void markPartitionKey(final CqlIdentifier name) {
+		requireNonNull(name, "name must not be null");
+
+		writeLock(() -> partitionKey.add(name));
+	}
+
+	@Override
+	public void markClustering(final CqlIdentifier name, final ClusteringOrder order) {
+		requireNonNull(name, "name must not be null");
+		requireNonNull(order, "order must not be null");
+
+		writeLock(() -> clusteringColumns.put(name, order));
+	}
+
+	private SeaStarColumn columnByName(final CqlIdentifier id) {
+		return columns.stream().filter(column -> column.getName().equals(id)).findFirst().orElse(null);
 	}
 
 	@Override
@@ -127,15 +152,27 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	@NonNull
 	public List<ColumnMetadata> getPartitionKey() {
-		// FIXME don't forget to lock
-		return List.of();
+		return readLockUnchecked(() -> partitionKey.stream()
+			.map(this::columnByName)
+			.filter(Objects::nonNull)
+			.map(ColumnMetadata.class::cast)
+			.toList());
 	}
 
 	@Override
 	@NonNull
 	public Map<ColumnMetadata, ClusteringOrder> getClusteringColumns() {
-		// FIXME don't forget to lock
-		return Map.of();
+		return readLockUnchecked(() -> {
+			final Map<ColumnMetadata, ClusteringOrder> result = new LinkedHashMap<>();
+			clusteringColumns.forEach((id, order) -> {
+				final var column = columnByName(id);
+				if (column != null) {
+					result.put(column, order);
+				}
+			});
+
+			return Collections.unmodifiableMap(result);
+		});
 	}
 
 	@Override

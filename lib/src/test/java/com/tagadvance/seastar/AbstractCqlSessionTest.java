@@ -5,12 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -104,15 +108,27 @@ abstract class AbstractCqlSessionTest {
 			);"""));
 
 		if (context instanceof SeaStarDriverContext seaStarContext) {
-			assertTrue(seaStarContext.getSeaStarKeyspace("foo")
-				.flatMap(keyspace -> keyspace.getSeaStarTable("users"))
-				.isPresent());
+			final var table = seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("users"));
+			assertTrue(table.isPresent());
+
+			final var columns = table.get().getColumns();
+			assertEquals(DataTypes.UUID,
+				columns.get(CqlIdentifier.fromInternal("user_id")).getType());
+			assertEquals(DataTypes.TEXT,
+				columns.get(CqlIdentifier.fromInternal("first_name")).getType());
+
+			assertEquals(List.of(CqlIdentifier.fromInternal("user_id")),
+				table.get().getPartitionKey().stream().map(ColumnMetadata::getName).toList());
+			assertTrue(table.get().getClusteringColumns().isEmpty());
 		}
 	}
 
 	@Test
 	@Order(4)
 	void testSimpleSelect() {
+		// This test populates data directly via the SeaStar model, so it only runs against SeaStar.
+		assumeTrue(session.getContext() instanceof VolatileDriverContext);
 		final var context = (VolatileDriverContext) session.getContext();
 		final var keyspace = context.newSeaStarKeyspace("foo");
 		final var tableName = CqlIdentifier.fromInternal("bar");
@@ -151,9 +167,18 @@ abstract class AbstractCqlSessionTest {
 		assertNotNull(resultSet1);
 
 		if (context instanceof SeaStarDriverContext seaStarContext) {
-			assertTrue(seaStarContext.getSeaStarKeyspace("user_status_updates")
-				.flatMap(keyspace -> keyspace.getSeaStarTable("users"))
-				.isPresent());
+			final var table = seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("user_status_updates"));
+			assertTrue(table.isPresent());
+
+			assertEquals(List.of(CqlIdentifier.fromInternal("user_id")),
+				table.get().getPartitionKey().stream().map(ColumnMetadata::getName).toList());
+
+			final var clustering = table.get().getClusteringColumns();
+			assertEquals(List.of(CqlIdentifier.fromInternal("updated_at")),
+				clustering.keySet().stream().map(ColumnMetadata::getName).toList());
+			assertEquals(ClusteringOrder.ASC,
+				clustering.values().iterator().next());
 		}
 	}
 
@@ -173,9 +198,17 @@ abstract class AbstractCqlSessionTest {
 		assertNotNull(resultSet1);
 
 		if (context instanceof SeaStarDriverContext seaStarContext) {
-			assertTrue(seaStarContext.getSeaStarKeyspace("device_metrics")
-				.flatMap(keyspace -> keyspace.getSeaStarTable("users"))
-				.isPresent());
+			final var table = seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("device_metrics"));
+			assertTrue(table.isPresent());
+
+			assertEquals(
+				List.of(CqlIdentifier.fromInternal("device_id"),
+					CqlIdentifier.fromInternal("log_date")),
+				table.get().getPartitionKey().stream().map(ColumnMetadata::getName).toList());
+			assertEquals(List.of(CqlIdentifier.fromInternal("log_time")),
+				table.get().getClusteringColumns().keySet().stream().map(ColumnMetadata::getName)
+					.toList());
 		}
 	}
 
