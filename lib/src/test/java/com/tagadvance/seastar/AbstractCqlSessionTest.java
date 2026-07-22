@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -422,6 +423,47 @@ abstract class AbstractCqlSessionTest {
 	void testSelectUnknownColumn() {
 		assertThrows(InvalidQueryException.class,
 			() -> session.execute("SELECT nope FROM foo.people"));
+	}
+
+	private static final UUID EVE_ID = UUID.fromString("423e4567-e89b-12d3-a456-426614174003");
+
+	@Test
+	@Order(19)
+	@DisplayName("UPDATE SET on an existing row changes the value")
+	void testUpdateExistingRow() {
+		final var prepared = session.prepare(
+			"UPDATE foo.people SET name = ? WHERE id = ?");
+		session.execute(prepared.bind("Annette", ANN_ID));
+
+		assertEquals("Annette", nameOf(ANN_ID));
+	}
+
+	@Test
+	@Order(20)
+	@DisplayName("UPDATE of a non-existent primary key upserts a new row")
+	void testUpdateUpsert() {
+		assertNull(nameOf(EVE_ID));
+
+		session.execute(
+			"UPDATE foo.people SET name = 'Eve' WHERE id = 423e4567-e89b-12d3-a456-426614174003");
+
+		assertEquals("Eve", nameOf(EVE_ID));
+	}
+
+	@Test
+	@Order(21)
+	@DisplayName("UPDATE setting a primary key column throws InvalidQueryException")
+	void testUpdatePrimaryKeyInSet() {
+		assertThrows(InvalidQueryException.class, () -> session.execute(
+			"UPDATE foo.people SET id = " + BOB_ID + " WHERE id = " + ANN_ID));
+	}
+
+	@Test
+	@Order(22)
+	@DisplayName("UPDATE restricting a non-primary-key column throws InvalidQueryException")
+	void testUpdateNonKeyWhere() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("UPDATE foo.people SET name = 'x' WHERE name = 'Bob'"));
 	}
 
 	@AfterAll
