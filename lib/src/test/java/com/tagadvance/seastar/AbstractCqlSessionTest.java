@@ -466,6 +466,60 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("UPDATE foo.people SET name = 'x' WHERE name = 'Bob'"));
 	}
 
+	private static final UUID FRANK_ID = UUID.fromString("523e4567-e89b-12d3-a456-426614174004");
+	private static final UUID GRACE_ID = UUID.fromString("623e4567-e89b-12d3-a456-426614174005");
+
+	@Test
+	@Order(23)
+	@DisplayName("DELETE by primary key removes only the matching row")
+	void testDeleteByPrimaryKey() {
+		session.execute("INSERT INTO foo.people (id, name) VALUES (" + FRANK_ID + ", 'Frank')");
+		assertEquals("Frank", nameOf(FRANK_ID));
+
+		final var prepared = session.prepare("DELETE FROM foo.people WHERE id = ?");
+		session.execute(prepared.bind(FRANK_ID));
+
+		assertNull(nameOf(FRANK_ID));
+		assertEquals("Bob", nameOf(BOB_ID));
+	}
+
+	@Test
+	@Order(24)
+	@DisplayName("DELETE of a named column nulls it but keeps the row")
+	void testDeleteColumn() {
+		session.execute("INSERT INTO foo.people (id, name) VALUES (" + GRACE_ID + ", 'Grace')");
+
+		session.execute("DELETE name FROM foo.people WHERE id = " + GRACE_ID);
+
+		final var rows = session.execute("SELECT * FROM foo.people WHERE id = " + GRACE_ID).all();
+		assertEquals(1, rows.size());
+		assertNull(rows.get(0).getString("name"));
+	}
+
+	@Test
+	@Order(25)
+	@DisplayName("DELETE restricting a non-primary-key column throws InvalidQueryException")
+	void testDeleteNonKeyWhere() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DELETE FROM foo.people WHERE name = 'Bob'"));
+	}
+
+	@Test
+	@Order(26)
+	@DisplayName("DELETE naming a primary key column throws InvalidQueryException")
+	void testDeletePrimaryKeyColumn() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DELETE id FROM foo.people WHERE id = " + BOB_ID));
+	}
+
+	@Test
+	@Order(27)
+	@DisplayName("DELETE from an unknown table throws InvalidQueryException")
+	void testDeleteUnknownTable() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DELETE FROM foo.nope WHERE id = " + BOB_ID));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
