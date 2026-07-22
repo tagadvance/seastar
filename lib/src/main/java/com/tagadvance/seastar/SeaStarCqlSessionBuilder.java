@@ -28,8 +28,6 @@ import org.jspecify.annotations.NonNull;
 @NotThreadSafe
 public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 
-	// TODO: populate metadata with ClassPathSchema, File Schema, ResourceSchema, CQL schema
-
 	@Override
 	@NonNull
 	public CqlSessionBuilder addContactPoints(

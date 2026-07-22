@@ -56,11 +56,6 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 		this.cache = decorator.apply(baseCache).build();
 		context.ifPresent((ctx) -> {
 			LOG.info("Adding handler to invalidate cached prepared statements on type changes");
-			// TODO
-//			EventExecutor adminExecutor = ctx.getNettyOptions().adminEventExecutorGroup().next();
-//			ctx.getEventBus()
-//				.register(TypeChangeEvent.class,
-//					RunOrSchedule.on(adminExecutor, this::onTypeChanged));
 		});
 	}
 

@@ -107,11 +107,10 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 					.map(SeaStarRawType::from)
 					.flatMap(SeaStarRawType::toDataType);
 				if (dataType.isEmpty()) {
-					// FIXME: collections, UDTs, tuples, and vectors are not yet persisted.
 					LOG.warn("Skipping column '{}' with unsupported type", key);
 					continue;
 				}
-				final var name = CqlIdentifier.fromInternal(key.toString()); // TODO: ensure valid name
+				final var name = CqlIdentifier.fromInternal(key.toString());
 				table1.addColumn(name, dataType.get(), staticColumns.contains(key));
 			}
 

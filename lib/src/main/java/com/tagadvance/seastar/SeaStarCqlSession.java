@@ -63,7 +63,6 @@ public class SeaStarCqlSession implements CqlSession {
 	@Override
 	@NonNull
 	public CompletionStage<Metadata> refreshSchemaAsync() {
-		// TODO: perform refresh
 		return CompletableFuture.completedFuture(context);
 	}
 

@@ -82,7 +82,6 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final List<Object> conditions = Reflections.getDeclaredField(raw, "conditions", List.class)
 			.orElseGet(Collections::emptyList);
 		if (!conditions.isEmpty()) {
-			// TODO: implement LWT (IF <condition>) semantics.
 			throw new UnsupportedOperationException(
 				"Conditional deletes (IF ...) are not currently supported");
 		}

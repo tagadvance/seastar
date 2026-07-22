@@ -72,7 +72,6 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public BoundStatement setRoutingKeyspace(final CqlIdentifier newRoutingKeyspace) {
-		// FIXME
 		throw new UnsupportedOperationException();
 	}
 
@@ -104,7 +103,6 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public BoundStatement setIdempotent(final Boolean newIdempotence) {
-		// TODO
 		throw new UnsupportedOperationException();
 	}
 
@@ -195,18 +193,12 @@ public class SeaStarBoundStatement implements BoundStatement {
 
 	@Override
 	public ByteBuffer getBytesUnsafe(final int i) {
-		// FIXME
-//		ValuesHelper.encodeValues(values, type.getFieldTypes(),
-//			type.getAttachmentPoint().getCodecRegistry(),
-//			type.getAttachmentPoint().getProtocolVersion())
-
 		return null;
 	}
 
 	@Override
 	@NonNull
 	public BoundStatement setBytesUnsafe(final int i, final ByteBuffer v) {
-		// TODO
 		return this;
 	}
 
@@ -245,7 +237,6 @@ public class SeaStarBoundStatement implements BoundStatement {
 
 	@Override
 	public CqlIdentifier getRoutingKeyspace() {
-		// TODO
 		throw new UnsupportedOperationException();
 	}
 
@@ -262,13 +253,11 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public Map<String, ByteBuffer> getCustomPayload() {
-		// FIXME
 		return Map.of();
 	}
 
 	@Override
 	public Boolean isIdempotent() {
-		// TODO
 		throw new UnsupportedOperationException();
 	}
 

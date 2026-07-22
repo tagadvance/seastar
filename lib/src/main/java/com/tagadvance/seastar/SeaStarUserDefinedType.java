@@ -7,6 +7,4 @@ public interface SeaStarUserDefinedType extends SeaStarReadWriteLock, UserDefine
 
 	SeaStarDriverContext context();
 
-	// TODO: mutability
-
 }

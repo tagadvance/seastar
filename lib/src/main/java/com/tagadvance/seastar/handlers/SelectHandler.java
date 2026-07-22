@@ -55,7 +55,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final var coordinator = executionInfo.getCoordinator();
 
 		if (raw.parameters.isDistinct) {
-			// TODO: add support for distinct
 			LOG.warn("DISTINCT is not supported, ignoring");
 		}
 

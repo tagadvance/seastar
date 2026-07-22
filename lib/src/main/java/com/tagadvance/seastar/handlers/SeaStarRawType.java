@@ -18,7 +18,6 @@ record SeaStarRawType(UTName name, CQL3Type type, boolean isFrozen) {
 	}
 
 	public Optional<DataType> toDataType() {
-		// FIXME: collections, UDTs, tuples, and vectors are not yet supported (returns empty).
 		if (!(type instanceof Native n)) {
 			return Optional.empty();
 		}
