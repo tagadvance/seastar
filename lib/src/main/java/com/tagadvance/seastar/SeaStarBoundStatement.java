@@ -43,6 +43,14 @@ public class SeaStarBoundStatement implements BoundStatement {
 		return preparedStatement;
 	}
 
+	/**
+	 * The raw Java values supplied to {@link SeaStarPreparedStatement#bind(Object...)}, positional by
+	 * bind marker index. Distinct from {@link #getValues()}, which is the encoded driver form.
+	 */
+	public Object[] getBoundValues() {
+		return values;
+	}
+
 	@Override
 	@NonNull
 	public List<ByteBuffer> getValues() {

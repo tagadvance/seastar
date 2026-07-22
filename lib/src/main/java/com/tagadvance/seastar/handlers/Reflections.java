@@ -16,23 +16,29 @@ final class Reflections {
 	static <V> Optional<V> getDeclaredField(final Object o, final String name,
 		final Class<V> returnType) {
 		final var objectClass = o.getClass();
-		try {
-			final var field = objectClass.getDeclaredField(name);
-			field.setAccessible(true);
-			final var value = field.get(o);
-			if (returnType.isInstance(value)) {
-				return Optional.of((V) value);
-			} else if (value instanceof Optional<?> optional && returnType.isInstance(
-				optional.orElse(null))) {
-				return (Optional<V>) optional;
+		// Walk the class hierarchy so inherited fields (e.g. ifNotExists on a superclass) resolve.
+		for (Class<?> c = objectClass; c != null; c = c.getSuperclass()) {
+			try {
+				final var field = c.getDeclaredField(name);
+				field.setAccessible(true);
+				final var value = field.get(o);
+				if (returnType.isInstance(value)) {
+					return Optional.of((V) value);
+				} else if (value instanceof Optional<?> optional && returnType.isInstance(
+					optional.orElse(null))) {
+					return (Optional<V>) optional;
+				}
+				return Optional.empty();
+			} catch (final NoSuchFieldException e) {
+				// try superclass
+			} catch (final IllegalAccessException e) {
+				throw new ReflectionException(
+					"Failed to get field %s from object of type %s".formatted(name,
+						objectClass.getName()), e);
 			}
-		} catch (final NoSuchFieldException e) {
-			logger.error(e.getMessage(), e);
-		} catch (final IllegalAccessException e) {
-			throw new ReflectionException(
-				"Failed to get field %s from object of type %s".formatted(name,
-					objectClass.getName()), e);
 		}
+
+		logger.error("No field {} found on {}", name, objectClass.getName());
 
 		return Optional.empty();
 	}

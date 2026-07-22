@@ -8,6 +8,8 @@ This is an early prototype. Many code paths are stubbed with `TODO`/`FIXME`, thr
 
 Requires JDK 17 (configured via Gradle toolchain; foojay resolver auto-downloads it).
 
+All tests should be annotated with a short human-readable `@DisplayName`.
+
 ```bash
 ./gradlew build                 # compile + test
 ./gradlew :lib:test             # run all tests

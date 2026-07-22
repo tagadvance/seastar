@@ -10,6 +10,7 @@ import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
 import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
 import com.tagadvance.seastar.handlers.CreateTableHandler;
 import com.tagadvance.seastar.handlers.CreateTypeHandler;
+import com.tagadvance.seastar.handlers.InsertHandler;
 import com.tagadvance.seastar.handlers.SelectHandler;
 import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.LinkedList;
@@ -50,6 +51,7 @@ public class SeaStarCqlRequestHandler {
 			new CreateKeyspaceHandler(), new UseKeyspaceHandler(session::setKeyspace),
 			new CreateTypeHandler(session::getKeyspace),
 			new CreateTableHandler(session::getKeyspace),
+			new InsertHandler(session::getKeyspace),
 			new SelectHandler());
 	}
 
@@ -65,7 +67,7 @@ public class SeaStarCqlRequestHandler {
 		} else if (initialStatement instanceof SeaStarBoundStatement boundStatement) {
 			final var preparedStatement = boundStatement.getPreparedStatement();
 			query = preparedStatement.getQuery();
-			values = boundStatement.getValues().toArray();
+			values = boundStatement.getBoundValues();
 		} else {
 			throw new UnsupportedOperationException(
 				"Statement of type %s is not currently supported".formatted(
