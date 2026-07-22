@@ -1,9 +1,10 @@
 package com.tagadvance.seastar;
 
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
+import com.datastax.oss.driver.api.core.cql.BoundStatement;
+import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
-import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
@@ -74,6 +75,10 @@ public class SeaStarCqlRequestHandler {
 			final var preparedStatement = boundStatement.getPreparedStatement();
 			query = preparedStatement.getQuery();
 			values = boundStatement.getBoundValues();
+		} else if (initialStatement instanceof BoundStatement boundStatement) {
+			final var preparedStatement = boundStatement.getPreparedStatement();
+			query = preparedStatement.getQuery();
+			values = decode(boundStatement, preparedStatement.getVariableDefinitions());
 		} else {
 			throw new UnsupportedOperationException(
 				"Statement of type %s is not currently supported".formatted(
@@ -91,6 +96,19 @@ public class SeaStarCqlRequestHandler {
 		final var executionInfo = new SeaStarExecutionInfo(node, initialStatement);
 
 		return registry.processorFor(raw).processCql(context, executionInfo, raw, values);
+	}
+
+	private Object[] decode(final BoundStatement statement, final ColumnDefinitions variables) {
+		final var codecRegistry = context.getCodecRegistry();
+		final var protocolVersion = context.getProtocolVersion();
+		final var values = new Object[variables.size()];
+		for (int i = 0; i < values.length; i++) {
+			final var bytes = statement.getBytesUnsafe(i);
+			values[i] = bytes == null ? null
+				: codecRegistry.codecFor(variables.get(i).getType()).decode(bytes, protocolVersion);
+		}
+
+		return values;
 	}
 
 //	private void logServerWarnings(Statement<?> statement, DriverExecutionProfile executionProfile,

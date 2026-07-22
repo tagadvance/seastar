@@ -127,7 +127,8 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 				final CompletableFuture<SeaStarPreparedStatement> mine = new CompletableFuture<>();
 				result = cache.get(request, () -> mine);
 				if (result == mine) {
-					new SeaStarCqlPrepareHandler(request, context, sessionLogPrefix).handle()
+					new SeaStarCqlPrepareHandler(request, context, sessionLogPrefix,
+						session.getKeyspace().orElse(null)).handle()
 						.whenComplete((preparedStatement, error) -> {
 							if (error != null) {
 								mine.completeExceptionally(error);
