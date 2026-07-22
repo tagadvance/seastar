@@ -540,6 +540,25 @@ abstract class AbstractCqlSessionTest {
 		assertDoesNotThrow(() -> session.execute("DROP TABLE IF EXISTS foo.doomed"));
 	}
 
+	@Test
+	@Order(29)
+	@DisplayName("DROP KEYSPACE removes the keyspace; dropping it again throws unless IF EXISTS")
+	void testDropKeyspace() {
+		session.execute(
+			"CREATE KEYSPACE throwaway WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+
+		session.execute("DROP KEYSPACE throwaway");
+
+		if (session.getContext() instanceof SeaStarDriverContext seaStarContext) {
+			assertTrue(seaStarContext.getSeaStarKeyspace("throwaway").isEmpty());
+		}
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP KEYSPACE throwaway"));
+
+		assertDoesNotThrow(() -> session.execute("DROP KEYSPACE IF EXISTS throwaway"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
