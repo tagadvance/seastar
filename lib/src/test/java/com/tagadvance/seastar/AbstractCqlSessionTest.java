@@ -37,7 +37,7 @@ abstract class AbstractCqlSessionTest {
 
 	protected abstract CqlSession createInstance();
 
-	private static CqlSession session;
+	private CqlSession session;
 
 	@BeforeEach
 	void beforeEach() {
@@ -290,7 +290,7 @@ abstract class AbstractCqlSessionTest {
 	private static final UUID BOB_ID = UUID.fromString("223e4567-e89b-12d3-a456-426614174001");
 	private static final UUID CAROL_ID = UUID.fromString("323e4567-e89b-12d3-a456-426614174002");
 
-	private static String nameOf(final UUID id) {
+	private String nameOf(final UUID id) {
 		return session.execute("SELECT * FROM foo.people").all().stream()
 			.filter(row -> id.equals(row.getUuid("id")))
 			.map(row -> row.getString("name"))
@@ -355,7 +355,7 @@ abstract class AbstractCqlSessionTest {
 	}
 
 	@AfterAll
-	static void afterAll() {
+	void afterAll() {
 		session.close();
 	}
 
