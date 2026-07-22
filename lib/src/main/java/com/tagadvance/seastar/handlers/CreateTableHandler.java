@@ -105,10 +105,10 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 				final var value = rawColumns.get(key);
 				final var dataType = Reflections.getDeclaredField(value, "rawType", Object.class)
 					.map(SeaStarRawType::from)
-					.flatMap(SeaStarRawType::toDataType);
+					.flatMap(rawType -> rawType.toDataType(ksx, executionInfo.getCoordinator()));
 				if (dataType.isEmpty()) {
-					LOG.warn("Skipping column '{}' with unsupported type", key);
-					continue;
+					throw new InvalidQueryException(executionInfo.getCoordinator(),
+						"Unknown type for column '%s'".formatted(key));
 				}
 				final var name = CqlIdentifier.fromInternal(key.toString());
 				table1.addColumn(name, dataType.get(), staticColumns.contains(key));

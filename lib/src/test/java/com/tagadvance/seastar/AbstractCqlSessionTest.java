@@ -16,6 +16,8 @@ import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.UserDefinedType;
+import com.datastax.oss.driver.api.core.type.VectorType;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -280,6 +282,43 @@ abstract class AbstractCqlSessionTest {
 			    PRIMARY KEY ((id), category)
 			);""");
 		assertNotNull(resultSet2);
+
+		if (context instanceof SeaStarDriverContext seaStarContext) {
+			final var table = seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("all_types_master"))
+				.orElseThrow();
+			final var columns = table.getColumns();
+
+			assertEquals(DataTypes.listOf(DataTypes.TEXT, false),
+				columns.get(CqlIdentifier.fromInternal("list_sample")).getType());
+			assertEquals(DataTypes.setOf(DataTypes.INT, false),
+				columns.get(CqlIdentifier.fromInternal("set_sample")).getType());
+			assertEquals(DataTypes.mapOf(DataTypes.TEXT, DataTypes.TEXT, false),
+				columns.get(CqlIdentifier.fromInternal("map_sample")).getType());
+			assertEquals(DataTypes.tupleOf(DataTypes.INT, DataTypes.TEXT, DataTypes.BOOLEAN),
+				columns.get(CqlIdentifier.fromInternal("tuple_sample")).getType());
+
+			final var vector = (VectorType) columns.get(CqlIdentifier.fromInternal("vector_sample"))
+				.getType();
+			assertEquals(DataTypes.FLOAT, vector.getElementType());
+			assertEquals(3, vector.getDimensions());
+
+			final var udt = (UserDefinedType) columns.get(CqlIdentifier.fromInternal("udt_sample"))
+				.getType();
+			assertTrue(udt.isFrozen());
+			assertEquals(CqlIdentifier.fromInternal("phone_profile"), udt.getName());
+			assertEquals(List.of(CqlIdentifier.fromInternal("country_code"),
+					CqlIdentifier.fromInternal("phone_number")), udt.getFieldNames());
+			assertEquals(List.of(DataTypes.INT, DataTypes.TEXT), udt.getFieldTypes());
+		}
+	}
+
+	@Test
+	@Order(7)
+	@DisplayName("CREATE TABLE referencing an undefined UDT throws InvalidQueryException")
+	void testCreateTableWithUndefinedUdtThrows() {
+		assertThrows(InvalidQueryException.class, () -> session.execute(
+			"CREATE TABLE undefined_udt_ref (id uuid PRIMARY KEY, profile frozen<no_such_type>)"));
 	}
 
 	private static final UUID ANN_ID = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
