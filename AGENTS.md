@@ -61,6 +61,9 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 
 ## Code Style
 - Do not allow Optional as a field or parameter
+- Exit statements like return or throw should have a newline before them unless the preceding character is an opening brace
+- Favor functional code over procedural, e.g. Stream over loops, Optional over @Nullable
+- Only/always use static wildcard imports for `org.junit.jupiter.api.Assertions.*`, `org.mockito.Mockito.*`, and `org.mockito.ArgumentMatchers.*`
 
 [Minimize token use](https://raw.githubusercontent.com/drona23/claude-token-efficient/refs/heads/main/profiles/CLAUDE.coding.md):
 
