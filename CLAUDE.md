@@ -59,7 +59,8 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlRequestHandler`.
 4. Match real Cassandra's failure behavior — throw the same driver exception type (`AlreadyExistsException`, `InvalidQueryException`, …) that a live cluster would.
 
----
+## Code Style
+- Do not allow Optional as a field or parameter
 
 [Minimize token use](https://raw.githubusercontent.com/drona23/claude-token-efficient/refs/heads/main/profiles/CLAUDE.coding.md):
 

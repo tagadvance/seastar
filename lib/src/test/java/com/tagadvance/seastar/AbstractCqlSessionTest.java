@@ -575,6 +575,89 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("TRUNCATE TABLE foo.nope"));
 	}
 
+	private void createMetaTable(final String table) {
+		session.execute(
+			"CREATE KEYSPACE IF NOT EXISTS meta WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS meta.%s (id uuid PRIMARY KEY, name text)".formatted(table));
+	}
+
+	@Test
+	@Order(31)
+	@DisplayName("Prepared INSERT exposes variable definitions and empty result-set definitions")
+	void testPreparedInsertMetadata() {
+		createMetaTable("people");
+
+		final var prepared = session.prepare("INSERT INTO meta.people (id, name) VALUES (?, ?)");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(2, variables.size());
+		assertEquals("id", variables.get(0).getName().asInternal());
+		assertEquals(DataTypes.UUID, variables.get(0).getType());
+		assertEquals("name", variables.get(1).getName().asInternal());
+		assertEquals(DataTypes.TEXT, variables.get(1).getType());
+
+		assertEquals(0, prepared.getResultSetDefinitions().size());
+	}
+
+	@Test
+	@Order(32)
+	@DisplayName("Prepared SELECT exposes WHERE bind markers and result-set columns")
+	void testPreparedSelectMetadata() {
+		createMetaTable("people");
+
+		final var prepared = session.prepare("SELECT * FROM meta.people WHERE id = ?");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(1, variables.size());
+		assertEquals("id", variables.get(0).getName().asInternal());
+		assertEquals(DataTypes.UUID, variables.get(0).getType());
+
+		final var result = prepared.getResultSetDefinitions();
+		assertEquals(2, result.size());
+		assertTrue(result.contains("id"));
+		assertTrue(result.contains("name"));
+	}
+
+	@Test
+	@Order(33)
+	@DisplayName("Bound statement encodes values addressable by index and by name")
+	void testBoundStatementContract() {
+		createMetaTable("people");
+
+		final var prepared = session.prepare("INSERT INTO meta.people (id, name) VALUES (?, ?)");
+		final var bound = prepared.bind(ANN_ID, "Ann");
+		assertEquals(2, bound.size());
+		assertEquals(DataTypes.UUID, bound.getType(0));
+		assertEquals(0, bound.firstIndexOf("id"));
+		assertEquals(1, bound.firstIndexOf("name"));
+		assertEquals(ANN_ID, bound.getUuid(0));
+		assertEquals("Ann", bound.getString("name"));
+		assertNotNull(bound.getBytesUnsafe(0));
+	}
+
+	@Test
+	@Order(34)
+	@DisplayName("boundStatementBuilder produces an executable bound statement")
+	void testBoundStatementBuilder() {
+		createMetaTable("builders");
+
+		final var prepared = session.prepare("INSERT INTO meta.builders (id, name) VALUES (?, ?)");
+		session.execute(prepared.boundStatementBuilder(BOB_ID, "Bob").build());
+
+		final var name = session.execute("SELECT name FROM meta.builders WHERE id = " + BOB_ID)
+			.one().getString("name");
+		assertEquals("Bob", name);
+	}
+
+	@Test
+	@Order(35)
+	@DisplayName("Binding more values than bind markers throws IllegalArgumentException")
+	void testBindTooManyValues() {
+		createMetaTable("people");
+
+		final var prepared = session.prepare("INSERT INTO meta.people (id, name) VALUES (?, ?)");
+		assertThrows(IllegalArgumentException.class, () -> prepared.bind(ANN_ID, "Ann", "extra"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

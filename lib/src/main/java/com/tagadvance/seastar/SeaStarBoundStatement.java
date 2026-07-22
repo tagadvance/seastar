@@ -14,16 +14,18 @@ import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.IntStream;
 import org.jspecify.annotations.NonNull;
 
 public class SeaStarBoundStatement implements BoundStatement {
 
 	private final SeaStarDriverContext context;
 	private final PreparedStatement preparedStatement;
-	private final Object[] values;
+	private Object[] values;
 	private final AtomicLong timestamp = new AtomicLong();
 
 	public SeaStarBoundStatement(final SeaStarDriverContext context,
@@ -54,7 +56,9 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public List<ByteBuffer> getValues() {
-		throw new UnsupportedOperationException();
+		return IntStream.range(0, size())
+			.mapToObj(this::getBytesUnsafe)
+			.toList();
 	}
 
 	@Override
@@ -183,34 +187,58 @@ public class SeaStarBoundStatement implements BoundStatement {
 
 	@Override
 	public int firstIndexOf(final @NonNull String name) {
-		return 0;
+		final var index = preparedStatement.getVariableDefinitions().firstIndexOf(name);
+		if (index < 0) {
+			throw new IllegalArgumentException(
+				"%s is not a variable in this bound statement".formatted(name));
+		}
+
+		return index;
 	}
 
 	@Override
 	public int firstIndexOf(final @NonNull CqlIdentifier id) {
-		return 0;
+		final var index = preparedStatement.getVariableDefinitions().firstIndexOf(id);
+		if (index < 0) {
+			throw new IllegalArgumentException(
+				"%s is not a variable in this bound statement".formatted(id));
+		}
+
+		return index;
 	}
 
 	@Override
+	@SuppressWarnings("unchecked")
 	public ByteBuffer getBytesUnsafe(final int i) {
-		return null;
+		final var value = i < values.length ? values[i] : null;
+		if (value == null) {
+			return null;
+		}
+		final var codec = codecRegistry().codecFor(getType(i));
+
+		return codec.encode(value, protocolVersion());
 	}
 
 	@Override
 	@NonNull
 	public BoundStatement setBytesUnsafe(final int i, final ByteBuffer v) {
+		if (i >= values.length) {
+			values = Arrays.copyOf(values, i + 1);
+		}
+		values[i] = codecRegistry().codecFor(getType(i)).decode(v, protocolVersion());
+
 		return this;
 	}
 
 	@Override
 	public int size() {
-		return 0;
+		return preparedStatement.getVariableDefinitions().size();
 	}
 
 	@Override
 	@NonNull
 	public DataType getType(final int i) {
-		return null;
+		return preparedStatement.getVariableDefinitions().get(i).getType();
 	}
 
 	@Override
