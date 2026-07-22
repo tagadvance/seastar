@@ -35,8 +35,8 @@ public interface SeaStarRow extends SeaStarReadWriteLock, Row, Serializable {
 	default void validate(final int i, final Object value) {
 		final var dataType = getColumnDefinitions().get(i).getType();
 		final var codec = context().getCodecRegistry().codecFor(dataType);
-		checkArgument(codec.accepts(value), "Value %d (%s) is not compatible with column type %s",
-			i, value, dataType);
+		checkArgument(value == null || codec.accepts(value),
+			"Value %d (%s) is not compatible with column type %s", i, value, dataType);
 	}
 
 	Row snapshot();

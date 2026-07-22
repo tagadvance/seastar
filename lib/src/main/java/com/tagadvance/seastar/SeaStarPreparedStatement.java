@@ -84,7 +84,7 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 
 	@Override
 	public @NonNull BoundStatement bind(final Object @NonNull ... values) {
-		return new SeaStarBoundStatement(context, this);
+		return new SeaStarBoundStatement(context, this, values);
 	}
 
 	@Override

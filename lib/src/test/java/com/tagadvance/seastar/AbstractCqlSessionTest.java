@@ -13,11 +13,14 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
+import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -281,6 +284,74 @@ abstract class AbstractCqlSessionTest {
 			    PRIMARY KEY ((id), category)
 			);""");
 		assertNotNull(resultSet2);
+	}
+
+	private static final UUID ANN_ID = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
+	private static final UUID BOB_ID = UUID.fromString("223e4567-e89b-12d3-a456-426614174001");
+	private static final UUID CAROL_ID = UUID.fromString("323e4567-e89b-12d3-a456-426614174002");
+
+	private static String nameOf(final UUID id) {
+		return session.execute("SELECT * FROM foo.people").all().stream()
+			.filter(row -> id.equals(row.getUuid("id")))
+			.map(row -> row.getString("name"))
+			.reduce((a, b) -> {
+				throw new AssertionError("More than one row for id " + id);
+			})
+			.orElse(null);
+	}
+
+	@Test
+	@Order(8)
+	@DisplayName("INSERT with bind markers stores a row readable by SELECT")
+	void testInsertWithBindMarkers() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.people (id uuid PRIMARY KEY, name text);");
+
+		final var prepared = session.prepare(
+			"INSERT INTO foo.people (id, name) VALUES (?, ?)");
+		final var resultSet = session.execute(prepared.bind(ANN_ID, "Ann"));
+		assertNotNull(resultSet);
+
+		assertEquals("Ann", nameOf(ANN_ID));
+	}
+
+	@Test
+	@Order(9)
+	@DisplayName("INSERT with literal values stores a row readable by SELECT")
+	void testInsertWithLiterals() {
+		final var resultSet = session.execute(
+			"INSERT INTO foo.people (id, name) VALUES (223e4567-e89b-12d3-a456-426614174001, 'Bob')");
+		assertNotNull(resultSet);
+
+		assertEquals("Bob", nameOf(BOB_ID));
+	}
+
+	@Test
+	@Order(10)
+	@DisplayName("INSERT IF NOT EXISTS does not overwrite an existing row")
+	void testInsertIfNotExists() {
+		session.execute(
+			"INSERT INTO foo.people (id, name) VALUES (323e4567-e89b-12d3-a456-426614174002, 'Carol') IF NOT EXISTS");
+		session.execute(
+			"INSERT INTO foo.people (id, name) VALUES (323e4567-e89b-12d3-a456-426614174002, 'Dave') IF NOT EXISTS");
+
+		assertEquals("Carol", nameOf(CAROL_ID));
+	}
+
+	@Test
+	@Order(11)
+	@DisplayName("INSERT into an unknown table throws InvalidQueryException")
+	void testInsertUnknownTable() {
+		assertThrows(InvalidQueryException.class, () -> session.execute(
+			"INSERT INTO foo.nope (id, name) VALUES (323e4567-e89b-12d3-a456-426614174002, 'x')"));
+	}
+
+	@Test
+	@Order(12)
+	@DisplayName("INSERT omitting the primary key throws InvalidQueryException")
+	void testInsertMissingPrimaryKey() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.people (name) VALUES ('Ann')"));
 	}
 
 	@AfterAll
