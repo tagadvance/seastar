@@ -559,6 +559,27 @@ abstract class AbstractCqlSessionTest {
 		assertDoesNotThrow(() -> session.execute("DROP KEYSPACE IF EXISTS throwaway"));
 	}
 
+	@Test
+	@Order(30)
+	@DisplayName("TRUNCATE empties the table but keeps it; unknown table throws InvalidQueryException")
+	void testTruncate() {
+		session.execute("CREATE TABLE foo.temporary (id uuid PRIMARY KEY, name text)");
+		session.execute(
+			"INSERT INTO foo.temporary (id, name) VALUES (523e4567-e89b-12d3-a456-426614174004, 'Eve')");
+
+		session.execute("TRUNCATE foo.temporary");
+
+		assertEquals(0, session.execute("SELECT * FROM foo.temporary").all().size());
+
+		if (session.getContext() instanceof SeaStarDriverContext seaStarContext) {
+			assertTrue(seaStarContext.getSeaStarKeyspace("foo")
+				.flatMap(keyspace -> keyspace.getSeaStarTable("temporary")).isPresent());
+		}
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("TRUNCATE TABLE foo.nope"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

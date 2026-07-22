@@ -15,6 +15,7 @@ import com.tagadvance.seastar.handlers.DropKeyspaceHandler;
 import com.tagadvance.seastar.handlers.DropTableHandler;
 import com.tagadvance.seastar.handlers.InsertHandler;
 import com.tagadvance.seastar.handlers.SelectHandler;
+import com.tagadvance.seastar.handlers.TruncateHandler;
 import com.tagadvance.seastar.handlers.UpdateHandler;
 import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.LinkedList;
@@ -60,6 +61,7 @@ public class SeaStarCqlRequestHandler {
 			new InsertHandler(session::getKeyspace),
 			new UpdateHandler(session::getKeyspace),
 			new DeleteHandler(session::getKeyspace),
+			new TruncateHandler(session::getKeyspace),
 			new SelectHandler());
 	}
 
