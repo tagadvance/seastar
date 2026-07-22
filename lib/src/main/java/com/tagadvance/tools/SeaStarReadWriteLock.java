@@ -1,6 +1,7 @@
 package com.tagadvance.tools;
 
 import com.datastax.oss.driver.shaded.guava.common.util.concurrent.UncheckedExecutionException;
+import com.google.common.base.Throwables;
 import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -49,9 +50,7 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		try {
 			return callable.call();
 		} catch (final Exception e) {
-			if (e instanceof RuntimeException re) {
-				throw re;
-			}
+			Throwables.throwIfUnchecked(e);
 
 			throw new UncheckedExecutionException(e);
 		} finally {
@@ -64,9 +63,7 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		try {
 			return callable.call();
 		} catch (final Exception e) {
-			if (e instanceof RuntimeException re) {
-				throw re;
-			}
+			Throwables.throwIfUnchecked(e);
 
 			throw new UncheckedExecutionException(e);
 		} finally {
