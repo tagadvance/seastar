@@ -11,6 +11,7 @@ import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -80,7 +81,7 @@ public class VolatileRow implements SeaStarRow {
 			final var isDetached = isDetached();
 			final var size = size();
 			final var columnDefinitions = table.snapshot();
-			final var d = List.copyOf(data);
+			final var d = new ArrayList<>(data);
 
 			return new Row() {
 
