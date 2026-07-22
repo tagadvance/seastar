@@ -9,6 +9,7 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.VolatileUserDefinedType;
 import com.tagadvance.seastar.VolatileUserDefinedType.UserDefinedTypeDefinition;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -76,10 +77,21 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 						"A user type with name '%s' already exists".formatted(udtName)));
 			}
 		} else {
-			final var isFrozen = false;
-			final var definitions = Collections.<UserDefinedTypeDefinition>emptyList();
-			final var udt = new VolatileUserDefinedType(context, ksx.name(), CqlIdentifier.fromInternal(udtName),
-				isFrozen, definitions);
+			final var definitions = new ArrayList<UserDefinedTypeDefinition>(fieldNames.size());
+			for (int i = 0; i < fieldNames.size(); i++) {
+				final var fieldName = CqlIdentifier.fromInternal(fieldNames.get(i).toString());
+				final var dataType = fieldTypes.get(i)
+					.toDataType(ksx, executionInfo.getCoordinator());
+				if (dataType.isEmpty()) {
+					return CompletableFuture.failedStage(
+						new InvalidQueryException(executionInfo.getCoordinator(),
+							"Unknown type for field '%s'".formatted(fieldNames.get(i))));
+				}
+				definitions.add(new UserDefinedTypeDefinition(fieldName, dataType.get()));
+			}
+			// Frozen is a property of the referencing column, not the stored type.
+			final var udt = new VolatileUserDefinedType(context, ksx.name(),
+				CqlIdentifier.fromInternal(udtName), false, definitions);
 			ksx.putSeaStarUserDefinedType(udtName, udt);
 		}
 
