@@ -1,0 +1,55 @@
+PLAN: Support INSERT INTO ... VALUES (InsertHandler)
+
+DEPENDS ON: a_create_table_persistence (columns must exist to validate/store values).
+
+READ FIRST
+- Skill: .claude/skills/add-cql-statement/SKILL.md
+- CreateKeyspaceHandler.java / CreateTableHandler.java  (handler patterns)
+- VolatileTable.java addRow / SeaStarTable.addRow(Object...) and VolatileRow.java
+- SeaStarCqlRequestHandler.java (registry wiring; note `values`/bindings threading)
+
+INSPECT
+  ./gradlew :lib:inspectRaw -Pquery="INSERT INTO foo.users (user_id, first_name) VALUES (?, ?)" --console=plain -q 2>/dev/null
+  ./gradlew :lib:inspectRaw -Pquery="INSERT INTO foo.users (user_id, first_name) VALUES (123e4567-e89b-12d3-a456-426614174000, 'Ann')" --console=plain -q 2>/dev/null
+  ./gradlew :lib:inspectRaw -Pquery="INSERT INTO foo.users (user_id, first_name) VALUES (?, ?) IF NOT EXISTS" --console=plain -q 2>/dev/null
+
+Raw class: org.apache.cassandra.cql3.statements.UpdateStatement$ParsedInsert
+Relevant fields:
+  QualifiedName qualifiedName   keyspace + table (keyspace may be null -> use session keyspace)
+  List columnNames              List<ColumnIdentifier>
+  List columnValues             List<Term.Raw>; bind markers are AbstractMarker$Raw with int bindIndex;
+                                literals are Constants$Literal etc.
+  boolean ifNotExists, ifExists
+  Attributes$Raw attrs          timestamp / TTL (may ignore for now; log if present)
+
+IMPLEMENTATION
+1. New handler: lib/src/main/java/com/tagadvance/seastar/handlers/InsertHandler.java
+   implements CqlHandler<UpdateStatement.ParsedInsert>, canProcess = instanceof ParsedInsert.
+2. Resolve keyspace (qualifiedName.keyspace or session keyspace via a Supplier<Optional<CqlIdentifier>>
+   like CreateTableHandler); resolve table; InvalidQueryException if missing.
+3. Build a row in table column order:
+   - columnNames[i] pairs with columnValues[i].
+   - For a marker (AbstractMarker$Raw), take bindings[bindIndex].
+   - For a literal, extract its value. Prefer converting via the column's DataType. Simplest first
+     pass: use the Term.Raw's raw text / getText() and coerce, or store the literal's parsed value.
+     Inspect Constants$Literal fields (type, text) with the inspector to decide.
+   - Columns not named in the INSERT get null.
+   Store row values positionally matching table.getColumns() order so SELECT reads them back correctly.
+4. IF NOT EXISTS: if a row with the same primary key already exists, do NOT overwrite; otherwise insert.
+   (Requires primary-key identity from plan a. If PK plumbing is incomplete, implement plain insert
+   and leave a TODO for LWT semantics.)
+5. Register InsertHandler in the CqlHandlerRegistry list inside SeaStarCqlRequestHandler.
+
+FIDELITY (verify against ContainerCqlSessionTest)
+  - unknown keyspace/table -> InvalidQueryException.
+  - unknown column in column list -> InvalidQueryException.
+  - value/type mismatch -> InvalidQueryException (or CodecException at bind time; confirm which).
+  - missing primary key column -> InvalidQueryException.
+
+TESTS (add to AbstractCqlSessionTest, @Order after CREATE TABLE tests)
+  Insert with bind markers and with literals, then SELECT * and assert the row values.
+  Insert IF NOT EXISTS twice, assert second does not overwrite.
+
+VERIFY
+  ./gradlew :lib:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest'
+  ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'

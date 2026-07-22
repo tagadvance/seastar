@@ -2,6 +2,7 @@ package com.tagadvance.seastar;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
+import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.tagadvance.tools.SeaStarReadWriteLock;
@@ -34,6 +35,18 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	}
 
 	void addColumn(final SeaStarColumn column);
+
+	/**
+	 * Marks an already-added column as part of the partition key. Partition key columns are ordered
+	 * in the sequence they are marked.
+	 */
+	void markPartitionKey(CqlIdentifier name);
+
+	/**
+	 * Marks an already-added column as a clustering column with the given order. Clustering columns
+	 * are ordered in the sequence they are marked.
+	 */
+	void markClustering(CqlIdentifier name, ClusteringOrder order);
 
 	default SeaStarRow addRow(final Object... values) {
 		return addRow(List.of(values));

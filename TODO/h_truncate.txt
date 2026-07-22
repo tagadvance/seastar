@@ -1,0 +1,31 @@
+PLAN: Support TRUNCATE [TABLE] (TruncateHandler)
+
+Lowest effort. Storage support already exists: VolatileTable.truncate() clears all rows.
+
+READ FIRST
+- Skill: .claude/skills/add-cql-statement/SKILL.md
+- VolatileTable.truncate()  <-- already implemented.
+- CreateTableHandler.java (keyspace/table resolution pattern).
+
+INSPECT
+  ./gradlew :lib:inspectRaw -Pquery="TRUNCATE foo.users" --console=plain -q 2>/dev/null
+  ./gradlew :lib:inspectRaw -Pquery="TRUNCATE TABLE foo.users" --console=plain -q 2>/dev/null
+
+Raw class: org.apache.cassandra.cql3.statements.TruncateStatement (confirm; may be the raw directly).
+Fields: a QualifiedName / table + keyspace reference.
+
+IMPLEMENTATION
+1. New handler TruncateHandler implements CqlHandler for the TRUNCATE raw type.
+2. Resolve keyspace/table. Missing keyspace or table -> InvalidQueryException.
+3. table.truncate(); return empty result.
+4. Register in the CqlHandlerRegistry list in SeaStarCqlRequestHandler.
+
+FIDELITY (verify against ContainerCqlSessionTest)
+  - unknown keyspace/table -> InvalidQueryException.
+
+TESTS (AbstractCqlSessionTest)
+  Insert rows, TRUNCATE, SELECT * and assert zero rows; table still exists (getSeaStarTable present).
+
+VERIFY
+  ./gradlew :lib:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest'
+  ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'

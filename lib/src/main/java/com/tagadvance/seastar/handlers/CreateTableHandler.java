@@ -5,12 +5,17 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
+import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
@@ -72,28 +77,51 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 		} else {
 			final var table1 = ksx.newSeaStarTable(table);
 
-			final Map<ColumnIdentifier, Object> rawColumns = Reflections.getDeclaredField(raw, "rawColumns",
-				Map.class).orElseGet(Collections::emptyMap);
-			rawColumns.forEach((key, value) -> {
+			final Map<ColumnIdentifier, Object> rawColumns = Reflections.getDeclaredField(raw,
+				"rawColumns", Map.class).orElseGet(Collections::emptyMap);
+			final List<ColumnIdentifier> partitionKeyColumns = Reflections.getDeclaredField(raw,
+				"partitionKeyColumns", List.class).orElseGet(Collections::emptyList);
+			final List<ColumnIdentifier> clusteringColumns = Reflections.getDeclaredField(raw,
+				"clusteringColumns", List.class).orElseGet(Collections::emptyList);
+			final Map<ColumnIdentifier, Boolean> clusteringOrder = Reflections.getDeclaredField(raw,
+				"clusteringOrder", Map.class).orElseGet(Collections::emptyMap);
+			final Set<ColumnIdentifier> staticColumns = Reflections.getDeclaredField(raw,
+				"staticColumns", Set.class).orElseGet(Collections::emptySet);
+
+			rawColumns.values().forEach(value ->
 				Reflections.getDeclaredField(value, "rawMask", ColumnMask.Raw.class).ifPresent(mask -> {
 					throw new UnsupportedOperationException("Column masks are not supported");
-				});
+				}));
 
-				Reflections.getDeclaredField(value, "rawType", Object.class)
+			// Cassandra orders columns partition key, then clustering, then the rest alphabetically.
+			final List<ColumnIdentifier> ordered = new ArrayList<>(partitionKeyColumns);
+			ordered.addAll(clusteringColumns);
+			rawColumns.keySet().stream()
+				.filter(key -> !partitionKeyColumns.contains(key) && !clusteringColumns.contains(key))
+				.sorted(Comparator.comparing(ColumnIdentifier::toString))
+				.forEach(ordered::add);
+
+			for (final var key : ordered) {
+				final var value = rawColumns.get(key);
+				final var dataType = Reflections.getDeclaredField(value, "rawType", Object.class)
 					.map(SeaStarRawType::from)
-					.ifPresent(rawType -> {
-					final var type = rawType.type();
-					final var frozen = rawType.isFrozen();
+					.flatMap(SeaStarRawType::toDataType);
+				if (dataType.isEmpty()) {
+					// FIXME: collections, UDTs, tuples, and vectors are not yet persisted.
+					LOG.warn("Skipping column '{}' with unsupported type", key);
+					continue;
+				}
+				final var name = CqlIdentifier.fromInternal(key.toString()); // TODO: ensure valid name
+				table1.addColumn(name, dataType.get(), staticColumns.contains(key));
+			}
 
-					final var string = key.toString(); // TODO: ensure valid name
-					final var cqlIdentifier = CqlIdentifier.fromInternal(string);
-
-					//table1.addColumn(cqlIdentifier, type);
-					System.gc();
-				});
+			partitionKeyColumns.forEach(key ->
+				table1.markPartitionKey(CqlIdentifier.fromInternal(key.toString())));
+			clusteringColumns.forEach(key -> {
+				final boolean ascending = clusteringOrder.getOrDefault(key, Boolean.TRUE);
+				table1.markClustering(CqlIdentifier.fromInternal(key.toString()),
+					ascending ? ClusteringOrder.ASC : ClusteringOrder.DESC);
 			});
-			// FIXME: columns, keys, and clustering columns
-			// assending default
 		}
 
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
