@@ -9,6 +9,7 @@ import com.datastax.oss.driver.api.core.type.SetType;
 import com.datastax.oss.driver.api.core.type.TupleType;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
+import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
 import com.datastax.oss.driver.internal.core.cql.CqlPrepareAsyncProcessor;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
 import com.datastax.oss.driver.internal.core.util.concurrent.CompletableFutures;
@@ -56,6 +57,11 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 		this.cache = decorator.apply(baseCache).build();
 		context.ifPresent((ctx) -> {
 			LOG.info("Adding handler to invalidate cached prepared statements on type changes");
+			// VolatileDriverContext reuses the driver's event bus, so registering the same
+			// TypeChangeEvent listener the real driver uses evicts cached prepared statements whose
+			// bind or result variables reference a UDT once something (e.g. ALTER TYPE) fires the event.
+			((InternalDriverContext) ctx).getEventBus()
+				.register(TypeChangeEvent.class, this::onTypeChanged);
 		});
 	}
 
