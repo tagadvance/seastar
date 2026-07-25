@@ -8,6 +8,7 @@ import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
@@ -127,6 +128,27 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 				"attachmentPoint must not be null");
 			getFieldTypes().forEach(type -> type.attach(attachmentPoint));
 		});
+	}
+
+	@Override
+	public boolean equals(final Object other) {
+		if (other == this) {
+			return true;
+		} else if (other instanceof UserDefinedType that) {
+			// frozen is ignored in comparisons, matching DefaultUserDefinedType. This lets a
+			// frozen column type equal the non-frozen declared type, so UdtCodec.accepts matches a
+			// bound value.
+			return keyspace.equals(that.getKeyspace()) && name.equals(that.getName())
+				&& getFieldNames().equals(that.getFieldNames())
+				&& getFieldTypes().equals(that.getFieldTypes());
+		} else {
+			return false;
+		}
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(keyspace, name, getFieldNames(), getFieldTypes());
 	}
 
 	public record UserDefinedTypeDefinition(@NonNull CqlIdentifier name,
