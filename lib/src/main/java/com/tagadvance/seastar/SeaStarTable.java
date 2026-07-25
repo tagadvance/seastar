@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
+import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.tagadvance.tools.SeaStarReadWriteLock;
@@ -62,6 +63,12 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	void addRow(final SeaStarRow row);
 
 	void removeRowIf(Predicate<SeaStarRow> predicate);
+
+	/**
+	 * Records a secondary index on this table, keyed by its name. Exposed through
+	 * {@link #getIndexes()}.
+	 */
+	void addIndex(IndexMetadata index);
 
 	Stream<SeaStarRow> rows();
 

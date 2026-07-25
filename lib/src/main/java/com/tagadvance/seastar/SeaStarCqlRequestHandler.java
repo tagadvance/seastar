@@ -11,6 +11,7 @@ import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.tagadvance.seastar.handlers.BatchHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
+import com.tagadvance.seastar.handlers.CreateIndexHandler;
 import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
 import com.tagadvance.seastar.handlers.CreateTableHandler;
 import com.tagadvance.seastar.handlers.CreateTypeHandler;
@@ -60,6 +61,7 @@ public class SeaStarCqlRequestHandler {
 			new CreateKeyspaceHandler(), new UseKeyspaceHandler(session::setKeyspace),
 			new CreateTypeHandler(session::getKeyspace),
 			new CreateTableHandler(session::getKeyspace),
+			new CreateIndexHandler(session::getKeyspace),
 			new DropTableHandler(session::getKeyspace),
 			new DropKeyspaceHandler(session::getKeyspace, session::setKeyspace),
 			new InsertHandler(session::getKeyspace),

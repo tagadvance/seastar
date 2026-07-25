@@ -42,6 +42,7 @@ public class VolatileTable implements SeaStarTable {
 	private final List<SeaStarColumn> columns;
 	private final List<CqlIdentifier> partitionKey;
 	private final Map<CqlIdentifier, ClusteringOrder> clusteringColumns;
+	private final Map<CqlIdentifier, IndexMetadata> indexes;
 	private final List<SeaStarRow> rows;
 	private AttachmentPoint attachmentPoint;
 
@@ -53,6 +54,7 @@ public class VolatileTable implements SeaStarTable {
 		this.columns = new ArrayList<>();
 		this.partitionKey = new ArrayList<>();
 		this.clusteringColumns = new LinkedHashMap<>();
+		this.indexes = new LinkedHashMap<>();
 		this.rows = new ArrayList<>();
 		this.attachmentPoint = context;
 	}
@@ -126,9 +128,16 @@ public class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
+	public void addIndex(final IndexMetadata index) {
+		requireNonNull(index, "index must not be null");
+
+		writeLock(() -> indexes.put(index.getName(), index));
+	}
+
+	@Override
 	@NonNull
 	public Map<CqlIdentifier, IndexMetadata> getIndexes() {
-		throw new UnsupportedOperationException("Indexes are not supported in SeaStarTable");
+		return readLockUnchecked(() -> Map.copyOf(indexes));
 	}
 
 	@Override
