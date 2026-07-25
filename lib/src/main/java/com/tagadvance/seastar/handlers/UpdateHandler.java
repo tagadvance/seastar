@@ -83,34 +83,50 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var primaryKey = primaryKeyNames(table);
 
-		final List<Object> conditions = Reflections.getDeclaredField(raw, "conditions", List.class)
-			.orElseGet(Collections::emptyList);
-		if (!conditions.isEmpty()) {
-			throw new UnsupportedOperationException(
-				"Conditional updates (IF ...) are not currently supported");
-		}
+		final List<Pair<Object, Object>> conditionList = Reflections.getDeclaredField(raw,
+			"conditions", List.class).orElseGet(Collections::emptyList);
 		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
 			.orElse(false);
 
 		final List<Assignment> assignments;
 		final Where where;
+		final List<Conditions.Condition> conditions;
 		try {
 			assignments = resolveAssignments(table, primaryKey, raw, codecRegistry, coordinator,
 				bindings);
 			where = resolveWhere(table, primaryKey, raw, codecRegistry, coordinator, bindings);
+			conditions = Conditions.resolve(table, primaryKey, conditionList, codecRegistry,
+				coordinator, bindings);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
 
-		table.writeLock(() -> {
+		final AsyncResultSet result = table.writeLockUnchecked(() -> {
 			final var matched = table.rows().filter(where.predicate()).toList();
-			if (!matched.isEmpty()) {
-				for (final var row : matched) {
-					for (final var assignment : assignments) {
-						row.set(assignment.index(), assignment.value());
-					}
+
+			if (ifExists) {
+				if (matched.isEmpty()) {
+					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-			} else if (!ifExists && where.upsertKey() != null) {
+				apply(matched, assignments);
+				return AppliedResultSets.of(context, table, executionInfo, true);
+			}
+
+			if (!conditions.isEmpty()) {
+				if (matched.isEmpty()) {
+					return AppliedResultSets.of(context, table, executionInfo, false);
+				}
+				final var existing = matched.get(0).snapshot();
+				if (!Conditions.hold(conditions, existing)) {
+					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
+				}
+				apply(matched, assignments);
+				return AppliedResultSets.of(context, table, executionInfo, true);
+			}
+
+			if (!matched.isEmpty()) {
+				apply(matched, assignments);
+			} else if (where.upsertKey() != null) {
 				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 				where.upsertKey().forEach(values::set);
 				for (final var assignment : assignments) {
@@ -118,9 +134,19 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				}
 				table.addRow(values);
 			}
+
+			return newAsyncResultSet(executionInfo);
 		});
 
-		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
+		return CompletableFuture.completedStage(result);
+	}
+
+	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments) {
+		for (final var row : matched) {
+			for (final var assignment : assignments) {
+				row.set(assignment.index(), assignment.value());
+			}
+		}
 	}
 
 	private record Assignment(int index, Object value) {

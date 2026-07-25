@@ -122,19 +122,22 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 			return true;
 		};
 
-		table.writeLock(() -> {
+		final AsyncResultSet result = table.writeLockUnchecked(() -> {
 			if (ifNotExists) {
-				if (table.rows().noneMatch(samePrimaryKey)) {
+				final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
+				if (existing == null) {
 					table.addRow(values);
+					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-			} else {
-				// INSERT is an upsert; replace the existing row sharing this primary key.
-				table.removeRowIf(samePrimaryKey);
-				table.addRow(values);
+				return AppliedResultSets.ofExisting(context, table, executionInfo, existing.snapshot());
 			}
+			// INSERT is an upsert; replace the existing row sharing this primary key.
+			table.removeRowIf(samePrimaryKey);
+			table.addRow(values);
+			return newAsyncResultSet(executionInfo);
 		});
 
-		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
+		return CompletableFuture.completedStage(result);
 	}
 
 }
