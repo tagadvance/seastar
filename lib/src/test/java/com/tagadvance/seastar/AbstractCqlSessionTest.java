@@ -11,7 +11,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.cql.BatchStatement;
+import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
 import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
@@ -841,6 +844,52 @@ abstract class AbstractCqlSessionTest {
 		final var row = session.execute("SELECT name, age FROM foo.lwt WHERE id = 44").one();
 		assertEquals("orig", row.getString("name"));
 		assertEquals(99, row.getInt("age"));
+	}
+
+	@Test
+	@Order(45)
+	@DisplayName("BATCH parsed from a CQL string applies every child statement")
+	void testCqlStringBatch() {
+		createLwtTable();
+
+		session.execute("BEGIN BATCH "
+			+ "INSERT INTO foo.lwt (id, name, age) VALUES (45, 'batch-a', 1); "
+			+ "UPDATE foo.lwt SET name = 'batch-b' WHERE id = 45; "
+			+ "APPLY BATCH");
+
+		assertEquals("batch-b", lwtName(45));
+	}
+
+	@Test
+	@Order(46)
+	@DisplayName("Driver BatchStatement applies every child statement")
+	void testDriverBatchStatement() {
+		createLwtTable();
+
+		final var batch = BatchStatement.builder(DefaultBatchType.LOGGED)
+			.addStatement(
+				SimpleStatement.newInstance("INSERT INTO foo.lwt (id, name) VALUES (46, 'driver-a')"))
+			.addStatement(
+				SimpleStatement.newInstance("UPDATE foo.lwt SET name = 'driver-b' WHERE id = 46"))
+			.build();
+
+		final var result = session.execute(batch);
+
+		assertTrue(result.wasApplied());
+		assertEquals("driver-b", lwtName(46));
+	}
+
+	@Test
+	@Order(47)
+	@DisplayName("A SELECT inside a batch is rejected with InvalidQueryException")
+	void testSelectInBatchRejected() {
+		createLwtTable();
+
+		final var batch = BatchStatement.builder(DefaultBatchType.LOGGED)
+			.addStatement(SimpleStatement.newInstance("SELECT * FROM foo.lwt WHERE id = 47"))
+			.build();
+
+		assertThrows(InvalidQueryException.class, () -> session.execute(batch));
 	}
 
 	@AfterAll
