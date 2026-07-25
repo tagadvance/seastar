@@ -9,6 +9,20 @@ import com.datastax.oss.driver.api.core.metrics.Metrics;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.google.errorprone.annotations.ThreadSafe;
+import com.tagadvance.seastar.handlers.BatchHandler;
+import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
+import com.tagadvance.seastar.handlers.CreateIndexHandler;
+import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
+import com.tagadvance.seastar.handlers.CreateTableHandler;
+import com.tagadvance.seastar.handlers.CreateTypeHandler;
+import com.tagadvance.seastar.handlers.DeleteHandler;
+import com.tagadvance.seastar.handlers.DropKeyspaceHandler;
+import com.tagadvance.seastar.handlers.DropTableHandler;
+import com.tagadvance.seastar.handlers.InsertHandler;
+import com.tagadvance.seastar.handlers.SelectHandler;
+import com.tagadvance.seastar.handlers.TruncateHandler;
+import com.tagadvance.seastar.handlers.UpdateHandler;
+import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -22,12 +36,39 @@ public class SeaStarCqlSession implements CqlSession {
 	private final SeaStarDriverContext context;
 	private final AtomicReference<CqlIdentifier> keyspace = new AtomicReference<>();
 	private final SeaStarRequestProcessorRegistry registry;
+	private final CqlHandlerRegistry handlerRegistry;
 
 	public SeaStarCqlSession(final @NonNull SeaStarDriverContext context,
 		final @Nullable CqlIdentifier keyspace) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace.set(keyspace);
 		this.registry = buildSeaStarRequestProcessorRegistry();
+		this.handlerRegistry = buildHandlerRegistry();
+	}
+
+	// Built once and shared across every request handler; the handlers are stateless and thread-safe
+	// (they hold only this session's keyspace callbacks), so a single immutable registry is reused
+	// rather than reallocating all handlers per query. This is the single place to register a new
+	// statement handler.
+	private CqlHandlerRegistry buildHandlerRegistry() {
+		return new CqlHandlerRegistry(context.getSessionName(),
+			new CreateKeyspaceHandler(),
+			new UseKeyspaceHandler(this::setKeyspace),
+			new CreateTypeHandler(this::getKeyspace),
+			new CreateTableHandler(this::getKeyspace),
+			new CreateIndexHandler(this::getKeyspace),
+			new DropTableHandler(this::getKeyspace),
+			new DropKeyspaceHandler(this::getKeyspace, this::setKeyspace),
+			new InsertHandler(this::getKeyspace),
+			new UpdateHandler(this::getKeyspace),
+			new DeleteHandler(this::getKeyspace),
+			new TruncateHandler(this::getKeyspace),
+			new BatchHandler(this::handlerRegistry),
+			new SelectHandler());
+	}
+
+	CqlHandlerRegistry handlerRegistry() {
+		return handlerRegistry;
 	}
 
 	private SeaStarRequestProcessorRegistry buildSeaStarRequestProcessorRegistry() {
