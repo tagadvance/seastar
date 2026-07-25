@@ -54,10 +54,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final ExecutionInfo executionInfo, final RawStatement raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		if (raw.parameters.isDistinct) {
-			LOG.warn("DISTINCT is not supported, ignoring");
-		}
-
 		final var optionalKeyspace = context.getSeaStarKeyspace(
 			CqlIdentifier.fromInternal(raw.keyspace()));
 		if (optionalKeyspace.isEmpty()) {
@@ -73,17 +69,23 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 		final var table = optionalTable.get();
 		final var codecRegistry = context.getCodecRegistry();
+		final var distinct = raw.parameters.isDistinct;
 
 		final Projection projection;
 		final Predicate<SeaStarRow> predicate;
 		final Integer limit;
+		final int[] distinctKey;
 		try {
 			projection = resolveProjection(table, raw.selectClause, coordinator);
+			if (distinct) {
+				validateDistinct(table, projection, coordinator);
+			}
 			final var relations = raw.whereClause == null ? List.<Relation>of()
 				: raw.whereClause.relations;
 			predicate = resolveWhere(table, raw.parameters.allowFiltering, relations, codecRegistry,
 				coordinator, bindings);
 			limit = resolveLimit(raw.limit, codecRegistry, coordinator, bindings);
+			distinctKey = distinct ? partitionKeyIndices(table) : null;
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -92,6 +94,12 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			var rows = table.rows();
 			if (predicate != null) {
 				rows = rows.filter(predicate);
+			}
+			if (distinctKey != null) {
+				// One row per partition. DISTINCT is validated to select only partition-key and
+				// static columns, so the partition key fully identifies each distinct result.
+				final Set<List<Object>> seen = new HashSet<>();
+				rows = rows.filter(row -> seen.add(partitionKeyValues(row, distinctKey)));
 			}
 			if (limit != null) {
 				rows = rows.limit(limit);
@@ -137,6 +145,44 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 
 		return new Projection(DefaultColumnDefinitions.valueOf(columns), indices);
+	}
+
+	private static void validateDistinct(final SeaStarTable table, final Projection projection,
+		final Node coordinator) {
+		final var partitionKey = partitionKeyNamesOnly(table);
+		// A null projection means SELECT *, which requests every column; validate them all.
+		final var size = table.size();
+		final var selected = projection == null ? null : projection.indices();
+		final var count = selected == null ? size : selected.length;
+		for (int i = 0; i < count; i++) {
+			final var index = selected == null ? i : selected[i];
+			final var column = table.get(index);
+			final var isStatic = column instanceof ColumnMetadata metadata && metadata.isStatic();
+			if (!partitionKey.contains(column.getName()) && !isStatic) {
+				throw new InvalidQueryException(coordinator,
+					("SELECT DISTINCT queries must only request partition key columns and/or static "
+						+ "columns (not %s)").formatted(column.getName().asInternal()));
+			}
+		}
+	}
+
+	private static int[] partitionKeyIndices(final SeaStarTable table) {
+		return table.getPartitionKey().stream().map(ColumnMetadata::getName)
+			.mapToInt(table::firstIndexOf).toArray();
+	}
+
+	private static List<Object> partitionKeyValues(final SeaStarRow row, final int[] indices) {
+		final List<Object> values = new ArrayList<>(indices.length);
+		for (final var index : indices) {
+			values.add(row.getObject(index));
+		}
+
+		return values;
+	}
+
+	private static Set<CqlIdentifier> partitionKeyNamesOnly(final SeaStarTable table) {
+		return table.getPartitionKey().stream().map(ColumnMetadata::getName)
+			.collect(Collectors.toSet());
 	}
 
 	private static Predicate<SeaStarRow> resolveWhere(final SeaStarTable table,
