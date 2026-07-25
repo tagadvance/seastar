@@ -10,6 +10,12 @@ Requires JDK 17 (configured via Gradle toolchain; foojay resolver auto-downloads
 
 All tests should be annotated with a short human-readable `@DisplayName`.
 
+### Testing strategy
+
+`AbstractCqlSessionTest` is how the fidelity goal is measured: one suite, run twice against the same `CqlSession` API, once on a real Cassandra (`ContainerCqlSessionTest`, TestContainers) and once on SeaStar (`SeaStarCqlSessionTest`). Any behavioral divergence surfaces as a failure in one subclass but not the other.
+
+So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest` first, expressed only through the public driver API so both subclasses can run it. Add unit tests when appropriate, for what that suite cannot reach (internals, or error paths a live cluster will not produce), not as a substitute for it.
+
 ```bash
 ./gradlew build                 # compile + test
 ./gradlew :lib:test             # run all tests
