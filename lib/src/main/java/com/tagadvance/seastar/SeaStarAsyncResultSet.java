@@ -19,12 +19,14 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 	private final ExecutionInfo executionInfo;
 	private final CountingIterator<Row> iterator;
 	private final Iterable<Row> currentPage;
+	private final Row firstRow;
 
 	public SeaStarAsyncResultSet(final @NonNull ColumnDefinitions definitions,
 		final @NonNull ExecutionInfo executionInfo, final @NonNull Queue<Row> data) {
 		this.definitions = requireNonNull(definitions, "definitions must not be null");
 		this.executionInfo = requireNonNull(executionInfo, "executionInfo must not be null");
 		requireNonNull(data, "data must not be null");
+		this.firstRow = data.peek();
 
 		this.iterator = new CountingIterator<>(data.size()) {
 			@Override
@@ -74,13 +76,13 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 
 	@Override
 	public boolean wasApplied() {
-		if (!iterator.hasNext()) {
-			// preserve functionality from DefaultAsyncResultSet
-			throw new IllegalStateException(
-				"This method must be called before consuming all the rows");
+		// Mirror DefaultAsyncResultSet: only a lightweight transaction's [applied] column can
+		// report false; every other result set is considered applied.
+		if (firstRow == null || !definitions.contains("[applied]")) {
+			return true;
 		}
 
-		return true;
+		return firstRow.getBoolean("[applied]");
 	}
 
 	public static AsyncResultSet empty(final ExecutionInfo executionInfo) {

@@ -34,6 +34,7 @@ import org.apache.cassandra.cql3.SingleColumnRelation;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.statements.DeleteStatement.Parsed;
+import org.apache.cassandra.utils.Pair;
 
 @ThreadSafe
 public class DeleteHandler implements CqlHandler<Parsed> {
@@ -79,35 +80,65 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var primaryKey = primaryKeyNames(table);
 
-		final List<Object> conditions = Reflections.getDeclaredField(raw, "conditions", List.class)
-			.orElseGet(Collections::emptyList);
-		if (!conditions.isEmpty()) {
-			throw new UnsupportedOperationException(
-				"Conditional deletes (IF ...) are not currently supported");
-		}
+		final List<Pair<Object, Object>> conditionList = Reflections.getDeclaredField(raw,
+			"conditions", List.class).orElseGet(Collections::emptyList);
+		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
+			.orElse(false);
 
 		final int[] deletedColumns;
 		final Predicate<SeaStarRow> predicate;
+		final List<Conditions.Condition> conditions;
 		try {
 			deletedColumns = resolveDeletedColumns(table, primaryKey, raw, coordinator);
 			predicate = resolveWhere(table, primaryKey, raw, codecRegistry, coordinator, bindings);
+			conditions = Conditions.resolve(table, primaryKey, conditionList, codecRegistry,
+				coordinator, bindings);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
 
-		table.writeLock(() -> {
-			if (deletedColumns.length == 0) {
-				table.removeRowIf(predicate);
-			} else {
-				table.rows().filter(predicate).forEach(row -> {
-					for (final var index : deletedColumns) {
-						row.set(index, null);
-					}
-				});
+		final AsyncResultSet result = table.writeLockUnchecked(() -> {
+			final var matched = table.rows().filter(predicate).toList();
+
+			if (ifExists) {
+				if (matched.isEmpty()) {
+					return AppliedResultSets.of(context, table, executionInfo, false);
+				}
+				applyDelete(table, matched, deletedColumns);
+				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
+
+			if (!conditions.isEmpty()) {
+				if (matched.isEmpty()) {
+					return AppliedResultSets.of(context, table, executionInfo, false);
+				}
+				final var existing = matched.get(0).snapshot();
+				if (!Conditions.hold(conditions, existing)) {
+					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
+				}
+				applyDelete(table, matched, deletedColumns);
+				return AppliedResultSets.of(context, table, executionInfo, true);
+			}
+
+			applyDelete(table, matched, deletedColumns);
+
+			return newAsyncResultSet(executionInfo);
 		});
 
-		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
+		return CompletableFuture.completedStage(result);
+	}
+
+	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
+		final int[] deletedColumns) {
+		if (deletedColumns.length == 0) {
+			table.removeRowIf(matched::contains);
+		} else {
+			for (final var row : matched) {
+				for (final var index : deletedColumns) {
+					row.set(index, null);
+				}
+			}
+		}
 	}
 
 	@SuppressWarnings("unchecked")
