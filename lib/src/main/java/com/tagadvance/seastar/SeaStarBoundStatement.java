@@ -27,6 +27,9 @@ public class SeaStarBoundStatement implements BoundStatement {
 	private final PreparedStatement preparedStatement;
 	private Object[] values;
 	private final AtomicLong timestamp = new AtomicLong();
+	private CqlIdentifier routingKeyspace;
+	private Boolean idempotent;
+	private Map<String, ByteBuffer> customPayload = Map.of();
 
 	public SeaStarBoundStatement(final SeaStarDriverContext context,
 		final @NonNull PreparedStatement preparedStatement,
@@ -76,7 +79,9 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public BoundStatement setRoutingKeyspace(final CqlIdentifier newRoutingKeyspace) {
-		throw new UnsupportedOperationException();
+		this.routingKeyspace = newRoutingKeyspace;
+
+		return this;
 	}
 
 	@Override
@@ -101,13 +106,18 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@NonNull
 	public BoundStatement setCustomPayload(
 		final @NonNull Map<String, ByteBuffer> newCustomPayload) {
-		throw new UnsupportedOperationException();
+		this.customPayload = Map.copyOf(
+			requireNonNull(newCustomPayload, "newCustomPayload must not be null"));
+
+		return this;
 	}
 
 	@Override
 	@NonNull
 	public BoundStatement setIdempotent(final Boolean newIdempotence) {
-		throw new UnsupportedOperationException();
+		this.idempotent = newIdempotence;
+
+		return this;
 	}
 
 	@Override
@@ -265,7 +275,7 @@ public class SeaStarBoundStatement implements BoundStatement {
 
 	@Override
 	public CqlIdentifier getRoutingKeyspace() {
-		throw new UnsupportedOperationException();
+		return routingKeyspace;
 	}
 
 	@Override
@@ -281,12 +291,12 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public Map<String, ByteBuffer> getCustomPayload() {
-		return Map.of();
+		return customPayload;
 	}
 
 	@Override
 	public Boolean isIdempotent() {
-		throw new UnsupportedOperationException();
+		return idempotent;
 	}
 
 	@Override
