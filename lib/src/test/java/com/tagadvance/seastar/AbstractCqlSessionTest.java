@@ -23,7 +23,9 @@ import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.VectorType;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -890,6 +892,36 @@ abstract class AbstractCqlSessionTest {
 			.build();
 
 		assertThrows(InvalidQueryException.class, () -> session.execute(batch));
+	}
+
+	private void createDistinctTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.distinct_test "
+			+ "(pk int, ck int, val text, PRIMARY KEY (pk, ck))");
+		session.execute("INSERT INTO foo.distinct_test (pk, ck, val) VALUES (1, 1, 'a')");
+		session.execute("INSERT INTO foo.distinct_test (pk, ck, val) VALUES (1, 2, 'b')");
+		session.execute("INSERT INTO foo.distinct_test (pk, ck, val) VALUES (2, 1, 'c')");
+	}
+
+	@Test
+	@Order(48)
+	@DisplayName("SELECT DISTINCT on the partition key returns one row per partition")
+	void testSelectDistinctPartitionKey() {
+		createDistinctTable();
+
+		final var rows = session.execute("SELECT DISTINCT pk FROM foo.distinct_test").all();
+
+		final var partitions = rows.stream().map(row -> row.getInt("pk")).collect(Collectors.toSet());
+		assertEquals(Set.of(1, 2), partitions);
+	}
+
+	@Test
+	@Order(49)
+	@DisplayName("SELECT DISTINCT on a non-partition-key column throws InvalidQueryException")
+	void testSelectDistinctNonPartitionKey() {
+		createDistinctTable();
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT DISTINCT val FROM foo.distinct_test"));
 	}
 
 	@AfterAll
