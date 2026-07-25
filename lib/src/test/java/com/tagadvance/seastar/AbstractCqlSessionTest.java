@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
@@ -136,16 +135,10 @@ abstract class AbstractCqlSessionTest {
 
 	@Test
 	@Order(4)
+	@DisplayName("SELECT * returns all columns addressable by index, name, and identifier")
 	void testSimpleSelect() {
-		// This test populates data directly via the SeaStar model, so it only runs against SeaStar.
-		assumeTrue(session.getContext() instanceof VolatileDriverContext);
-		final var context = (VolatileDriverContext) session.getContext();
-		final var keyspace = context.newSeaStarKeyspace("foo");
-		final var tableName = CqlIdentifier.fromInternal("bar");
-		final var table = keyspace.newSeaStarTable(tableName);
-		table.addColumn("foo", DataTypes.TEXT);
-		table.addColumn("bar", DataTypes.TEXT);
-		table.addRow("foo", "bar");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.bar (foo text PRIMARY KEY, bar text)");
+		session.execute("INSERT INTO foo.bar (foo, bar) VALUES ('foo', 'bar')");
 
 		final var resultSet = session.execute("SELECT * FROM foo.bar");
 		assertNotNull(resultSet);
@@ -996,6 +989,21 @@ abstract class AbstractCqlSessionTest {
 		assertEquals(CqlIdentifier.fromInternal("foo"), bound.getRoutingKeyspace());
 		assertEquals(Boolean.TRUE, bound.isIdempotent());
 		assertEquals(payload, bound.getCustomPayload());
+	}
+
+	@Test
+	@Order(55)
+	@DisplayName("Quoted identifiers are case-sensitive; unquoted references fold to lower case")
+	void testQuotedIdentifierCaseSensitivity() {
+		session.execute("CREATE TABLE foo.quoting (id int PRIMARY KEY, \"MixedCase\" text)");
+		session.execute("INSERT INTO foo.quoting (id, \"MixedCase\") VALUES (1, 'v')");
+
+		final var row = session.execute("SELECT \"MixedCase\" FROM foo.quoting WHERE id = 1").one();
+		assertEquals("v", row.getString(0));
+
+		// An unquoted reference folds to lower case ("mixedcase"), which is not a defined column.
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT mixedcase FROM foo.quoting WHERE id = 1"));
 	}
 
 	@AfterAll
