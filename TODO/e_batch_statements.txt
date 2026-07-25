@@ -26,3 +26,16 @@ IMPLEMENTATION PLAN:
    InvalidQueryException a live cluster throws.
 
 DEPENDENCIES: benefits from concept (k) registry relocation but does not require it.
+
+FOLLOW-UP (deferred, documented as a known limitation in BatchHandler's javadoc):
+Batches are currently applied child-by-child and are neither atomic nor isolated. Real Cassandra
+validates every child up front and rejects the whole batch before writing anything, so an invalid
+statement leaves the store untouched; here a child that fails partway through leaves the earlier
+children already applied. Fix if/when it matters. Preferred approach: snapshot-and-restore scoped
+to the affected tables - resolve the tables each child targets, acquire their write locks in a
+stable order (deadlock-safe, reentrant with the child handlers), deep-snapshot their row state,
+run the children, and restore the snapshots on any exception. Holding the locks for the whole
+batch also buys isolation. This needs a new table primitive (VolatileTable mutates rows in place
+and only exposes an immutable column-definition snapshot() today). Frame it as best-effort
+atomicity, not a general transaction: Cassandra's real model is atomic-but-not-isolated with no
+rollback, so a true rollback transaction would over-model the real thing.
