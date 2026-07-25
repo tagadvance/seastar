@@ -9,20 +9,7 @@ import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
-import com.tagadvance.seastar.handlers.BatchHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
-import com.tagadvance.seastar.handlers.CreateIndexHandler;
-import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
-import com.tagadvance.seastar.handlers.CreateTableHandler;
-import com.tagadvance.seastar.handlers.CreateTypeHandler;
-import com.tagadvance.seastar.handlers.DeleteHandler;
-import com.tagadvance.seastar.handlers.DropKeyspaceHandler;
-import com.tagadvance.seastar.handlers.DropTableHandler;
-import com.tagadvance.seastar.handlers.InsertHandler;
-import com.tagadvance.seastar.handlers.SelectHandler;
-import com.tagadvance.seastar.handlers.TruncateHandler;
-import com.tagadvance.seastar.handlers.UpdateHandler;
-import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -57,23 +44,7 @@ public class SeaStarCqlRequestHandler {
 		this.context = context;
 		this.requestTracker = context.getRequestTracker();
 		this.errors = new LinkedList<>();
-		this.registry = new CqlHandlerRegistry(context.getSessionName(),
-			new CreateKeyspaceHandler(), new UseKeyspaceHandler(session::setKeyspace),
-			new CreateTypeHandler(session::getKeyspace),
-			new CreateTableHandler(session::getKeyspace),
-			new CreateIndexHandler(session::getKeyspace),
-			new DropTableHandler(session::getKeyspace),
-			new DropKeyspaceHandler(session::getKeyspace, session::setKeyspace),
-			new InsertHandler(session::getKeyspace),
-			new UpdateHandler(session::getKeyspace),
-			new DeleteHandler(session::getKeyspace),
-			new TruncateHandler(session::getKeyspace),
-			new BatchHandler(this::registry),
-			new SelectHandler());
-	}
-
-	private CqlHandlerRegistry registry() {
-		return registry;
+		this.registry = session.handlerRegistry();
 	}
 
 	public CompletionStage<AsyncResultSet> handle() {
