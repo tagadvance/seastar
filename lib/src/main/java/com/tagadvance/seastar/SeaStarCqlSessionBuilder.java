@@ -11,11 +11,19 @@ import com.datastax.oss.driver.api.core.metadata.EndPoint;
 import com.datastax.oss.driver.api.core.metadata.NodeStateListener;
 import com.datastax.oss.driver.api.core.session.ProgrammaticArguments;
 import com.datastax.oss.driver.api.core.ssl.SslEngineFactory;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import javax.net.ssl.SSLContext;
@@ -27,6 +35,70 @@ import org.jspecify.annotations.NonNull;
  */
 @NotThreadSafe
 public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
+
+	private final List<SchemaSource> schemaSources = new ArrayList<>();
+
+	/**
+	 * Seeds the built session's schema from a CQL script. The script may contain multiple
+	 * statements separated by semicolons; each is replayed through the same handler pipeline as a
+	 * runtime {@code execute}, so the resulting model is identical to issuing the statements by
+	 * hand.
+	 *
+	 * @param cql a CQL script (one or more statements)
+	 * @return this builder
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchema(final @NonNull String cql) {
+		Objects.requireNonNull(cql, "cql must not be null");
+		schemaSources.add(new SchemaSource("CQL string", () -> cql));
+
+		return this;
+	}
+
+	/**
+	 * Seeds the built session's schema from a {@code .cql} file, read as UTF-8.
+	 *
+	 * @param path the file to read
+	 * @return this builder
+	 * @see #withSchema(String)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull Path path) {
+		Objects.requireNonNull(path, "path must not be null");
+		schemaSources.add(new SchemaSource("file " + path, () -> Files.readString(path)));
+
+		return this;
+	}
+
+	/**
+	 * Seeds the built session's schema from a {@code .cql} file, read as UTF-8.
+	 *
+	 * @param file the file to read
+	 * @return this builder
+	 * @see #withSchema(String)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull File file) {
+		Objects.requireNonNull(file, "file must not be null");
+
+		return withSchemaFile(file.toPath());
+	}
+
+	/**
+	 * Seeds the built session's schema from a classpath resource, read as UTF-8.
+	 *
+	 * @param resource the resource path (as passed to {@link ClassLoader#getResourceAsStream})
+	 * @return this builder
+	 * @see #withSchema(String)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaResource(final @NonNull String resource) {
+		Objects.requireNonNull(resource, "resource must not be null");
+		schemaSources.add(new SchemaSource("classpath resource " + resource,
+			() -> readResource(resource)));
+
+		return this;
+	}
 
 	@Override
 	@NonNull
@@ -174,13 +246,61 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 				defaultConfig.getString(DefaultDriverOption.SESSION_KEYSPACE));
 		}
 
-		return new SeaStarCqlSession(context, keyspace);
+		final var session = new SeaStarCqlSession(context, keyspace);
+		applySchema(session);
+
+		return session;
 	}
 
 	@Override
 	protected SeaStarDriverContext buildContext(final DriverConfigLoader configLoader,
 		final ProgrammaticArguments programmaticArguments) {
 		return new VolatileDriverContext(configLoader, programmaticArguments);
+	}
+
+	private void applySchema(final SeaStarCqlSession session) {
+		for (final var source : schemaSources) {
+			final String cql;
+			try {
+				cql = source.loader().load();
+			} catch (final IOException | RuntimeException e) {
+				throw new IllegalStateException(
+					"Failed to read schema from " + source.description() + ": " + e.getMessage(), e);
+			}
+
+			for (final var statement : CqlStatements.split(cql)) {
+				try {
+					session.execute(statement);
+				} catch (final RuntimeException e) {
+					throw new IllegalStateException("Failed to execute schema statement from "
+						+ source.description() + " [" + statement + "]: " + e.getMessage(), e);
+				}
+			}
+		}
+	}
+
+	private static String readResource(final String resource) throws IOException {
+		final var contextClassLoader = Thread.currentThread().getContextClassLoader();
+		final var classLoader = contextClassLoader != null ? contextClassLoader
+			: SeaStarCqlSessionBuilder.class.getClassLoader();
+		try (final var in = classLoader.getResourceAsStream(resource)) {
+			if (in == null) {
+				throw new FileNotFoundException("classpath resource not found: " + resource);
+			}
+
+			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+		}
+	}
+
+	@FunctionalInterface
+	private interface CqlLoader {
+
+		String load() throws IOException;
+
+	}
+
+	private record SchemaSource(String description, CqlLoader loader) {
+
 	}
 
 }
