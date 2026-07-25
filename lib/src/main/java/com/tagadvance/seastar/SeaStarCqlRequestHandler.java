@@ -1,12 +1,15 @@
 package com.tagadvance.seastar;
 
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
+import com.datastax.oss.driver.api.core.cql.BatchStatement;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
+import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
+import com.tagadvance.seastar.handlers.BatchHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
 import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
 import com.tagadvance.seastar.handlers.CreateTableHandler;
@@ -26,6 +29,7 @@ import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,27 +66,54 @@ public class SeaStarCqlRequestHandler {
 			new UpdateHandler(session::getKeyspace),
 			new DeleteHandler(session::getKeyspace),
 			new TruncateHandler(session::getKeyspace),
+			new BatchHandler(this::registry),
 			new SelectHandler());
 	}
 
+	private CqlHandlerRegistry registry() {
+		return registry;
+	}
+
 	public CompletionStage<AsyncResultSet> handle() {
+		if (initialStatement instanceof BatchStatement batch) {
+			return handleBatch(batch);
+		}
+
+		return dispatch(initialStatement, false);
+	}
+
+	// Apply each child statement in sequence under the table locks, then return a void result whose
+	// wasApplied() is true, matching a non-conditional batch on a live cluster.
+	private CompletionStage<AsyncResultSet> handleBatch(final BatchStatement batch) {
+		CompletionStage<AsyncResultSet> chain = CompletableFuture.completedStage(null);
+		for (final var child : batch) {
+			chain = chain.thenCompose(ignored -> dispatch(child, true));
+		}
+
+		final var executionInfo = new SeaStarExecutionInfo(context.getNode(), batch);
+
+		return chain.thenApply(ignored -> SeaStarAsyncResultSet.empty(executionInfo));
+	}
+
+	private CompletionStage<AsyncResultSet> dispatch(final Statement<?> statement,
+		final boolean requireModification) {
 		final String query;
 		final Object[] values;
-		if (initialStatement instanceof SimpleStatement simpleStatement) {
+		if (statement instanceof SimpleStatement simpleStatement) {
 			query = simpleStatement.getQuery();
 			values = new Object[]{};
-		} else if (initialStatement instanceof SeaStarBoundStatement boundStatement) {
+		} else if (statement instanceof SeaStarBoundStatement boundStatement) {
 			final var preparedStatement = boundStatement.getPreparedStatement();
 			query = preparedStatement.getQuery();
 			values = boundStatement.getBoundValues();
-		} else if (initialStatement instanceof BoundStatement boundStatement) {
+		} else if (statement instanceof BoundStatement boundStatement) {
 			final var preparedStatement = boundStatement.getPreparedStatement();
 			query = preparedStatement.getQuery();
 			values = decode(boundStatement, preparedStatement.getVariableDefinitions());
 		} else {
 			throw new UnsupportedOperationException(
 				"Statement of type %s is not currently supported".formatted(
-					initialStatement.getClass().getSimpleName()));
+					statement.getClass().getSimpleName()));
 		}
 
 		final CQLStatement.Raw raw;
@@ -93,7 +124,12 @@ public class SeaStarCqlRequestHandler {
 		}
 
 		final var node = context.getNode();
-		final var executionInfo = new SeaStarExecutionInfo(node, initialStatement);
+		final var executionInfo = new SeaStarExecutionInfo(node, statement);
+
+		if (requireModification && !(raw instanceof ModificationStatement.Parsed)) {
+			return CompletableFuture.failedStage(new InvalidQueryException(node,
+				"Only INSERT, UPDATE and DELETE statements are allowed in batches"));
+		}
 
 		return registry.processorFor(raw).processCql(context, executionInfo, raw, values);
 	}
