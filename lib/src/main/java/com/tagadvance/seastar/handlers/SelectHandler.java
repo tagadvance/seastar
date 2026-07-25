@@ -185,6 +185,26 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			.collect(Collectors.toSet());
 	}
 
+	private static Set<CqlIdentifier> indexedColumns(final SeaStarTable table) {
+		final Set<CqlIdentifier> columns = new HashSet<>();
+		for (final var index : table.getIndexes().values()) {
+			columns.add(CqlIdentifier.fromInternal(indexTargetColumn(index.getTarget())));
+		}
+
+		return columns;
+	}
+
+	private static String indexTargetColumn(final String target) {
+		// Collection index targets look like values(col)/keys(col)/entries(col)/full(col); a simple
+		// index target is just the column name.
+		final var open = target.indexOf('(');
+		if (open >= 0 && target.endsWith(")")) {
+			return target.substring(open + 1, target.length() - 1);
+		}
+
+		return target;
+	}
+
 	private static Predicate<SeaStarRow> resolveWhere(final SeaStarTable table,
 		final boolean allowFiltering, final List<Relation> relations,
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
@@ -193,6 +213,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 
 		final var primaryKey = primaryKeyNames(table);
+		final var indexed = indexedColumns(table);
 		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
 		for (final var relation : relations) {
 			if (!(relation instanceof SingleColumnRelation single)) {
@@ -207,7 +228,10 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 				throw new InvalidQueryException(coordinator,
 					"Undefined column name %s".formatted(text));
 			}
-			if (!primaryKey.contains(name) && !allowFiltering) {
+			// A secondary index permits an equality restriction on its column without ALLOW
+			// FILTERING; other non-primary-key restrictions still require it.
+			final var indexedEquality = indexed.contains(name) && relation.isEQ();
+			if (!primaryKey.contains(name) && !indexedEquality && !allowFiltering) {
 				throw new InvalidQueryException(coordinator,
 					"Cannot execute this query as it might involve data filtering and thus may have "
 						+ "unpredictable performance. If you want to execute this query despite the "

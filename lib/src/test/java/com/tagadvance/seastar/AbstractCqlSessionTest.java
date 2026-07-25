@@ -924,6 +924,60 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("SELECT DISTINCT val FROM foo.distinct_test"));
 	}
 
+	private void createIndexedTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.indexed (id int PRIMARY KEY, name text)");
+		session.execute("CREATE INDEX IF NOT EXISTS ON foo.indexed (name)");
+	}
+
+	@Test
+	@Order(50)
+	@DisplayName("CREATE INDEX exposes the index through TableMetadata.getIndexes")
+	void testCreateIndexExposedInMetadata() {
+		createIndexedTable();
+
+		final var indexes = session.getMetadata().getKeyspace("foo")
+			.flatMap(keyspace -> keyspace.getTable("indexed"))
+			.map(table -> table.getIndexes())
+			.orElseThrow();
+		assertTrue(indexes.containsKey(CqlIdentifier.fromInternal("indexed_name_idx")));
+	}
+
+	@Test
+	@Order(51)
+	@DisplayName("An indexed column can be queried without ALLOW FILTERING")
+	void testQueryIndexedColumnWithoutFiltering() {
+		createIndexedTable();
+		session.execute("INSERT INTO foo.indexed (id, name) VALUES (1, 'indexed-a')");
+		session.execute("INSERT INTO foo.indexed (id, name) VALUES (2, 'indexed-b')");
+
+		final var rows = session.execute("SELECT id FROM foo.indexed WHERE name = 'indexed-a'").all();
+
+		assertEquals(1, rows.size());
+		assertEquals(1, rows.get(0).getInt("id"));
+	}
+
+	@Test
+	@Order(52)
+	@DisplayName("Indexing an undefined column throws InvalidQueryException")
+	void testCreateIndexOnUndefinedColumn() {
+		createIndexedTable();
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("CREATE INDEX ON foo.indexed (nope)"));
+	}
+
+	@Test
+	@Order(53)
+	@DisplayName("Creating a duplicate index throws unless IF NOT EXISTS")
+	void testCreateDuplicateIndex() {
+		createIndexedTable();
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("CREATE INDEX indexed_name_idx ON foo.indexed (name)"));
+		assertDoesNotThrow(
+			() -> session.execute("CREATE INDEX IF NOT EXISTS indexed_name_idx ON foo.indexed (name)"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
