@@ -60,6 +60,13 @@ public class SeaStarCqlSession implements CqlSession {
 		return CompletableFuture.completedFuture(context);
 	}
 
+	/**
+	 * Returns the live metadata without refetching. SeaStar's in-memory {@code Volatile*} model is
+	 * always current and authoritative, and the context is itself the {@link Metadata}, derived
+	 * directly from that model on every access (for example {@code getKeyspaces()} reads the live
+	 * keyspace map). There is no remote schema to pull and no cached or derived view to recompute,
+	 * so a no-op returning the live context is the correct implementation, not a stub.
+	 */
 	@Override
 	@NonNull
 	public CompletionStage<Metadata> refreshSchemaAsync() {
