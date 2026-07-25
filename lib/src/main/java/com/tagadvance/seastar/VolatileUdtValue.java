@@ -38,9 +38,11 @@ public class VolatileUdtValue implements SeaStarUdtValue {
 			final var fieldNames = type.getFieldNames();
 			final var fieldTypes = type.getFieldTypes();
 
-			writeLock(() -> IntStream.range(0, values.size())
-				.mapToObj(
-					i -> new UdtValueEntry(fieldNames.get(i), fieldTypes.get(i), values.get(i)))
+			// Create one slot per field, filling the leading slots with the provided values and
+			// leaving the rest unset (null), mirroring UserDefinedType.newValue(Object...).
+			writeLock(() -> IntStream.range(0, fieldNames.size())
+				.mapToObj(i -> new UdtValueEntry(fieldNames.get(i), fieldTypes.get(i),
+					i < values.size() ? values.get(i) : null))
 				.forEach(this.values::add));
 		});
 	}

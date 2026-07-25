@@ -20,8 +20,12 @@ public interface SeaStarUdtValue extends SeaStarReadWriteLock, UdtValue {
 
 		final var type = getType();
 		type.readLock(() -> {
-			checkArgument(values.size() == size(), "Expected %d values but got %d", size(),
-				values.size());
+			// Measure against the field count, not size(): validate runs during construction
+			// before the value slots are populated. newValue(Object...) may provide fewer values
+			// than fields, filling only the leading slots.
+			final var fieldCount = type.getFieldTypes().size();
+			checkArgument(values.size() <= fieldCount, "Expected at most %d values but got %d",
+				fieldCount, values.size());
 
 			final var codecRegistry = type.getAttachmentPoint().getCodecRegistry();
 			for (int i = 0; i < values.size(); i++) {

@@ -1006,6 +1006,32 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("SELECT mixedcase FROM foo.quoting WHERE id = 1"));
 	}
 
+	@Test
+	@Order(56)
+	@DisplayName("A bound UdtValue round-trips through INSERT and SELECT")
+	void testUdtValueRoundTrip() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.addr (street text, city text)");
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.udt_people (id uuid PRIMARY KEY, home frozen<addr>)");
+
+		final var addr = session.getMetadata().getKeyspace("foo").orElseThrow()
+			.getUserDefinedType("addr").orElseThrow();
+		final var home = addr.newValue().setString("street", "Main").setString("city", "Anytown");
+
+		final var prepared = session.prepare(
+			"INSERT INTO foo.udt_people (id, home) VALUES (?, ?)");
+		session.execute(prepared.bind(ANN_ID, home));
+
+		final var row = session.execute(
+			"SELECT home FROM foo.udt_people WHERE id = " + ANN_ID).one();
+		assertNotNull(row);
+
+		final var readBack = row.getUdtValue("home");
+		assertNotNull(readBack);
+		assertEquals("Main", readBack.getString("street"));
+		assertEquals("Anytown", readBack.getString("city"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
