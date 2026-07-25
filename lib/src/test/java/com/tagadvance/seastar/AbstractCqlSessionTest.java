@@ -22,7 +22,9 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.VectorType;
+import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -976,6 +978,24 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("CREATE INDEX indexed_name_idx ON foo.indexed (name)"));
 		assertDoesNotThrow(
 			() -> session.execute("CREATE INDEX IF NOT EXISTS indexed_name_idx ON foo.indexed (name)"));
+	}
+
+	@Test
+	@Order(54)
+	@DisplayName("BoundStatement round-trips routing keyspace, idempotence, and custom payload")
+	void testBoundStatementMetadata() {
+		createLwtTable();
+		final var prepared = session.prepare("SELECT * FROM foo.lwt WHERE id = ?");
+
+		final var payload = Map.of("k", ByteBuffer.wrap(new byte[]{1, 2, 3}));
+		final var bound = prepared.bind(1)
+			.setRoutingKeyspace(CqlIdentifier.fromInternal("foo"))
+			.setIdempotent(true)
+			.setCustomPayload(payload);
+
+		assertEquals(CqlIdentifier.fromInternal("foo"), bound.getRoutingKeyspace());
+		assertEquals(Boolean.TRUE, bound.isIdempotent());
+		assertEquals(payload, bound.getCustomPayload());
 	}
 
 	@AfterAll
