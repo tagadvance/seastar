@@ -76,6 +76,7 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 		final var named = new HashSet<CqlIdentifier>();
+		final var namedIndices = new ArrayList<Integer>(columnNames.size());
 		for (int i = 0; i < columnNames.size(); i++) {
 			final var name = CqlIdentifier.fromInternal(columnNames.get(i).toString());
 			final var index = table.firstIndexOf(name);
@@ -84,6 +85,7 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 					"Undefined column name %s".formatted(name.asInternal())));
 			}
 			named.add(name);
+			namedIndices.add(index);
 
 			final var dataType = table.get(index).getType();
 			final var term = columnValues.get(i);
@@ -131,9 +133,17 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 				}
 				return AppliedResultSets.ofExisting(context, table, executionInfo, existing.snapshot());
 			}
-			// INSERT is an upsert; replace the existing row sharing this primary key.
-			table.removeRowIf(samePrimaryKey);
-			table.addRow(values);
+			// INSERT is an upsert; write only the named columns, preserving any columns this
+			// statement did not specify on a row that already shares this primary key. An
+			// explicitly-inserted NULL still clears its column; an unnamed column is left as-is.
+			final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
+			if (existing == null) {
+				table.addRow(values);
+			} else {
+				for (final var index : namedIndices) {
+					existing.set(index, values.get(index));
+				}
+			}
 			return newAsyncResultSet(executionInfo);
 		});
 

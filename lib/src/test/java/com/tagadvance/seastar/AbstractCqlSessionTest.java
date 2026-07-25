@@ -829,6 +829,20 @@ abstract class AbstractCqlSessionTest {
 			"UPDATE foo.lwt SET name = 'x' WHERE id = 43 IF nope = 1"));
 	}
 
+	@Test
+	@Order(44)
+	@DisplayName("INSERT upsert merges named columns and preserves unspecified ones")
+	void testInsertUpsertMergesColumns() {
+		createLwtTable();
+		session.execute("INSERT INTO foo.lwt (id, name, age) VALUES (44, 'orig', 10)");
+
+		session.execute("INSERT INTO foo.lwt (id, age) VALUES (44, 99)");
+
+		final var row = session.execute("SELECT name, age FROM foo.lwt WHERE id = 44").one();
+		assertEquals("orig", row.getString("name"));
+		assertEquals(99, row.getInt("age"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
