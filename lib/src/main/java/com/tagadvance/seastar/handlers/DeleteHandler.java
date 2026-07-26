@@ -8,7 +8,6 @@ import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
@@ -25,13 +24,10 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
-import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
-import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.statements.DeleteStatement.Parsed;
 import org.apache.cassandra.utils.Pair;
@@ -193,12 +189,13 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 
 			final var dataType = table.get(index).getType();
 			if (relation.isEQ()) {
-				final var target = resolveTerm(single.getValue(), dataType, codecRegistry, bindings);
+				final var target = Terms.resolve(single.getValue(), dataType, codecRegistry,
+					coordinator, bindings);
 				predicates.add(row -> Objects.equals(row.getObject(index), target));
 			} else if (relation.isIN()) {
 				final Set<Object> targets = new HashSet<>();
 				for (final var term : single.getInValues()) {
-					targets.add(resolveTerm(term, dataType, codecRegistry, bindings));
+					targets.add(Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
 				}
 				predicates.add(row -> targets.contains(row.getObject(index)));
 			} else {
@@ -213,20 +210,6 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		}
 
 		return predicates.stream().reduce(Predicate::and).orElseThrow();
-	}
-
-	private static Object resolveTerm(final Term.Raw term, final DataType dataType,
-		final CodecRegistry codecRegistry, final Object... bindings) {
-		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
-
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
-		} else if (term instanceof Constants.Literal literal) {
-			return codecRegistry.codecFor(dataType).parse(literal.getText());
-		}
-
-		throw new UnsupportedOperationException("Unsupported term %s".formatted(term));
 	}
 
 	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {

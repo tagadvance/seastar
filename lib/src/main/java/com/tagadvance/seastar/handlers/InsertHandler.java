@@ -5,14 +5,8 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
-import com.datastax.oss.driver.api.core.data.UdtValue;
-import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.type.DataType;
-import com.datastax.oss.driver.api.core.type.UserDefinedType;
-import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
-import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import java.util.ArrayList;
@@ -25,10 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Constants;
-import org.apache.cassandra.cql3.UserTypes;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 
 public class InsertHandler implements CqlHandler<ParsedInsert> {
@@ -96,7 +87,7 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 
 			final var dataType = table.get(index).getType();
 			final var term = columnValues.get(i);
-			values.set(index, toValue(coordinator, codecRegistry, dataType, term, bindings));
+			values.set(index, Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
 		}
 
 		final List<CqlIdentifier> primaryKey = new ArrayList<>();
@@ -144,50 +135,6 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		});
 
 		return CompletableFuture.completedStage(result);
-	}
-
-	// A UDT literal can nest further literals and bind markers, so terms resolve recursively against
-	// the type of the field they are being assigned to rather than only at the top level.
-	private static Object toValue(final Node coordinator, final CodecRegistry codecRegistry,
-		final DataType dataType, final Object term, final Object... bindings) {
-		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
-
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
-		} else if (term instanceof UserTypes.Literal literal) {
-			return toUdtValue(coordinator, codecRegistry, dataType, literal, bindings);
-		} else if (term instanceof Constants.Literal literal) {
-			return codecRegistry.codecFor(dataType).parse(literal.getText());
-		}
-
-		throw new UnsupportedOperationException("Unsupported INSERT value %s".formatted(term));
-	}
-
-	private static UdtValue toUdtValue(final Node coordinator, final CodecRegistry codecRegistry,
-		final DataType dataType, final UserTypes.Literal literal, final Object... bindings) {
-		if (!(dataType instanceof UserDefinedType udt)) {
-			throw new InvalidQueryException(coordinator,
-				"Invalid user type literal for a column of type %s".formatted(dataType.asCql(true, true)));
-		}
-
-		// Fields absent from the literal keep the null they were initialised with, matching
-		// UserTypes.Literal.prepare, which substitutes NULL_LITERAL for anything not named.
-		final var value = udt.newValue();
-		literal.entries.forEach((field, term) -> {
-			final var name = CqlIdentifier.fromInternal(field.toString());
-			final var index = udt.firstIndexOf(name);
-			if (index < 0) {
-				throw new InvalidQueryException(coordinator,
-					"Unknown field '%s' in value of user defined type %s".formatted(name.asInternal(),
-						udt.getName().asInternal()));
-			}
-			final var fieldType = udt.getFieldTypes().get(index);
-			final TypeCodec<Object> codec = codecRegistry.codecFor(fieldType);
-			value.set(index, toValue(coordinator, codecRegistry, fieldType, term, bindings), codec);
-		});
-
-		return value;
 	}
 
 }

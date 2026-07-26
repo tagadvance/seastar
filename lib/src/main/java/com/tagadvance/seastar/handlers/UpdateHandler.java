@@ -8,7 +8,6 @@ import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
@@ -27,9 +26,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
-import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
@@ -178,7 +175,8 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 			}
 			final var term = Reflections.getDeclaredField(setValue, "value", Term.Raw.class)
 				.orElseThrow();
-			final var value = resolveTerm(term, table.get(index).getType(), codecRegistry, bindings);
+			final var value = Terms.resolve(term, table.get(index).getType(), codecRegistry,
+				coordinator, bindings);
 			assignments.add(new Assignment(index, value));
 		}
 
@@ -217,13 +215,14 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 
 			final var dataType = table.get(index).getType();
 			if (relation.isEQ()) {
-				final var target = resolveTerm(single.getValue(), dataType, codecRegistry, bindings);
+				final var target = Terms.resolve(single.getValue(), dataType, codecRegistry,
+					coordinator, bindings);
 				upsertKey.put(index, target);
 				predicates.add(row -> Objects.equals(row.getObject(index), target));
 			} else if (relation.isIN()) {
 				final Set<Object> targets = new HashSet<>();
 				for (final var term : single.getInValues()) {
-					targets.add(resolveTerm(term, dataType, codecRegistry, bindings));
+					targets.add(Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
 				}
 				predicates.add(row -> targets.contains(row.getObject(index)));
 			} else {
@@ -243,20 +242,6 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var canUpsert = upsertKey.keySet().size() == primaryKey.size();
 
 		return new Where(predicate, canUpsert ? upsertKey : null);
-	}
-
-	private static Object resolveTerm(final Term.Raw term, final DataType dataType,
-		final CodecRegistry codecRegistry, final Object... bindings) {
-		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
-
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
-		} else if (term instanceof Constants.Literal literal) {
-			return codecRegistry.codecFor(dataType).parse(literal.getText());
-		}
-
-		throw new UnsupportedOperationException("Unsupported term %s".formatted(term));
 	}
 
 	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {
