@@ -52,7 +52,7 @@ class TranslationTest {
 
 	@BeforeEach
 	void beforeEach() {
-		session = (SeaStarCqlSession) SeaStarCqlSession.builder().build();
+		session = SeaStarCqlSession.builder().build();
 		context = session.getContext();
 		node = context.getNode();
 

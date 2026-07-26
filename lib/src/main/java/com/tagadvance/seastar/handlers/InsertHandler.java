@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
@@ -53,16 +54,16 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 		assignments.forEach(assignment -> values.set(assignment.columnIndex(), assignment.value()));
 
-		final var named = assignments.stream().map(Assignment::column).toList();
-		for (final var part : target.primaryKeyNames()) {
+		final var primaryKey = target.primaryKeyNames();
+		final var named = assignments.stream().map(Assignment::column).collect(Collectors.toSet());
+		for (final var part : primaryKey) {
 			if (!named.contains(part)) {
 				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
 					"Missing mandatory PRIMARY KEY part %s".formatted(part.asInternal())));
 			}
 		}
 
-		final var pkIndices = target.primaryKeyNames().stream().mapToInt(table::firstIndexOf)
-			.toArray();
+		final var pkIndices = primaryKey.stream().mapToInt(table::firstIndexOf).toArray();
 		final Predicate<SeaStarRow> samePrimaryKey = existing -> {
 			for (final var index : pkIndices) {
 				if (!Objects.equals(existing.getObject(index), values.get(index))) {
