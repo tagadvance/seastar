@@ -74,7 +74,10 @@ public class VolatileUdtValue implements SeaStarUdtValue {
 	@Override
 	@Nullable
 	public ByteBuffer getBytesUnsafe(final int i) {
-		return readLockUnchecked(values.get(i)::toByteBuffer);
+		// A value written before ALTER TYPE ... ADD has fewer slots than the type now has. Reading the
+		// missing trailing fields as null mirrors how a short stored payload decodes on a cluster;
+		// UdtCodec.encode probes up to the type's field count, not the value's.
+		return readLockUnchecked(() -> i < values.size() ? values.get(i).toByteBuffer() : null);
 	}
 
 	@Override

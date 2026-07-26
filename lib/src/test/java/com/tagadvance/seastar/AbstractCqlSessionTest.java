@@ -1183,6 +1183,106 @@ abstract class AbstractCqlSessionTest {
 		assertTrue(executionInfo.isSchemaInAgreement());
 	}
 
+	private UserDefinedType userDefinedType(final String name) {
+		return session.getMetadata()
+			.getKeyspace("foo")
+			.orElseThrow()
+			.getUserDefinedType(name)
+			.orElseThrow();
+	}
+
+	@Test
+	@Order(68)
+	@DisplayName("ALTER TYPE ADD appends a field, leaving it null on existing values")
+	void testAlterTypeAddField() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.alter_add (street text)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.alter_add_users "
+			+ "(id int PRIMARY KEY, home frozen<alter_add>)");
+		// A UDT literal in an INSERT is not supported by SeaStar yet, so bind the value instead.
+		final var existing = userDefinedType("alter_add").newValue().setString("street", "Main");
+		session.execute(
+			session.prepare("INSERT INTO foo.alter_add_users (id, home) VALUES (?, ?)")
+				.bind(1, existing));
+
+		session.execute("ALTER TYPE foo.alter_add ADD zip int");
+
+		final var type = userDefinedType("alter_add");
+		assertEquals(List.of(CqlIdentifier.fromInternal("street"), CqlIdentifier.fromInternal("zip")),
+			type.getFieldNames());
+		assertEquals(List.of(DataTypes.TEXT, DataTypes.INT), type.getFieldTypes());
+
+		final var home = session.execute("SELECT home FROM foo.alter_add_users WHERE id = 1")
+			.one()
+			.getUdtValue("home");
+		assertEquals("Main", home.getString("street"));
+		assertTrue(home.isNull("zip"));
+	}
+
+	@Test
+	@Order(69)
+	@DisplayName("ALTER TYPE ADD rejects a duplicate field unless IF NOT EXISTS")
+	void testAlterTypeAddDuplicateField() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.alter_dup (street text)");
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TYPE foo.alter_dup ADD street text"));
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TYPE foo.alter_dup ADD IF NOT EXISTS street text"));
+
+		assertEquals(List.of(CqlIdentifier.fromInternal("street")),
+			userDefinedType("alter_dup").getFieldNames());
+	}
+
+	@Test
+	@Order(70)
+	@DisplayName("Altering an undefined type throws unless IF EXISTS")
+	void testAlterTypeUndefined() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TYPE foo.nope ADD zip int"));
+		assertDoesNotThrow(() -> session.execute("ALTER TYPE IF EXISTS foo.nope ADD zip int"));
+	}
+
+	@Test
+	@Order(71)
+	@DisplayName("ALTER TYPE RENAME renames fields in place")
+	void testAlterTypeRenameFields() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.alter_rename (street text, city text)");
+
+		session.execute("ALTER TYPE foo.alter_rename RENAME street TO road AND city TO town");
+
+		final var type = userDefinedType("alter_rename");
+		assertEquals(List.of(CqlIdentifier.fromInternal("road"), CqlIdentifier.fromInternal("town")),
+			type.getFieldNames());
+		assertEquals(List.of(DataTypes.TEXT, DataTypes.TEXT), type.getFieldTypes());
+	}
+
+	@Test
+	@Order(72)
+	@DisplayName("ALTER TYPE RENAME rejects unknown and duplicate field names")
+	void testAlterTypeRenameInvalidFields() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.alter_rename_bad (street text, city text)");
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TYPE foo.alter_rename_bad RENAME nope TO road"));
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TYPE foo.alter_rename_bad RENAME IF EXISTS nope TO road"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TYPE foo.alter_rename_bad RENAME street TO city"));
+
+		assertEquals(List.of(CqlIdentifier.fromInternal("street"), CqlIdentifier.fromInternal("city")),
+			userDefinedType("alter_rename_bad").getFieldNames());
+	}
+
+	@Test
+	@Order(73)
+	@DisplayName("Altering the type of a field is no longer supported")
+	void testAlterTypeAlterFieldUnsupported() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.alter_field (street text)");
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TYPE foo.alter_field ALTER street TYPE int"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
