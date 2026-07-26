@@ -73,15 +73,25 @@ only columns, values and operators, and the handler works from that:
 - **`Queries`/`Query`** translate a SELECT; **`Modifications`/`Modification`** translate an INSERT,
   UPDATE or DELETE, into `Restriction`, `Assignment` and `Condition`. `Restrictions`, `Conditions`
   and `Terms` do the pieces; `CqlOperator` is SeaStar's own operator enum.
-- Only these classes import `org.apache.cassandra.*`. A handler's remaining imports are
-  `CQLStatement` and the `Raw` type it is generic over, both of which come from the `CqlHandler`
-  interface rather than from reading a statement.
+- Only these classes import `org.apache.cassandra.*`, plus `Tokens`, which borrows Cassandra's
+  `MurmurHash` to compute a partition token. A handler's remaining imports are `CQLStatement` and
+  the `Raw` type it is generic over, both of which come from the `CqlHandler` interface rather than
+  from reading a statement.
 
 The split is deliberate: **translation says what the statement is, the handler says whether it is
 allowed and what it does.** Resolving a column name to a position, a term to a value or an operator
 to a `CqlOperator` is translation. ALLOW FILTERING, "a primary key part is missing", "a PRIMARY KEY
 part was found in the SET part" and DISTINCT validation are the handler's, because they are rules
 about the store rather than about the statement.
+
+### Read-time ordering
+A SELECT returns rows in the order a real node would: partitions by their Murmur3 token, rows within
+a partition by the clustering columns in their declared order and direction. `RowOrdering` builds the
+comparator for a table, `Tokens` hashes a partition key the way `Murmur3Partitioner` does, and
+`ValueComparators` supplies the order Cassandra's `AbstractType` defines for a column's `DataType` -
+which is not `Comparable`'s for `text`, `uuid` or `timeuuid`. Sorting happens in `SelectHandler`
+after filtering and before LIMIT, never on insert: a token belongs to the partition key rather than
+to the row, so there is no order to maintain on write.
 
 A restriction becomes a row predicate in exactly one place (`Restriction#toPredicate`), so the
 operators SeaStar does not evaluate yet - the range comparisons, CONTAINS, LIKE, IS NOT NULL - are

@@ -11,6 +11,7 @@ import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.Node;
+import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
@@ -23,6 +24,7 @@ import com.tagadvance.seastar.SeaStarTable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
@@ -61,6 +63,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final Projection projection;
 		final Predicate<SeaStarRow> predicate;
 		final int[] distinctKey;
+		final RowOrdering ordering;
 		try {
 			query = Queries.translate(context, getKeyspace, raw, coordinator, bindings);
 			projection = projection(query);
@@ -69,6 +72,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			}
 			predicate = resolveWhere(query, coordinator);
 			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
+			ordering = RowOrdering.of(query.target().table(), reversed(query, coordinator));
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -87,6 +91,9 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 				final Set<List<Object>> seen = new HashSet<>();
 				rows = rows.filter(row -> seen.add(partitionKeyValues(row, distinctKey)));
 			}
+			// Ordering comes before the limit: LIMIT takes the first n rows of the result Cassandra
+			// would return, not the first n rows that happen to have been inserted.
+			rows = ordering.sort(rows);
 			if (limit != null) {
 				rows = rows.limit(limit);
 			}
@@ -210,6 +217,100 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return predicates.stream().reduce(Predicate::and)
 			.orElseThrow(() -> new IllegalStateException(
 				"a WHERE clause with relations must yield at least one predicate"));
+	}
+
+	/**
+	 * Whether an ORDER BY asked for the clustering order backwards, and the place every rule about
+	 * writing one is enforced.
+	 *
+	 * <p>Cassandra stores a partition in clustering order and reads it in one direction or the
+	 * other, so ORDER BY selects between those two readings rather than sorting anything: it is
+	 * allowed only on a query that reads a single partition, only on clustering columns, only in
+	 * their declared order, and only if every element agrees on the direction relative to the order
+	 * the table declares.
+	 */
+	private static boolean reversed(final Query query, final Node coordinator) {
+		final var orderBy = query.orderBy();
+		if (orderBy.isEmpty()) {
+			return false;
+		}
+
+		requireSinglePartition(query, coordinator);
+
+		final var clustering = query.target().table().getClusteringColumns();
+		final List<CqlIdentifier> names = clustering.keySet()
+			.stream()
+			.map(ColumnMetadata::getName)
+			.toList();
+		final var declared = List.copyOf(clustering.values());
+
+		Boolean reversed = null;
+		var expected = 0;
+		// A column written twice is one ordering, as it is for Cassandra, which keys them by column.
+		for (final var sort : new LinkedHashSet<>(orderBy)) {
+			final var position = names.indexOf(sort.column());
+			if (position < 0) {
+				throw new InvalidQueryException(coordinator,
+					("Order by is currently only supported on the clustered columns of the PRIMARY "
+						+ "KEY, got %s").formatted(sort.column().asInternal()));
+			}
+			// A clustering column may be skipped only when it is pinned to one value anyway.
+			while (expected < position && isRestrictedByEq(query, names.get(expected))) {
+				expected++;
+			}
+			if (expected != position) {
+				throw new InvalidQueryException(coordinator,
+					"Order by currently only supports the ordering of columns following their "
+						+ "declared order in the PRIMARY KEY");
+			}
+			expected++;
+
+			final var flipped = sort.descending() != (declared.get(position) == ClusteringOrder.DESC);
+			if (reversed == null) {
+				reversed = flipped;
+			} else if (reversed != flipped) {
+				throw new InvalidQueryException(coordinator, "Unsupported order by relation");
+			}
+		}
+
+		return reversed != null && reversed;
+	}
+
+	/**
+	 * ORDER BY reads one partition in one direction, so every partition key column has to be pinned.
+	 *
+	 * <p>An IN on the partition key is pinned but not single, and Cassandra can only serve it by
+	 * merging partitions in memory - which it refuses to do for a paged query, and every query the
+	 * driver sends is paged by default. Refusing it here rather than answering it keeps a test that
+	 * passes against SeaStar from failing against a cluster.
+	 */
+	private static void requireSinglePartition(final Query query, final Node coordinator) {
+		var in = false;
+		for (final var column : query.target().partitionKeyNames()) {
+			final var operator = query.restrictions()
+				.stream()
+				.filter(restriction -> restriction.column().equals(column))
+				.map(Restriction::operator)
+				.findFirst();
+			if (operator.filter(o -> o == CqlOperator.EQ || o == CqlOperator.IN).isEmpty()) {
+				throw new InvalidQueryException(coordinator, "ORDER BY is only supported when the "
+					+ "partition key is restricted by an EQ or an IN.");
+			}
+			in |= operator.get() == CqlOperator.IN;
+		}
+		if (in) {
+			throw new InvalidQueryException(coordinator,
+				"Cannot page queries with both ORDER BY and a IN restriction on the partition key; "
+					+ "you must either remove the ORDER BY or the IN and sort client side, or "
+					+ "disable paging for this query");
+		}
+	}
+
+	private static boolean isRestrictedByEq(final Query query, final CqlIdentifier column) {
+		return query.restrictions()
+			.stream()
+			.anyMatch(restriction -> restriction.column().equals(column)
+				&& restriction.operator() == CqlOperator.EQ);
 	}
 
 	private static Row project(final Row source, final Projection projection) {
