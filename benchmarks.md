@@ -281,6 +281,46 @@ right:
   which names neither the offending value nor the right column. Worth a line in
   `a_plan_correctness_bugs.txt`.
 
+## After D1: what read-time ordering costs
+
+`d_plan_query_engine.txt` D1 sorts every SELECT at read time - partitions by Murmur3 token, rows
+within a partition by the clustering columns - so this is the measurement the baseline above was
+taken for.
+
+Measured on the same machine in one sitting, "before" being `e9c5c72` (the commit D1 was written on
+top of) rather than the `1145dae` baseline, so the numbers isolate the sort rather than everything
+that has landed since. Same JMH settings: `AverageTime`, 1 fork, 3x1 s warmup, 5x1 s measurement.
+Microseconds per operation.
+
+| benchmark | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StatementBenchmark.selectPoint` - 1 row out of 1 000 | 68.498 ± 10.788 | 64.841 ± 2.270 | none |
+| `StatementBenchmark.selectScan` - all 1 000 rows | 352.760 ± 4.147 | 631.089 ± 64.805 | **+79 %** |
+| `SelectScalingBenchmark.selectPoint`, 10 rows | 6.580 ± 0.103 | 7.477 ± 0.040 | +14 % |
+| `SelectScalingBenchmark.selectPoint`, 1 000 rows | 63.631 ± 0.583 | 66.321 ± 2.902 | +4 % |
+| `SelectScalingBenchmark.selectPoint`, 100 000 rows | 12 199 ± 751 | 15 107 ± 2 969 | +24 % |
+| `SelectScalingBenchmark.selectAll`, 10 rows | 5.897 ± 0.117 | 8.823 ± 0.108 | +50 % |
+| `SelectScalingBenchmark.selectAll`, 1 000 rows | 333.822 ± 8.391 | 623.726 ± 19.925 | **+87 %** |
+| `SelectScalingBenchmark.selectAll`, 100 000 rows | 49 900 ± 6 386 | 111 471 ± 5 881 | **+123 %** |
+
+Reading the numbers:
+
+- **A point lookup is unaffected.** Ordering happens after filtering, so a query that matches one
+  row sorts one row. The 100 000-row figure moved, but its error bar is ±3 ms on this laptop and it
+  is measuring the scan that finds the row, not the sort.
+- **A full scan roughly doubles**, and the cost is per returned row: it is the partition key
+  encoding, not the comparison. Every row's key goes through `getBytesUnsafe`, which takes the row
+  lock and the table lock and runs the codec. Trimming the allocations around it - a fast path for
+  a single-column key, arrays instead of lists - measured as noise and was reverted, which is the
+  evidence for where the time actually goes.
+- **The fix is the partition key index the handover already lists as debt.** With one, a scan would
+  iterate partitions in token order instead of hashing every row, and a point lookup would stop
+  scanning. Both plans point at the same missing structure.
+
+This is a fidelity-for-speed trade the design goal decides: SeaStar existed to return rows in an
+order Cassandra never returns them in, and a test that asserted on the order passed here and failed
+against a cluster.
+
 ## Reproducing
 
 Requires JDK 17 (Gradle toolchain downloads it) and, for the container comparison only, Docker.

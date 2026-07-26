@@ -1788,6 +1788,179 @@ abstract class AbstractCqlSessionTest {
 		assertEquals(id, prepared.getResultMetadataId());
 	}
 
+	@Test
+	@Order(110)
+	@DisplayName("A partition reads back in clustering order, and LIMIT applies to that order")
+	void testClusteringOrder() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.evt (pk int, ck int, v text, "
+			+ "PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)");
+		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 2, 'b')");
+		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 1, 'a')");
+		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 3, 'c')");
+
+		assertEquals(List.of(3, 2, 1), clustering("SELECT ck FROM foo.evt WHERE pk = 1"));
+		// The limit takes the first rows of the ordered partition, not the first ones written.
+		assertEquals(List.of(3, 2), clustering("SELECT ck FROM foo.evt WHERE pk = 1 LIMIT 2"));
+	}
+
+	@Test
+	@Order(111)
+	@DisplayName("Clustering columns are compared in declaration order, each in its own direction")
+	void testMixedClusteringOrder() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.two (pk int, c1 int, c2 int, "
+			+ "PRIMARY KEY (pk, c1, c2)) WITH CLUSTERING ORDER BY (c1 ASC, c2 DESC)");
+		for (final var c1 : List.of(2, 1)) {
+			for (final var c2 : List.of(1, 2)) {
+				session.execute(
+					"INSERT INTO foo.two (pk, c1, c2) VALUES (1, %d, %d)".formatted(c1, c2));
+			}
+		}
+
+		assertEquals(List.of("1/2", "1/1", "2/2", "2/1"),
+			session.execute("SELECT c1, c2 FROM foo.two WHERE pk = 1")
+				.all()
+				.stream()
+				.map(row -> row.getInt("c1") + "/" + row.getInt("c2"))
+				.toList());
+	}
+
+	@Test
+	@Order(112)
+	@DisplayName("Partitions come back in Murmur3 token order, never in the order they were written")
+	void testPartitionOrder() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.parts (pk int PRIMARY KEY, v text)");
+		for (int pk = 1; pk <= 10; pk++) {
+			session.execute("INSERT INTO foo.parts (pk, v) VALUES (%d, 'v%d')".formatted(pk, pk));
+		}
+
+		// The Murmur3 token order of the integers 1..10, read off a real node.
+		final var tokenOrder = List.of(5, 10, 1, 8, 2, 4, 7, 6, 9, 3);
+		assertEquals(tokenOrder, clustering("SELECT pk FROM foo.parts"));
+		assertEquals(tokenOrder, clustering("SELECT DISTINCT pk FROM foo.parts"));
+	}
+
+	@Test
+	@Order(113)
+	@DisplayName("ORDER BY reads the clustering order forwards or backwards")
+	void testOrderBy() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ordered (pk int, ck int, "
+			+ "PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)");
+		Stream.of(2, 1, 3)
+			.forEach(ck -> session.execute(
+				"INSERT INTO foo.ordered (pk, ck) VALUES (1, %d)".formatted(ck)));
+
+		assertEquals(List.of(3, 2, 1),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck DESC"));
+		assertEquals(List.of(1, 2, 3),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck ASC"));
+		// The limit applies to the ordering asked for, not to the one the table declares.
+		assertEquals(List.of(1, 2),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck ASC LIMIT 2"));
+	}
+
+	@Test
+	@Order(114)
+	@DisplayName("ORDER BY is rejected off a single partition, off the clustering key, or mixed")
+	void testOrderByIsRejected() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.reject (pk int, c1 int, c2 int, v text, "
+			+ "PRIMARY KEY (pk, c1, c2)) WITH CLUSTERING ORDER BY (c1 ASC, c2 DESC)");
+		session.execute("INSERT INTO foo.reject (pk, c1, c2, v) VALUES (1, 1, 1, 'a')");
+		session.execute("INSERT INTO foo.reject (pk, c1, c2, v) VALUES (2, 1, 1, 'b')");
+
+		// The partition key has to be pinned, because ORDER BY reads one partition.
+		assertMentions("partition key",
+			assertThrows(InvalidQueryException.class,
+				() -> session.execute("SELECT * FROM foo.reject ORDER BY c1")));
+		assertMentions("partition key",
+			assertThrows(InvalidQueryException.class, () -> session.execute(
+				"SELECT * FROM foo.reject WHERE v = 'a' ORDER BY c1 ALLOW FILTERING")));
+		// An IN reads several partitions, which a paged query cannot merge.
+		assertMentions("page",
+			assertThrows(InvalidQueryException.class,
+				() -> session.execute("SELECT * FROM foo.reject WHERE pk IN (1, 2) ORDER BY c1")));
+		// Only clustering columns, in their declared order.
+		assertMentions("v", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY v")));
+		assertMentions("pk", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY pk")));
+		assertMentions("declared order", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c2 DESC")));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY nope")));
+		// Every element has to agree on reading the declared order forwards or backwards.
+		assertMentions("unsupported", assertThrows(InvalidQueryException.class, () -> session.execute(
+			"SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c1 ASC, c2 ASC")));
+
+		// A clustering column pinned by an EQ may be skipped over.
+		assertDoesNotThrow(() -> session.execute(
+			"SELECT * FROM foo.reject WHERE pk = 1 AND c1 = 1 ORDER BY c2 ASC"));
+		// Naming only the first clustering column reverses the whole order.
+		assertDoesNotThrow(
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c1 DESC"));
+	}
+
+	@Test
+	@Order(115)
+	@DisplayName("A clustering column is ordered by its CQL type, not by Object#compareTo")
+	void testClusteringOrderByType() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.typed (pk int, t text, PRIMARY KEY (pk, t))");
+		Stream.of("b", "A", "a", "B", "\u00e9", "1")
+			.forEach(t -> session.execute("INSERT INTO foo.typed (pk, t) VALUES (1, '%s')".formatted(t)));
+		assertEquals(List.of("1", "A", "B", "a", "b", "\u00e9"),
+			session.execute("SELECT t FROM foo.typed WHERE pk = 1")
+				.all()
+				.stream()
+				.map(row -> row.getString("t"))
+				.toList());
+
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.blobs (pk int, b blob, PRIMARY KEY (pk, b))");
+		Stream.of("0x01", "0xff", "0x00", "0x0100", "0x7f")
+			.forEach(b -> session.execute("INSERT INTO foo.blobs (pk, b) VALUES (1, %s)".formatted(b)));
+		assertEquals(List.of("00", "01", "0100", "7f", "ff"),
+			session.execute("SELECT b FROM foo.blobs WHERE pk = 1")
+				.all()
+				.stream()
+				.map(row -> hex(row.getByteBuffer("b")))
+				.toList());
+
+		// A uuid orders on its version and then unsigned on each half, where UUID#compareTo would
+		// read the halves as signed longs and put the two large ones first.
+		session.execute("CREATE TABLE IF NOT EXISTS foo.uuids (pk int, u uuid, PRIMARY KEY (pk, u))");
+		final var uuids = List.of("ffffffff-0000-1000-8000-000000000000",
+			"00000000-0000-1000-8000-000000000000", "80000000-0000-1000-8000-000000000000",
+			"7fffffff-0000-1000-8000-000000000000");
+		uuids.forEach(u -> session.execute("INSERT INTO foo.uuids (pk, u) VALUES (1, %s)".formatted(u)));
+		assertEquals(uuids.stream().sorted().toList(),
+			session.execute("SELECT u FROM foo.uuids WHERE pk = 1")
+				.all()
+				.stream()
+				.map(row -> row.getUuid("u").toString())
+				.toList());
+	}
+
+	private List<Integer> clustering(final String cql) {
+		return session.execute(cql).all().stream().map(row -> row.getInt(0)).toList();
+	}
+
+	private static void assertMentions(final String expected, final Throwable thrown) {
+		assertTrue(thrown.getMessage().toLowerCase().contains(expected.toLowerCase()),
+			"%s should name %s but said: %s".formatted(thrown.getClass().getSimpleName(), expected,
+				thrown.getMessage()));
+	}
+
+	private static String hex(final ByteBuffer buffer) {
+		final var bytes = new byte[buffer.remaining()];
+		buffer.duplicate().get(bytes);
+		final var hex = new StringBuilder(bytes.length * 2);
+		for (final var value : bytes) {
+			hex.append("%02x".formatted(value));
+		}
+
+		return hex.toString();
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
