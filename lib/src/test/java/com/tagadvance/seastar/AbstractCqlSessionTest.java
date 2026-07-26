@@ -1103,6 +1103,69 @@ abstract class AbstractCqlSessionTest {
 		assertEquals(List.of(0, 1), prepared.getPartitionKeyIndices());
 	}
 
+	@Test
+	@Order(62)
+	@DisplayName("The routing key of a single-component partition key is the encoded value")
+	void testRoutingKeySingleComponent() {
+		createLwtTable();
+
+		final var bound = session.prepare("SELECT name FROM foo.lwt WHERE id = ?").bind(7);
+
+		assertEquals(ByteBuffer.wrap(new byte[]{0, 0, 0, 7}), bound.getRoutingKey());
+	}
+
+	@Test
+	@Order(63)
+	@DisplayName("A composite routing key is length-prefixed in partition key order")
+	void testRoutingKeyCompositeComponents() {
+		createCompositeKeyTable();
+
+		final var bound = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk2 = ? AND pk1 = ? AND cc = ?").bind(9, 7, 1);
+
+		// Two-byte length, value, then a zero byte per component; pk1 precedes pk2 despite bind order.
+		final var expected = ByteBuffer.wrap(new byte[]{0, 4, 0, 0, 0, 7, 0, 0, 4, 0, 0, 0, 9, 0});
+		assertEquals(expected, bound.getRoutingKey());
+	}
+
+	@Test
+	@Order(64)
+	@DisplayName("An explicitly set routing key overrides the partition key")
+	void testRoutingKeyExplicitOverride() {
+		createLwtTable();
+
+		final var override = ByteBuffer.wrap(new byte[]{1, 2, 3});
+		final var bound = session.prepare("SELECT name FROM foo.lwt WHERE id = ?")
+			.bind(7)
+			.setRoutingKey(override);
+
+		assertEquals(override, bound.getRoutingKey());
+	}
+
+	@Test
+	@Order(65)
+	@DisplayName("The routing key is null when a partition key component is not a bind marker")
+	void testRoutingKeyWithoutMarkers() {
+		createCompositeKeyTable();
+
+		final var bound = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk1 = 1 AND pk2 = ? AND cc = ?").bind(9, 1);
+
+		assertNull(bound.getRoutingKey());
+	}
+
+	@Test
+	@Order(66)
+	@DisplayName("The routing key is null when a partition key value is unset")
+	void testRoutingKeyWithUnsetValue() {
+		createCompositeKeyTable();
+
+		final var bound = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk1 = ? AND pk2 = ? AND cc = ?").bind();
+
+		assertNull(bound.getRoutingKey());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

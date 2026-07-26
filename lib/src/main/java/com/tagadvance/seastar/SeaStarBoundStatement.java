@@ -12,11 +12,13 @@ import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.token.Token;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
+import com.datastax.oss.driver.internal.core.util.RoutingKey;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.NonNull;
@@ -28,6 +30,7 @@ public class SeaStarBoundStatement implements BoundStatement {
 	private Object[] values;
 	private final AtomicLong timestamp = new AtomicLong();
 	private CqlIdentifier routingKeyspace;
+	private ByteBuffer routingKey;
 	private Boolean idempotent;
 	private Map<String, ByteBuffer> customPayload = Map.of();
 
@@ -93,7 +96,9 @@ public class SeaStarBoundStatement implements BoundStatement {
 	@Override
 	@NonNull
 	public BoundStatement setRoutingKey(final ByteBuffer newRoutingKey) {
-		throw new UnsupportedOperationException();
+		this.routingKey = newRoutingKey;
+
+		return this;
 	}
 
 	@Override
@@ -278,9 +283,28 @@ public class SeaStarBoundStatement implements BoundStatement {
 		return routingKeyspace;
 	}
 
+	/**
+	 * An explicitly set routing key, otherwise the partition key assembled from the bind markers
+	 * identified by {@link PreparedStatement#getPartitionKeyIndices()}. Null when the partition key
+	 * cannot be determined, either because a component is not a bind marker or because one is unset.
+	 */
 	@Override
 	public ByteBuffer getRoutingKey() {
-		throw new UnsupportedOperationException();
+		if (routingKey != null) {
+			return routingKey;
+		}
+
+		final var indices = preparedStatement.getPartitionKeyIndices();
+		if (indices.isEmpty()) {
+			return null;
+		}
+
+		final var components = indices.stream()
+			.map(this::getBytesUnsafe)
+			.toArray(ByteBuffer[]::new);
+
+		return Arrays.stream(components).anyMatch(Objects::isNull) ? null
+			: RoutingKey.compose(components);
 	}
 
 	@Override
