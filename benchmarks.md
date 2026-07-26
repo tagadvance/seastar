@@ -208,33 +208,39 @@ That brackets the answer:
 - **Marginal cost: 75 ms.** This is the number that matters. The ANTLR parse is not optional, so it
   will load the shared classes regardless; 75 ms is what is actually recoverable.
 
-### Finding
+### Finding, and what came of it
 
-**SeaStar can call `CQLFragmentParser.parseAny(CqlParser::query, query, "query")` instead of
-`QueryProcessor.parseStatement(query)`.** Both are public. `parseStatement` *is* that call plus
-exception translation, so this is not a reimplementation.
+**SeaStar can call `CQLFragmentParser` instead of `QueryProcessor.parseStatement(query)`.** Both are
+public. `parseStatement` *is* that call plus exception translation, so this is not a
+reimplementation.
 
 Verified equivalent: `./gradlew :lib:parserEquivalenceCheck` parses 14 statements covering every
 type SeaStar handles - CREATE KEYSPACE/TYPE/TABLE/INDEX, ALTER TYPE, USE, INSERT, UPDATE ... IF
 EXISTS, DELETE, SELECT DISTINCT ... ALLOW FILTERING, TRUNCATE, DROP TABLE/KEYSPACE and BEGIN BATCH -
 both ways and compares the parse tree types. **0 mismatches out of 14.**
 
-What it buys, at the two call sites in `SeaStarCqlRequestHandler:86` and
-`SeaStarPreparedStatement:75`:
+**This has since landed**, as `handlers.CqlParsers`, at the two call sites in
+`SeaStarCqlRequestHandler` and `SeaStarPreparedStatement`. Measured the same way, on the same
+machine, back to back:
 
-- **~75 ms off time-to-first-query** - 28% of the first query, 10% of the 743 ms total.
-- **One fewer live thread** in every JVM that uses SeaStar. `ScheduledExecutors.scheduledTasks`
-  currently starts and stays started to run a prepared-statement-eviction warning for a cache that
-  will never hold anything.
-- 1 120 fewer classes loaded in a JVM that only parses.
+| `plain` metric (median, ms) | via `QueryProcessor` | via `CQLFragmentParser` | delta |
+| --- | ---: | ---: | ---: |
+| `build.cold` | 436.8 | 438.3 | +1.5 |
+| `query.first` | 272.5 | **197.4** | **-75.1 (-28%)** |
+| `jvm.to.first.query` | 759 | **678** | **-81 (-11%)** |
+| `build.warm` | 8.38 | 8.35 | -0.03 |
+| `query.warm` | 0.56 | 0.58 | +0.02 |
 
-What it costs: `parseAnyUnhandled` throws `RecognitionException` and raw `RuntimeException` where
-`parseStatement` translates both into `SyntaxException`. `CQLFragmentParser.parseAny` does that
-translation already and is what the equivalence check used, so the handler's error path is
-unchanged in shape - but SeaStar's syntax-error behaviour must be re-tested against the container
-suite before the swap is trusted.
+That is the 75 ms marginal cost, recovered in full and only on the cold path, as predicted. A JVM
+that builds a session, runs a statement, prepares one and closes the session now ends with **9 live
+threads instead of 10**: `ScheduledTasks:1` is gone, along with the prepared-statement-eviction
+warning it existed to run for a cache SeaStar never filled.
 
-This is a finding, not a change. Nothing in `lib/src/main` was modified for this run.
+What it cost: `parseAnyUnhandled` throws `RecognitionException` and raw `RuntimeException` where
+`parseStatement` translates both into Cassandra's server-side `SyntaxException`. `CqlParsers` does
+the translation itself, and takes the opportunity to report a malformed query the way a live cluster
+reports it to a client - as the driver's `SyntaxError` rather than a Cassandra exception no driver
+consumer would expect. The container suite asserts that, so the swap is covered rather than assumed.
 
 **Explicitly out of scope:** none of this involves `DatabaseDescriptor.clientInitialization()`,
 which is disqualified for the reasons recorded in `c_plan_cassandra_reflection.txt` C1.

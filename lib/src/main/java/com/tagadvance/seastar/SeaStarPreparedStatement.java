@@ -13,12 +13,12 @@ import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.internal.core.cql.DefaultPrepareRequest;
 import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
 import com.tagadvance.seastar.handlers.BindMarkers;
+import com.tagadvance.seastar.handlers.CqlParsers;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.apache.cassandra.cql3.QueryProcessor;
 import org.jspecify.annotations.NonNull;
 
 public class SeaStarPreparedStatement implements PreparedStatement {
@@ -72,7 +72,7 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	private BindMarkers.Definitions resolveDefinitions() {
 		final var explicit = Optional.ofNullable(prepareRequest.getKeyspace()).orElse(keyspace);
 		try {
-			final var raw = QueryProcessor.parseStatement(getQuery());
+			final var raw = CqlParsers.parse(context.getNode(), getQuery());
 
 			return BindMarkers.resolve(context, explicit, raw);
 		} catch (final RuntimeException e) {
