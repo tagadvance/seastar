@@ -10,8 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.Operator;
-import org.apache.cassandra.cql3.Term;
+import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.utils.Pair;
 
 /**
@@ -28,8 +29,8 @@ final class Conditions {
 	}
 
 	static List<Condition> resolve(final SeaStarTable table, final Set<CqlIdentifier> primaryKey,
-		final List<Pair<Object, Object>> rawConditions, final CodecRegistry codecRegistry,
-		final Node coordinator, final Object... bindings) {
+		final List<Pair<ColumnIdentifier, ColumnCondition.Raw>> rawConditions,
+		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
 		final List<Condition> conditions = new ArrayList<>(rawConditions.size());
 		for (final var raw : rawConditions) {
 			final var name = CqlIdentifier.fromInternal(raw.left.toString());
@@ -45,12 +46,9 @@ final class Conditions {
 
 			final var condition = raw.right;
 			requireScalar(condition);
-			final var operator = Reflections.getDeclaredField(condition, "operator", Operator.class)
-				.orElseThrow();
-			final var term = Reflections.getDeclaredField(condition, "value", Term.Raw.class)
-				.orElseThrow();
-			final var value = Terms.resolve(term, table.get(index).getType(), codecRegistry,
-				coordinator, bindings);
+			final var operator = FieldBindings.CONDITION_OPERATOR.require(condition);
+			final var value = Terms.resolve(condition.getValue(), table.get(index).getType(),
+				codecRegistry, coordinator, bindings);
 			conditions.add(new Condition(index, operator, value));
 		}
 
@@ -92,12 +90,15 @@ final class Conditions {
 		throw new UnsupportedOperationException("Unsupported IF operator %s".formatted(operator));
 	}
 
-	private static void requireScalar(final Object condition) {
-		final var unsupported = Reflections.getDeclaredField(condition, "collectionElement",
-			Term.Raw.class).isPresent()
-			|| Reflections.getDeclaredField(condition, "udtField", Object.class).isPresent()
-			|| Reflections.getDeclaredField(condition, "inValues", List.class).isPresent()
-			|| Reflections.getDeclaredField(condition, "inMarker", Object.class).isPresent();
+	/**
+	 * The condition kinds are told apart by which of the mutually exclusive fields is populated, so
+	 * absence here is a genuine answer rather than a defaulted lookup.
+	 */
+	private static void requireScalar(final ColumnCondition.Raw condition) {
+		final var unsupported = FieldBindings.CONDITION_COLLECTION_ELEMENT.find(condition).isPresent()
+			|| FieldBindings.CONDITION_UDT_FIELD.find(condition).isPresent()
+			|| FieldBindings.CONDITION_IN_VALUES.find(condition).isPresent()
+			|| FieldBindings.CONDITION_IN_MARKER.find(condition).isPresent();
 		if (unsupported) {
 			throw new UnsupportedOperationException(
 				"Only simple scalar IF conditions are supported");

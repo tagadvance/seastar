@@ -10,14 +10,11 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.VolatileUserDefinedType;
 import com.tagadvance.seastar.VolatileUserDefinedType.UserDefinedTypeDefinition;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.FieldIdentifier;
 import org.apache.cassandra.cql3.UTName;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement.Raw;
 
@@ -35,23 +32,18 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
-		final var name = Reflections.getDeclaredField(raw, "name", UTName.class).orElseThrow();
+		final var name = FieldBindings.CREATE_TYPE_NAME.require(raw);
 		final var keyspace = Optional.of(name)
 			.map(UTName::getKeyspace)
 			.orElseGet(() -> getKeyspace.get().map(CqlIdentifier::asInternal).orElse(null));
 		final var udtName = name.getStringTypeName();
-		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class)
-			.orElse(false);
-		final List<FieldIdentifier> fieldNames = Reflections.getDeclaredField(raw, "fieldNames",
-			List.class).orElseGet(Collections::emptyList);
-		final List<SeaStarRawType> fieldTypes = Reflections.getDeclaredField(raw, "rawFieldTypes",
-				List.class)
-			.orElseGet(Collections::emptyList)
+		final var ifNotExists = FieldBindings.CREATE_TYPE_IF_NOT_EXISTS.require(raw);
+		final var fieldNames = FieldBindings.CREATE_TYPE_FIELD_NAMES.require(raw);
+		final var fieldTypes = FieldBindings.CREATE_TYPE_RAW_FIELD_TYPES.require(raw)
 			.stream()
-			.map(SeaStarRawType::from)
+			.map(SeaStarRawType::new)
 			.toList();
 
 		if (keyspace == null) {

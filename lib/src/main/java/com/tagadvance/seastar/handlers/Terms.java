@@ -29,8 +29,7 @@ final class Terms {
 	static Object resolve(final Object term, final DataType dataType,
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
 		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
+			final var bindIndex = FieldBindings.MARKER_BIND_INDEX.require(marker);
 
 			return bindIndex < bindings.length ? bindings[bindIndex] : null;
 		} else if (term instanceof UserTypes.Literal literal) {

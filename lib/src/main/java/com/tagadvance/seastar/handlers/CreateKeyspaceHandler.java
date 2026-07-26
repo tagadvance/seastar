@@ -21,7 +21,7 @@ public class CreateKeyspaceHandler implements CqlHandler<CreateKeyspaceStatement
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var name = raw.keyspaceName;
-		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class).orElse(false);
+		final var ifNotExists = FieldBindings.CREATE_KEYSPACE_IF_NOT_EXISTS.require(raw);
 		final var optionalKeyspace = context.getSeaStarKeyspace(name);
 		if (optionalKeyspace.isPresent()) {
 			if (ifNotExists) {
