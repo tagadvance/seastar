@@ -50,6 +50,18 @@ java {
     }
 }
 
+// The published bytecode is always 17; this only changes the JVM the tests run on, so CI can prove
+// the setAccessible reflection into cassandra-all still works on a newer runtime.
+// ./gradlew test -PtestJavaVersion=21
+val testJavaVersion = (project.findProperty("testJavaVersion") as String?)?.toInt()
+if (testJavaVersion != null) {
+    tasks.withType<Test>().configureEach {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(testJavaVersion)
+        }
+    }
+}
+
 tasks.withType<JavaCompile>().configureEach {
     // Explicit here as well as in the toolchain so the bytecode target is visible in this file.
     options.release = 17
