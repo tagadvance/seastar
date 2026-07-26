@@ -36,7 +36,6 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final ParsedInsert raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
@@ -64,8 +63,10 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		}
 		final var table = optionalTable.get();
 
+		@SuppressWarnings("unchecked")
 		final List<Object> columnNames = Reflections.getDeclaredField(raw, "columnNames", List.class)
 			.orElseGet(Collections::emptyList);
+		@SuppressWarnings("unchecked")
 		final List<Object> columnValues = Reflections.getDeclaredField(raw, "columnValues",
 			List.class).orElseGet(Collections::emptyList);
 		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class)
