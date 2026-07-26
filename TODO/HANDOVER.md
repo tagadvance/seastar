@@ -28,12 +28,12 @@ Last verified: 168 tests green locally, 95 green on the container.
 | c_plan | C2 C3 C4 | `FieldBindings` binding table + `FieldBindingsTest` version guard; translation layer |
 | f_plan | F4 | shared `Targets` resolver |
 | a_plan | A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence) |
-| d_plan | D2 D8 | collection/tuple/cast/NULL/function literals; bound values type-checked |
+| d_plan | D1 D2 D8 | D1: real Murmur3 token order + clustering order at read time, ORDER BY implemented |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 
 ### Not done
 
-- **a_plan A11**, **d_plan D1 D3 D4 D5 D6 D7 D9**, **e_plan all**, **b_plan all**,
+- **a_plan A11**, **d_plan D3 D4 D5 D6 D7 D9**, **e_plan all**, **b_plan all**,
   **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
   **j_plan J3 J7 J8**.
 
@@ -95,6 +95,10 @@ Last verified: 168 tests green locally, 95 green on the container.
   against goal 2. Needs a partition-key index.
 - Every SELECT is a full scan: point lookup by full primary key costs 5.8 us at 10 rows, 63 us at
   1k, 12 749 us at 100k.
+- D1's read-time sort roughly doubles a full scan (`selectAll` at 1k: 334 -> 624 us), because every
+  returned row's partition key is re-encoded through `getBytesUnsafe`, which takes two locks and
+  runs a codec. A point lookup is unaffected. Both this and the line above are the same missing
+  partition key index; see the "After D1" section of `benchmarks.md`.
 
 ## Working agreement reminders
 
