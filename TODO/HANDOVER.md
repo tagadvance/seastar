@@ -27,15 +27,14 @@ Last verified: 168 tests green locally, 95 green on the container.
 | f_plan | F8 (deps half) | gson + jakarta.annotation removed, jspecify declared, jcip -> compileOnly |
 | c_plan | C2 C3 C4 | `FieldBindings` binding table + `FieldBindingsTest` version guard; translation layer |
 | f_plan | F4 | shared `Targets` resolver |
-| a_plan | A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence) |
-| d_plan | D2 D8 | collection/tuple/cast/NULL/function literals; bound values type-checked |
+| a_plan | A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 A11 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence); A11 fell out of D3 |
+| d_plan | D2 D3 D4 D8 | collection/tuple/cast/NULL/function literals; bound values type-checked; `RestrictionRules`; counters implemented |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 
 ### Not done
 
-- **a_plan A11**, **d_plan D1 D3 D4 D5 D6 D7 D9**, **e_plan all**, **b_plan all**,
-  **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
-  **j_plan J3 J7 J8**.
+- **d_plan D1 D5 D6 D7 D9**, **e_plan all**, **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**,
+  **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J7 J8**.
 
 ### Decisions already made - do not relitigate
 

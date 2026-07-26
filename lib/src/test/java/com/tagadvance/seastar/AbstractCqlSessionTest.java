@@ -2143,6 +2143,27 @@ abstract class AbstractCqlSessionTest {
 			.isEmpty());
 	}
 
+	@Test
+	@Order(136)
+	@DisplayName("A range compares by the column's type, and only types that have an order")
+	void testRangeUsesColumnType() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ordering "
+			+ "(id int PRIMARY KEY, b blob, i inet, d duration, l list<int>)");
+		session.execute("INSERT INTO foo.ordering (id, b, i) VALUES (1, 0x01, '10.0.0.1')");
+		session.execute("INSERT INTO foo.ordering (id, b, i) VALUES (2, 0x80, '200.0.0.1')");
+
+		// Bytes order unsigned, so 0x80 is above 0x7f rather than below it as a signed byte would be,
+		// and an address orders by its bytes, which InetAddress itself does not answer for.
+		assertEquals(List.of(2), ints("SELECT id FROM foo.ordering WHERE b > 0x7f ALLOW FILTERING"));
+		assertEquals(List.of(1, 2),
+			ints("SELECT id FROM foo.ordering WHERE i > '1.0.0.0' ALLOW FILTERING"));
+		assertEquals(List.of(2),
+			ints("SELECT id FROM foo.ordering WHERE i > '100.0.0.0' ALLOW FILTERING"));
+
+		assertInvalid("SELECT id FROM foo.ordering WHERE d > 1m ALLOW FILTERING", "d");
+		assertInvalid("SELECT id FROM foo.ordering WHERE l > [1] ALLOW FILTERING", "l");
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
