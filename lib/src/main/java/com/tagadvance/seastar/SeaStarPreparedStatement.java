@@ -77,7 +77,7 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 			return BindMarkers.resolve(context, explicit, raw);
 		} catch (final RuntimeException e) {
 			return new BindMarkers.Definitions(EmptyColumnDefinitions.INSTANCE,
-				EmptyColumnDefinitions.INSTANCE);
+				EmptyColumnDefinitions.INSTANCE, List.of());
 		}
 	}
 
@@ -102,7 +102,7 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 	@Override
 	@NonNull
 	public List<Integer> getPartitionKeyIndices() {
-		return List.of();
+		return definitions().partitionKeyIndices();
 	}
 
 	@Override
