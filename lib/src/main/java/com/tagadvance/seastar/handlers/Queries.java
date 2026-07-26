@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import org.apache.cassandra.cql3.Ordering;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
@@ -38,10 +39,40 @@ final class Queries {
 		final var projection = projection(table, raw.selectClause, coordinator);
 		final var restrictions = Restrictions.translate(table, raw.whereClause, codecRegistry,
 			coordinator, bindings);
+		final var orderBy = orderBy(table, raw, coordinator);
 		final var limit = limit(raw.limit, codecRegistry, coordinator, bindings);
 
 		return new Query(target, projection, raw.parameters.isDistinct, raw.parameters.allowFiltering,
-			restrictions, limit);
+			restrictions, orderBy, limit);
+	}
+
+	/**
+	 * The ORDER BY clause as written, with each column resolved against the table. A column that
+	 * does not exist is reported here for the same reason a selected one is: it is wrong whatever
+	 * the table holds.
+	 */
+	private static List<Sort> orderBy(final SeaStarTable table, final RawStatement raw,
+		final Node coordinator) {
+		final List<Sort> orderBy = new ArrayList<>(raw.parameters.orderings.size());
+		for (final var ordering : raw.parameters.orderings) {
+			final var expression = FieldBindings.ORDERING_EXPRESSION.require(ordering);
+			// The other expression is ANN, which orders by distance from a vector rather than by a
+			// stored value and only ever runs off a vector index.
+			if (!(expression instanceof Ordering.Raw.SingleColumn)) {
+				throw new InvalidQueryException(coordinator,
+					"Unsupported ORDER BY expression %s".formatted(expression));
+			}
+			final var name = CqlIdentifier.fromInternal(
+				FieldBindings.ORDERING_COLUMN.require(expression).toString());
+			if (table.firstIndexOf(name) < 0) {
+				throw new InvalidQueryException(coordinator,
+					"Undefined column name %s".formatted(name.asInternal()));
+			}
+			final var direction = FieldBindings.ORDERING_DIRECTION.require(ordering);
+			orderBy.add(new Sort(name, direction == Ordering.Direction.DESC));
+		}
+
+		return List.copyOf(orderBy);
 	}
 
 	/**

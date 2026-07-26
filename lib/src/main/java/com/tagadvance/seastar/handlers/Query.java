@@ -14,9 +14,10 @@ import org.jspecify.annotations.Nullable;
  * @param distinct      whether DISTINCT was written
  * @param allowFiltering whether ALLOW FILTERING was written
  * @param restrictions  the WHERE clause; empty when there is none
+ * @param orderBy       the ORDER BY clause, in the order it was written; empty when there is none
  * @param limit         the LIMIT, or null when there is none
  */
 record Query(Target target, List<Integer> projection, boolean distinct, boolean allowFiltering,
-			 List<Restriction> restrictions, @Nullable Integer limit) {
+			 List<Restriction> restrictions, List<Sort> orderBy, @Nullable Integer limit) {
 
 }

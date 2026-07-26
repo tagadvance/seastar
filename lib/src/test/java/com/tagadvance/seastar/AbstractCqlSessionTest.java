@@ -1840,6 +1840,66 @@ abstract class AbstractCqlSessionTest {
 	}
 
 	@Test
+	@Order(113)
+	@DisplayName("ORDER BY reads the clustering order forwards or backwards")
+	void testOrderBy() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ordered (pk int, ck int, "
+			+ "PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)");
+		Stream.of(2, 1, 3)
+			.forEach(ck -> session.execute(
+				"INSERT INTO foo.ordered (pk, ck) VALUES (1, %d)".formatted(ck)));
+
+		assertEquals(List.of(3, 2, 1),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck DESC"));
+		assertEquals(List.of(1, 2, 3),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck ASC"));
+		// The limit applies to the ordering asked for, not to the one the table declares.
+		assertEquals(List.of(1, 2),
+			clustering("SELECT ck FROM foo.ordered WHERE pk = 1 ORDER BY ck ASC LIMIT 2"));
+	}
+
+	@Test
+	@Order(114)
+	@DisplayName("ORDER BY is rejected off a single partition, off the clustering key, or mixed")
+	void testOrderByIsRejected() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.reject (pk int, c1 int, c2 int, v text, "
+			+ "PRIMARY KEY (pk, c1, c2)) WITH CLUSTERING ORDER BY (c1 ASC, c2 DESC)");
+		session.execute("INSERT INTO foo.reject (pk, c1, c2, v) VALUES (1, 1, 1, 'a')");
+		session.execute("INSERT INTO foo.reject (pk, c1, c2, v) VALUES (2, 1, 1, 'b')");
+
+		// The partition key has to be pinned, because ORDER BY reads one partition.
+		assertMentions("partition key",
+			assertThrows(InvalidQueryException.class,
+				() -> session.execute("SELECT * FROM foo.reject ORDER BY c1")));
+		assertMentions("partition key",
+			assertThrows(InvalidQueryException.class, () -> session.execute(
+				"SELECT * FROM foo.reject WHERE v = 'a' ORDER BY c1 ALLOW FILTERING")));
+		// An IN reads several partitions, which a paged query cannot merge.
+		assertMentions("page",
+			assertThrows(InvalidQueryException.class,
+				() -> session.execute("SELECT * FROM foo.reject WHERE pk IN (1, 2) ORDER BY c1")));
+		// Only clustering columns, in their declared order.
+		assertMentions("v", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY v")));
+		assertMentions("pk", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY pk")));
+		assertMentions("declared order", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c2 DESC")));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY nope")));
+		// Every element has to agree on reading the declared order forwards or backwards.
+		assertMentions("unsupported", assertThrows(InvalidQueryException.class, () -> session.execute(
+			"SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c1 ASC, c2 ASC")));
+
+		// A clustering column pinned by an EQ may be skipped over.
+		assertDoesNotThrow(() -> session.execute(
+			"SELECT * FROM foo.reject WHERE pk = 1 AND c1 = 1 ORDER BY c2 ASC"));
+		// Naming only the first clustering column reverses the whole order.
+		assertDoesNotThrow(
+			() -> session.execute("SELECT * FROM foo.reject WHERE pk = 1 ORDER BY c1 DESC"));
+	}
+
+	@Test
 	@Order(115)
 	@DisplayName("A clustering column is ordered by its CQL type, not by Object#compareTo")
 	void testClusteringOrderByType() {
@@ -1882,6 +1942,12 @@ abstract class AbstractCqlSessionTest {
 
 	private List<Integer> clustering(final String cql) {
 		return session.execute(cql).all().stream().map(row -> row.getInt(0)).toList();
+	}
+
+	private static void assertMentions(final String expected, final Throwable thrown) {
+		assertTrue(thrown.getMessage().toLowerCase().contains(expected.toLowerCase()),
+			"%s should name %s but said: %s".formatted(thrown.getClass().getSimpleName(), expected,
+				thrown.getMessage()));
 	}
 
 	private static String hex(final ByteBuffer buffer) {
