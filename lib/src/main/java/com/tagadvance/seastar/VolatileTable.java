@@ -9,6 +9,7 @@ import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
+import com.datastax.oss.driver.api.core.type.DataType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -94,6 +95,88 @@ public class VolatileTable implements SeaStarTable {
 		requireNonNull(order, "order must not be null");
 
 		writeLock(() -> clusteringColumns.put(name, order));
+	}
+
+	@Override
+	public SeaStarColumn insertColumn(final CqlIdentifier name, final DataType type,
+		final boolean isStatic) {
+		requireNonNull(name, "name must not be null");
+		requireNonNull(type, "type must not be null");
+
+		final var column = new VolatileColumn(context, this, name, type, isStatic);
+
+		return writeLockUnchecked(() -> {
+			final var index = insertionIndexOf(name);
+			columns.add(index, column);
+			rows.forEach(row -> row.insertValue(index, null));
+
+			return column;
+		});
+	}
+
+	@Override
+	public void removeColumn(final CqlIdentifier name) {
+		requireNonNull(name, "name must not be null");
+
+		writeLock(() -> {
+			final var index = indexOf(name);
+			if (index < 0) {
+				return;
+			}
+
+			columns.remove(index);
+			rows.forEach(row -> row.removeValue(index));
+		});
+	}
+
+	@Override
+	public void renameColumn(final CqlIdentifier from, final CqlIdentifier to) {
+		requireNonNull(from, "from must not be null");
+		requireNonNull(to, "to must not be null");
+
+		writeLock(() -> {
+			final var index = indexOf(from);
+			if (index < 0) {
+				return;
+			}
+
+			final var current = columns.get(index);
+			columns.set(index, new VolatileColumn(context, this, to, current.getType(),
+				current.isStatic()));
+			Collections.replaceAll(partitionKey, from, to);
+			if (clusteringColumns.containsKey(from)) {
+				// Rebuilt rather than removed and re-put: the map is ordered, and a re-put would move
+				// the renamed column to the end of the clustering key.
+				final Map<CqlIdentifier, ClusteringOrder> renamed = new LinkedHashMap<>();
+				clusteringColumns.forEach((id, order) -> renamed.put(from.equals(id) ? to : id, order));
+				clusteringColumns.clear();
+				clusteringColumns.putAll(renamed);
+			}
+		});
+	}
+
+	/**
+	 * Where a newly added column goes: after the primary key columns, which the column list holds
+	 * first, and alphabetically among the ones that follow. That is the order a live node reports,
+	 * and it is the order {@code CreateTableHandler} builds the list in.
+	 */
+	private int insertionIndexOf(final CqlIdentifier name) {
+		final var keyColumns = partitionKey.size() + clusteringColumns.size();
+
+		return IntStream.range(keyColumns, columns.size())
+			.filter(i -> columns.get(i).getName().asInternal().compareTo(name.asInternal()) > 0)
+			.findFirst()
+			.orElse(columns.size());
+	}
+
+	/**
+	 * The index of a column, read without taking the lock, for the callers that already hold it.
+	 */
+	private int indexOf(final CqlIdentifier id) {
+		return IntStream.range(0, columns.size())
+			.filter(index -> columns.get(index).getName().equals(id))
+			.findFirst()
+			.orElse(-1);
 	}
 
 	private SeaStarColumn columnByName(final CqlIdentifier id) {

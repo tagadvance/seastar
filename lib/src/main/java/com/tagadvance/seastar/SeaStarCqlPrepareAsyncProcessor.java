@@ -1,6 +1,8 @@
 package com.tagadvance.seastar;
 
+import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PrepareRequest;
+import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.ListType;
@@ -11,6 +13,7 @@ import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
 import com.datastax.oss.driver.internal.core.cql.CqlPrepareAsyncProcessor;
+import com.datastax.oss.driver.internal.core.metadata.schema.events.TableChangeEvent;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
 import com.datastax.oss.driver.internal.core.util.concurrent.CompletableFutures;
 import com.datastax.oss.driver.shaded.guava.common.base.Functions;
@@ -23,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
@@ -56,12 +60,16 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 		CacheBuilder<Object, Object> baseCache = CacheBuilder.newBuilder().weakValues();
 		this.cache = decorator.apply(baseCache).build();
 		context.ifPresent((ctx) -> {
-			LOG.info("Adding handler to invalidate cached prepared statements on type changes");
+			LOG.debug("Adding handlers to invalidate cached prepared statements on schema changes");
 			// VolatileDriverContext reuses the driver's event bus, so registering the same
 			// TypeChangeEvent listener the real driver uses evicts cached prepared statements whose
 			// bind or result variables reference a UDT once something (e.g. ALTER TYPE) fires the event.
-			((InternalDriverContext) ctx).getEventBus()
-				.register(TypeChangeEvent.class, this::onTypeChanged);
+			final var eventBus = ((InternalDriverContext) ctx).getEventBus();
+			eventBus.register(TypeChangeEvent.class, this::onTypeChanged);
+			// ALTER TABLE has no driver-side equivalent to lean on, but the event is the driver's own
+			// and the reason to listen is the same: a statement prepared against the old column list
+			// would keep answering with it.
+			eventBus.register(TableChangeEvent.class, this::onTableChanged);
 		});
 	}
 
@@ -100,19 +108,44 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 	}
 
 	private void onTypeChanged(final TypeChangeEvent event) {
+		final var type = event.oldType != null ? event.oldType : event.newType;
+		invalidateIf(statement -> Iterables.any(statement.getResultSetDefinitions(),
+				(def) -> typeMatches(type, def.getType())) || Iterables.any(
+				statement.getVariableDefinitions(), (def) -> typeMatches(type, def.getType())),
+			"UDT change");
+	}
+
+	/**
+	 * Evicts the prepared statements whose bind or result variables name the changed table, so that
+	 * the next prepare re-resolves them against the current columns.
+	 *
+	 * <p>A statement that names no columns at all - an {@code INSERT} written entirely with literals,
+	 * say - has nothing to match on and survives, which costs nothing: it had no column list to go
+	 * stale.
+	 */
+	private void onTableChanged(final TableChangeEvent event) {
+		final var table = event.oldTable != null ? event.oldTable : event.newTable;
+		invalidateIf(
+			statement -> references(statement.getResultSetDefinitions(), table) || references(
+				statement.getVariableDefinitions(), table), "table change");
+	}
+
+	private static boolean references(final ColumnDefinitions definitions,
+		final TableMetadata table) {
+		return Iterables.any(definitions,
+			(def) -> table.getKeyspace().equals(def.getKeyspace()) && table.getName()
+				.equals(def.getTable()));
+	}
+
+	private void invalidateIf(final Predicate<SeaStarPreparedStatement> stale, final String reason) {
 		for (final var entry : this.cache.asMap().entrySet()) {
 			try {
-				final var statement = entry.getValue().get();
-				if (Iterables.any(statement.getResultSetDefinitions(),
-					(def) -> typeMatches(event.oldType, def.getType())) || Iterables.any(
-					statement.getVariableDefinitions(),
-					(def) -> typeMatches(event.oldType, def.getType()))) {
-
+				if (stale.test(entry.getValue().get())) {
 					this.cache.invalidate(entry.getKey());
 					this.cache.cleanUp();
 				}
 			} catch (final Exception e) {
-				LOG.info("Exception while invalidating prepared statement cache due to UDT change",
+				LOG.info("Exception while invalidating prepared statement cache due to {}", reason,
 					e);
 			}
 		}
