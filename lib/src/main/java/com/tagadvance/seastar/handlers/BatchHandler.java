@@ -48,8 +48,8 @@ public class BatchHandler implements CqlHandler<Parsed> {
 		CompletionStage<AsyncResultSet> chain = CompletableFuture.completedStage(null);
 		for (final var child : children) {
 			chain = chain.thenCompose(
-				ignored -> registry.processorFor(child).processCql(context, executionInfo, child,
-					bindings));
+				ignored -> registry.processorFor(child, executionInfo)
+					.processCql(context, executionInfo, child, bindings));
 		}
 
 		return chain.thenApply(ignored -> newAsyncResultSet(executionInfo));

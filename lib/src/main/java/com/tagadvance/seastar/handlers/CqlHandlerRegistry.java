@@ -2,6 +2,7 @@ package com.tagadvance.seastar.handlers;
 
 import static java.util.Objects.requireNonNull;
 
+import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import java.util.Arrays;
 import java.util.Objects;
 import org.apache.cassandra.cql3.CQLStatement;
@@ -23,8 +24,16 @@ public class CqlHandlerRegistry {
 		Arrays.stream(processors).forEach(Objects::requireNonNull);
 	}
 
+	/**
+	 * The handler for a parsed statement.
+	 *
+	 * @throws com.datastax.oss.driver.api.core.servererrors.InvalidQueryException if SeaStar has no
+	 *                                                                            handler for it; see
+	 *                                                                            {@link UnsupportedStatements}
+	 */
 	@SuppressWarnings("unchecked")
-	public <S extends CQLStatement.Raw> CqlHandler<S> processorFor(final S statement) {
+	public <S extends CQLStatement.Raw> CqlHandler<S> processorFor(final S statement,
+		final ExecutionInfo executionInfo) {
 		for (final var processor : processors) {
 			if (processor.canProcess(statement)) {
 				LOG.trace("[{}] Using {} to process {}", logPrefix, processor, statement);
@@ -36,7 +45,7 @@ public class CqlHandlerRegistry {
 			}
 		}
 
-		throw new IllegalArgumentException("No request processor found for " + statement);
+		throw UnsupportedStatements.failure(executionInfo, statement);
 	}
 
 }
