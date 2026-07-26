@@ -23,7 +23,9 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.VectorType;
+import com.datastax.oss.driver.api.core.type.codec.CodecNotFoundException;
 import java.nio.ByteBuffer;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1568,6 +1570,157 @@ abstract class AbstractCqlSessionTest {
 		final var asyncError = assertThrows(CompletionException.class, stage::join);
 		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
 		assertEquals("Session is closed", asyncError.getCause().getMessage());
+	}
+
+	@Test
+	@Order(88)
+	@DisplayName("Collection, tuple and vector literals insert and read back as their Java values")
+	void testCollectionLiterals() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.literals (id int PRIMARY KEY, l list<int>, "
+			+ "s set<int>, m map<text, int>, t tuple<int, text>, v vector<float, 2>)");
+		session.execute("INSERT INTO foo.literals (id, l, s, m, t, v) VALUES "
+			+ "(1, [1, 2], {4, 3}, {'a': 5}, (6, 'x'), [1.5, 2.5])");
+
+		final var row = session.execute("SELECT * FROM foo.literals WHERE id = 1").one();
+		assertNotNull(row);
+		assertEquals(List.of(1, 2), row.getList("l", Integer.class));
+		assertEquals(Set.of(3, 4), row.getSet("s", Integer.class));
+		assertEquals(Map.of("a", 5), row.getMap("m", String.class, Integer.class));
+
+		final var tuple = row.getTupleValue("t");
+		assertNotNull(tuple);
+		assertEquals(6, tuple.getInt(0));
+		assertEquals("x", tuple.getString(1));
+
+		final var vector = row.getVector("v", Float.class);
+		assertNotNull(vector);
+		assertEquals(List.of(1.5f, 2.5f), vector.stream().toList());
+	}
+
+	@Test
+	@Order(89)
+	@DisplayName("A literal the column's type cannot take is rejected, {} included")
+	void testCollectionLiteralTypeErrors() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.literal_errors "
+			+ "(id int PRIMARY KEY, l list<int>, s set<int>, m map<text, int>)");
+
+		// {} is parsed as an empty set because the grammar cannot tell it from an empty map, so a
+		// list column rejects it, and [] - which is a list or a vector - is rejected by a set.
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.literal_errors (id, l) VALUES (1, {})"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.literal_errors (id, s) VALUES (1, [])"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.literal_errors (id, s) VALUES (1, {'a': 1})"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.literal_errors (id, m) VALUES (1, {1: 1})"));
+	}
+
+	@Test
+	@Order(90)
+	@DisplayName("An empty collection is null unless it is frozen, and its getter still answers empty")
+	void testEmptyCollectionLiterals() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.empties (id int PRIMARY KEY, l list<int>, "
+			+ "s set<int>, m map<text, int>, fl frozen<list<int>>, fs frozen<set<int>>, "
+			+ "fm frozen<map<text, int>>)");
+		session.execute(
+			"INSERT INTO foo.empties (id, l, s, m, fl, fs, fm) VALUES (1, [], {}, {}, [], {}, {})");
+
+		final var row = session.execute("SELECT * FROM foo.empties WHERE id = 1").one();
+		assertNotNull(row);
+
+		// An unfrozen collection is one cell per element, so an empty one is no cells at all.
+		assertTrue(row.isNull("l"));
+		assertTrue(row.isNull("s"));
+		assertTrue(row.isNull("m"));
+		// A frozen collection is a single value, and an empty one is still a value.
+		assertFalse(row.isNull("fl"));
+		assertFalse(row.isNull("fs"));
+		assertFalse(row.isNull("fm"));
+
+		assertEquals(List.of(), row.getList("l", Integer.class));
+		assertEquals(Set.of(), row.getSet("s", Integer.class));
+		assertEquals(Map.of(), row.getMap("m", String.class, Integer.class));
+		assertEquals(List.of(), row.getList("fl", Integer.class));
+		assertEquals(Set.of(), row.getSet("fs", Integer.class));
+		assertEquals(Map.of(), row.getMap("fm", String.class, Integer.class));
+	}
+
+	@Test
+	@Order(91)
+	@DisplayName("A null literal clears the column it is written to")
+	void testNullLiteral() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.null_literals (id int PRIMARY KEY, name text, tags list<int>)");
+		session.execute("INSERT INTO foo.null_literals (id, name, tags) VALUES (1, 'Ann', [1])");
+		session.execute("INSERT INTO foo.null_literals (id, name, tags) VALUES (1, null, null)");
+
+		final var row = session.execute("SELECT * FROM foo.null_literals WHERE id = 1").one();
+		assertNotNull(row);
+		assertNull(row.getString("name"));
+		assertTrue(row.isNull("tags"));
+	}
+
+	@Test
+	@Order(92)
+	@DisplayName("now(), uuid() and currentTimestamp() are evaluated when the statement runs")
+	void testTermFunctions() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.functions "
+			+ "(id int PRIMARY KEY, tu timeuuid, u uuid, ts timestamp)");
+		final var before = Instant.now().minusSeconds(60);
+		session.execute("INSERT INTO foo.functions (id, tu, u, ts) VALUES "
+			+ "(1, now(), uuid(), currentTimestamp())");
+
+		final var row = session.execute("SELECT * FROM foo.functions WHERE id = 1").one();
+		assertNotNull(row);
+		assertEquals(1, row.getUuid("tu").version());
+		assertEquals(4, row.getUuid("u").version());
+		assertTrue(row.getInstant("ts").isAfter(before));
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.functions (id, u) VALUES (2, wat())"));
+		// A function whose result the column cannot hold is a type error, not an unknown function.
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.functions (id, tu) VALUES (2, currentTimestamp())"));
+	}
+
+	@Test
+	@Order(93)
+	@DisplayName("A type cast is accepted for the column's own type and rejected for any other")
+	void testTypeCast() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.casts (id int PRIMARY KEY, name text)");
+		session.execute("INSERT INTO foo.casts (id, name) VALUES ((int) 1, (text) 'Ann')");
+
+		final var row = session.execute("SELECT name FROM foo.casts WHERE id = 1").one();
+		assertNotNull(row);
+		assertEquals("Ann", row.getString("name"));
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.casts (id, name) VALUES ((bigint) 2, 'Bob')"));
+	}
+
+	@Test
+	@Order(94)
+	@DisplayName("Binding a value its column cannot hold throws CodecNotFoundException at bind time")
+	void testBoundValueTypeChecking() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.bound "
+			+ "(id int PRIMARY KEY, name text, tags list<int>)");
+		final var prepared = session.prepare(
+			"INSERT INTO foo.bound (id, name, tags) VALUES (?, ?, ?)");
+
+		assertThrows(CodecNotFoundException.class, () -> prepared.bind(1, 2, List.of(3)));
+		assertThrows(CodecNotFoundException.class, () -> prepared.bind(1L, "Ann", List.of(3)));
+		assertThrows(CodecNotFoundException.class, () -> prepared.bind(1, "Ann", List.of("x")));
+
+		assertDoesNotThrow(() -> session.execute(prepared.bind(1, "Ann", List.of(3))));
+		// A null binds to any column, and trailing markers may be left unbound.
+		assertDoesNotThrow(() -> session.execute(prepared.bind(2, null, null)));
+		assertDoesNotThrow(() -> session.execute(prepared.bind(3)));
+
+		final var row = session.execute("SELECT * FROM foo.bound WHERE id = 1").one();
+		assertNotNull(row);
+		assertEquals("Ann", row.getString("name"));
+		assertEquals(List.of(3), row.getList("tags", Integer.class));
 	}
 
 	@AfterAll
