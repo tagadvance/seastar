@@ -1283,6 +1283,82 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("ALTER TYPE foo.alter_field ALTER street TYPE int"));
 	}
 
+	private void createUdtLiteralTable() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.lit_addr (street text, zip int)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.lit_people "
+			+ "(id int PRIMARY KEY, home frozen<lit_addr>)");
+	}
+
+	@Test
+	@Order(74)
+	@DisplayName("A UDT literal in an INSERT round-trips")
+	void testInsertUdtLiteral() {
+		createUdtLiteralTable();
+
+		session.execute(
+			"INSERT INTO foo.lit_people (id, home) VALUES (1, {street: 'Main', zip: 12345})");
+
+		final var home = session.execute("SELECT home FROM foo.lit_people WHERE id = 1")
+			.one()
+			.getUdtValue("home");
+		assertEquals("Main", home.getString("street"));
+		assertEquals(12345, home.getInt("zip"));
+	}
+
+	@Test
+	@Order(75)
+	@DisplayName("Fields omitted from a UDT literal read back null")
+	void testInsertPartialUdtLiteral() {
+		createUdtLiteralTable();
+
+		session.execute("INSERT INTO foo.lit_people (id, home) VALUES (2, {street: 'Elm'})");
+
+		final var home = session.execute("SELECT home FROM foo.lit_people WHERE id = 2")
+			.one()
+			.getUdtValue("home");
+		assertEquals("Elm", home.getString("street"));
+		assertTrue(home.isNull("zip"));
+	}
+
+	@Test
+	@Order(76)
+	@DisplayName("An unknown field in a UDT literal throws InvalidQueryException")
+	void testInsertUdtLiteralUnknownField() {
+		createUdtLiteralTable();
+
+		assertThrows(InvalidQueryException.class, () -> session.execute(
+			"INSERT INTO foo.lit_people (id, home) VALUES (3, {street: 'Oak', nope: 1})"));
+	}
+
+	@Test
+	@Order(77)
+	@DisplayName("A UDT literal nests other UDT literals and bind markers")
+	void testInsertNestedUdtLiteral() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.lit_inner (city text)");
+		session.execute(
+			"CREATE TYPE IF NOT EXISTS foo.lit_outer (street text, place frozen<lit_inner>)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.lit_nested "
+			+ "(id int PRIMARY KEY, home frozen<lit_outer>)");
+
+		final var prepared = session.prepare(
+			"INSERT INTO foo.lit_nested (id, home) VALUES (?, {street: ?, place: {city: 'Anytown'}})");
+
+		// A marker inside a UDT literal is typed as the field it stands in for, and named column.field.
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(2, variables.size());
+		assertEquals(DataTypes.INT, variables.get(0).getType());
+		assertEquals(DataTypes.TEXT, variables.get(1).getType());
+		assertEquals("home.street", variables.get(1).getName().asInternal());
+
+		session.execute(prepared.bind(1, "Main"));
+
+		final var home = session.execute("SELECT home FROM foo.lit_nested WHERE id = 1")
+			.one()
+			.getUdtValue("home");
+		assertEquals("Main", home.getString("street"));
+		assertEquals("Anytown", home.getUdtValue("place").getString("city"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
