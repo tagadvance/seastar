@@ -1401,6 +1401,28 @@ abstract class AbstractCqlSessionTest {
 			"SELECT note FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}").one());
 	}
 
+	@Test
+	@Order(80)
+	@DisplayName("A quoted column keeps its case while an unquoted one folds to lower case")
+	void testCaseSensitiveColumnNames() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.cased "
+			+ "(id int PRIMARY KEY, \"myColumn\" int, MixedCase int)");
+		session.execute("INSERT INTO foo.cased (id, \"myColumn\", MixedCase) VALUES (1, 2, 3)");
+
+		// An unquoted identifier folds to lower case wherever it appears, select clause included.
+		final var folded = session.execute("SELECT MixedCase FROM foo.cased WHERE ID = 1").one();
+		assertNotNull(folded);
+		assertEquals(3, folded.getInt("mixedcase"));
+
+		// A quoted identifier is matched exactly, so the two spellings are different columns.
+		final var quoted = session.execute("SELECT \"myColumn\" FROM foo.cased WHERE id = 1").one();
+		assertNotNull(quoted);
+		assertEquals(2, quoted.getInt("\"myColumn\""));
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT myColumn FROM foo.cased WHERE id = 1"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

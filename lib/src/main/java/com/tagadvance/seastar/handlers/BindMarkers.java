@@ -229,7 +229,7 @@ public final class BindMarkers {
 			if (!(selector.selectable instanceof Selectable.RawIdentifier identifier)) {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
-			final var index = table.firstIndexOf(CqlIdentifier.fromInternal(identifier.toString()));
+			final var index = table.firstIndexOf(Selectables.toIdentifier(identifier));
 			if (index < 0) {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
