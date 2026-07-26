@@ -1032,6 +1032,77 @@ abstract class AbstractCqlSessionTest {
 		assertEquals("Anytown", readBack.getString("city"));
 	}
 
+	private void createCompositeKeyTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.composite "
+			+ "(pk1 int, pk2 int, cc int, v int, PRIMARY KEY ((pk1, pk2), cc))");
+	}
+
+	@Test
+	@Order(57)
+	@DisplayName("Partition key indices are ordered by partition key position, not bind order")
+	void testPartitionKeyIndicesOrderedByPosition() {
+		createCompositeKeyTable();
+
+		final var inOrder = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk1 = ? AND pk2 = ? AND cc = ?");
+		assertEquals(List.of(0, 1), inOrder.getPartitionKeyIndices());
+
+		// pk2 is bound first, but pk1 is the first partition key component.
+		final var reversed = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk2 = ? AND pk1 = ? AND cc = ?");
+		assertEquals(List.of(1, 0), reversed.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(58)
+	@DisplayName("Partition key indices are empty unless every component is a bind marker")
+	void testPartitionKeyIndicesRequireEveryComponent() {
+		createCompositeKeyTable();
+
+		final var hardCoded = session.prepare(
+			"UPDATE foo.composite SET v = ? WHERE pk1 = 1 AND pk2 = ? AND cc = ?");
+		assertEquals(List.of(), hardCoded.getPartitionKeyIndices());
+
+		final var bound = session.prepare(
+			"UPDATE foo.composite SET v = ? WHERE pk1 = ? AND pk2 = ? AND cc = ?");
+		assertEquals(List.of(1, 2), bound.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(59)
+	@DisplayName("INSERT exposes partition key indices from the VALUES clause")
+	void testPartitionKeyIndicesForInsert() {
+		createCompositeKeyTable();
+
+		final var prepared = session.prepare(
+			"INSERT INTO foo.composite (cc, pk2, v, pk1) VALUES (?, ?, ?, ?)");
+
+		assertEquals(List.of(3, 1), prepared.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(60)
+	@DisplayName("A statement with no partition key markers has no partition key indices")
+	void testPartitionKeyIndicesWithoutMarkers() {
+		createCompositeKeyTable();
+
+		final var prepared = session.prepare("SELECT v FROM foo.composite WHERE pk1 = 1 AND pk2 = 2");
+
+		assertEquals(List.of(), prepared.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(61)
+	@DisplayName("A LIMIT marker does not shift partition key indices")
+	void testPartitionKeyIndicesIgnoreLimitMarker() {
+		createCompositeKeyTable();
+
+		final var prepared = session.prepare(
+			"SELECT v FROM foo.composite WHERE pk1 = ? AND pk2 = ? LIMIT ?");
+
+		assertEquals(List.of(0, 1), prepared.getPartitionKeyIndices());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

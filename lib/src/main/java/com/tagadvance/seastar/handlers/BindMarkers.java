@@ -4,6 +4,7 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
@@ -12,9 +13,12 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.Operation;
@@ -44,12 +48,13 @@ import org.jspecify.annotations.NonNull;
  */
 public final class BindMarkers {
 
-	public record Definitions(ColumnDefinitions variables, ColumnDefinitions resultSet) {
+	public record Definitions(ColumnDefinitions variables, ColumnDefinitions resultSet,
+		List<Integer> partitionKeyIndices) {
 
 	}
 
 	private static final Definitions EMPTY = new Definitions(EmptyColumnDefinitions.INSTANCE,
-		EmptyColumnDefinitions.INSTANCE);
+		EmptyColumnDefinitions.INSTANCE, List.of());
 
 	private BindMarkers() {
 	}
@@ -102,7 +107,36 @@ public final class BindMarkers {
 			return EMPTY;
 		}
 
-		return new Definitions(toDefinitions(markers), resultSet);
+		final var variables = toDefinitions(markers);
+		// A marker we could not map leaves toDefinitions empty, so indices into it would be meaningless.
+		final var partitionKeyIndices =
+			variables.size() == markers.size() ? partitionKeyIndices(table, markers) : List.<Integer>of();
+
+		return new Definitions(variables, resultSet, partitionKeyIndices);
+	}
+
+	/**
+	 * Mirrors {@code VariableSpecifications.getPartitionKeyBindVariableIndexes}: the result is
+	 * ordered by partition key position and holds the bind index of the marker supplying that
+	 * component, or is empty unless every component is supplied by a marker. Where a component is
+	 * supplied more than once (e.g. {@code pk IN (?, ?)}) the highest bind index wins, as it does in
+	 * Cassandra.
+	 */
+	private static List<Integer> partitionKeyIndices(final SeaStarTable table,
+		final NavigableMap<Integer, ColumnDefinition> markers) {
+		final Map<CqlIdentifier, Integer> byColumn = markers.entrySet()
+			.stream()
+			.collect(Collectors.toMap(entry -> entry.getValue().getName(), Map.Entry::getKey,
+				(lower, higher) -> higher));
+
+		final var partitionKey = table.getPartitionKey();
+		final var indices = partitionKey.stream()
+			.map(ColumnMetadata::getName)
+			.map(byColumn::get)
+			.filter(Objects::nonNull)
+			.toList();
+
+		return indices.size() == partitionKey.size() ? indices : List.of();
 	}
 
 	@SuppressWarnings("unchecked")
