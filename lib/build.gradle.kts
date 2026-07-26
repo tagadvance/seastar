@@ -62,7 +62,7 @@ tasks.register<JavaExec>("inspectRaw") {
 }
 
 group = "com.tagadvance"
-version = "1.0.0-SNAPSHOT"
+version = "1.0.0-alpha"
 
 java {
     withSourcesJar()
@@ -77,9 +77,12 @@ publishing {
 
             pom {
                 name.set("SeaStar")
-                description.set("...")
+                description.set(
+                    "An in-memory implementation of the DataStax Java driver's CqlSession that "
+                        + "mirrors Cassandra's behavior, intended as a fast alternative to "
+                        + "TestContainers for tests.")
                 url.set("https://github.com/tagadvance/seastar")
-
+                inceptionYear.set("2026")
 
                 licenses {
                     license {
@@ -107,6 +110,11 @@ publishing {
                     connection.set("scm:git:git://github.com:tagadvance/seastar.git")
                     developerConnection.set("scm:git:ssh://git@github.com:tagadvance/seastar.git")
                     url.set("https://github.com/tagadvance/seastar")
+                }
+
+                issueManagement {
+                    system.set("GitHub Issues")
+                    url.set("https://github.com/tagadvance/seastar/issues")
                 }
             }
         }
