@@ -30,6 +30,12 @@ Last verified: 168 tests green locally, 95 green on the container.
 | a_plan | A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence) |
 | d_plan | D2 D8 | collection/tuple/cast/NULL/function literals; bound values type-checked |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
+| j_plan | J7 | CI on JDK 17/21/25; container suite nightly and on demand |
+
+The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
+j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
+a JDK bump is the most likely thing to break them. Run it with
+`./gradlew test -PtestJavaVersion=25`.
 
 ### Not done
 
