@@ -2,25 +2,34 @@ package com.tagadvance.seastar.handlers;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
@@ -32,6 +41,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * The translation layer answers for a parsed statement without one being executed, which is the
@@ -360,6 +372,132 @@ class TranslationTest {
 				() -> Modifications.update(context, NO_SESSION_KEYSPACE, raw, node));
 
 			assertEquals("PRIMARY KEY column 'id' cannot have IF conditions", error.getMessage());
+		}
+
+	}
+
+	@Nested
+	@DisplayName("Terms")
+	class TermsTest {
+
+		/**
+		 * A term needs no statement of its own, so every case is written as the second INSERT value
+		 * and then resolved against whichever type the case is about. That keeps the table of cases
+		 * to (literal, type, value) rather than a table of schemas.
+		 */
+		private Object resolve(final String literal, final DataType dataType,
+			final Object... bindings) {
+			final var raw = (ParsedInsert) parse(
+				"INSERT INTO ks.people (id, name) VALUES (1, %s)".formatted(literal));
+			final var term = FieldBindings.INSERT_COLUMN_VALUES.require(raw).get(1);
+
+			return Terms.resolve(term, dataType, context.getCodecRegistry(), node, bindings);
+		}
+
+		static Stream<Arguments> valid() {
+			return Stream.of(arguments("a null literal", "null", DataTypes.TEXT, null),
+				arguments("an integer literal", "1", DataTypes.INT, 1),
+				arguments("a string literal", "'x'", DataTypes.TEXT, "x"),
+				arguments("a list literal", "[1, 2]", DataTypes.listOf(DataTypes.INT), List.of(1, 2)),
+				arguments("a set literal", "{2, 1}", DataTypes.setOf(DataTypes.INT), Set.of(1, 2)),
+				arguments("a map literal", "{'a': 1}", DataTypes.mapOf(DataTypes.TEXT, DataTypes.INT),
+					Map.of("a", 1)),
+				arguments("a nested collection literal", "{'a': [1]}",
+					DataTypes.mapOf(DataTypes.TEXT, DataTypes.listOf(DataTypes.INT, true), false),
+					Map.of("a", List.of(1))),
+				arguments("an empty list literal", "[]", DataTypes.listOf(DataTypes.INT), null),
+				arguments("an empty frozen list literal", "[]", DataTypes.listOf(DataTypes.INT, true),
+					List.of()),
+				arguments("an empty brace literal for a set", "{}", DataTypes.setOf(DataTypes.INT), null),
+				arguments("an empty brace literal for a frozen set", "{}",
+					DataTypes.setOf(DataTypes.INT, true), Set.of()),
+				arguments("an empty brace literal for a map", "{}",
+					DataTypes.mapOf(DataTypes.TEXT, DataTypes.INT), null),
+				arguments("an empty brace literal for a frozen map", "{}",
+					DataTypes.mapOf(DataTypes.TEXT, DataTypes.INT, true), Map.of()),
+				arguments("a cast to the column's own type", "(int) 3", DataTypes.INT, 3),
+				arguments("a null literal for a collection", "null", DataTypes.listOf(DataTypes.INT),
+					null));
+		}
+
+		@ParameterizedTest(name = "{0} resolves to the value it names")
+		@MethodSource("valid")
+		@DisplayName("A term resolves to the Java value its type gives it")
+		void valid(final String description, final String literal, final DataType dataType,
+			final Object expected) {
+			assertEquals(expected, resolve(literal, dataType));
+		}
+
+		static Stream<Arguments> invalid() {
+			return Stream.of(
+				arguments("an empty brace literal for a list", "{}", DataTypes.listOf(DataTypes.INT),
+					"Invalid set literal for a column of type list<int>"),
+				arguments("a list literal for a set", "[1]", DataTypes.setOf(DataTypes.INT),
+					"Unexpected receiver type 'set<int>'; only list and vector are expected"),
+				arguments("a map literal for a set", "{'a': 1}", DataTypes.setOf(DataTypes.INT),
+					"Invalid map literal for a column of type set<int>"),
+				arguments("a cast to another type", "(bigint) 3", DataTypes.INT,
+					"Cannot assign value (bigint)3 to a column of type int"),
+				arguments("an unknown function", "wat()", DataTypes.TEXT, "Unknown function wat called"),
+				arguments("a function whose result the column cannot hold", "now()", DataTypes.TEXT,
+					"Type error: cannot assign result of function now to a column of type text"),
+				arguments("a vector literal of the wrong length", "[1.5]",
+					DataTypes.vectorOf(DataTypes.FLOAT, 2),
+					"Invalid vector literal: type vector<float, 2> expects 2 elements but got 1"),
+				arguments("a tuple literal with too many components", "(1, 'a', 2)",
+					DataTypes.tupleOf(DataTypes.INT, DataTypes.TEXT),
+					"Invalid tuple literal: too many elements. Type frozen<tuple<int, text>> expects 2 but got 3"));
+		}
+
+		@ParameterizedTest(name = "{0} is rejected")
+		@MethodSource("invalid")
+		@DisplayName("A term the column's type cannot take throws InvalidQueryException")
+		void invalid(final String description, final String literal, final DataType dataType,
+			final String message) {
+			final var error = assertThrows(InvalidQueryException.class,
+				() -> resolve(literal, dataType));
+
+			assertEquals(message, error.getMessage());
+		}
+
+		@Test
+		@DisplayName("a bind marker resolves to the value bound at its index")
+		void marker() {
+			assertEquals("Ann", resolve("?", DataTypes.TEXT, "Ann"));
+		}
+
+		@Test
+		@DisplayName("a tuple literal fills the components it names and leaves the rest null")
+		void tuple() {
+			final var type = DataTypes.tupleOf(DataTypes.INT, DataTypes.TEXT);
+
+			assertEquals(type.newValue(6, "x"), resolve("(6, 'x')", type));
+			assertEquals(type.newValue(6, null), resolve("(6)", type));
+		}
+
+		@Test
+		@DisplayName("a list literal for a vector column resolves to a vector")
+		void vector() {
+			assertEquals(CqlVector.newInstance(1.5f, 2.5f),
+				resolve("[1.5, 2.5]", DataTypes.vectorOf(DataTypes.FLOAT, 2)));
+		}
+
+		@Test
+		@DisplayName("now(), uuid() and currentTimestamp() are evaluated when the term is resolved")
+		void functions() {
+			assertEquals(1, ((UUID) resolve("now()", DataTypes.TIMEUUID)).version());
+			assertEquals(4, ((UUID) resolve("uuid()", DataTypes.UUID)).version());
+			assertInstanceOf(Instant.class, resolve("currentTimestamp()", DataTypes.TIMESTAMP));
+		}
+
+		@Test
+		@DisplayName("a function called with arguments SeaStar cannot pass is rejected")
+		void functionArguments() {
+			final var error = assertThrows(InvalidQueryException.class,
+				() -> resolve("now(1)", DataTypes.TIMEUUID));
+
+			assertEquals("Invalid number of arguments in call to function now: 0 required but found 1",
+				error.getMessage());
 		}
 
 	}

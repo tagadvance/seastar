@@ -42,7 +42,7 @@ public class VolatileRow implements SeaStarRow {
 		requireNonNull(values, "values must not be null");
 
 		table().readLock(() -> {
-			checkArgument(values.size() == table().size(), "Expected %d values but got %d",
+			checkArgument(values.size() == table().size(), "Expected %s values but got %s",
 				table().size(), values.size());
 			for (int i = 0; i < values.size(); i++) {
 				validate(i, values.get(i));
