@@ -44,12 +44,11 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var node = executionInfo.getCoordinator();
 		final var name = FieldBindings.ALTER_TYPE_NAME.require(raw);
-		final var keyspaceName = Optional.ofNullable(name.getKeyspace())
-			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
-			.orElse(null);
-		if (keyspaceName == null) {
-			return CompletableFuture.failedStage(new InvalidQueryException(node,
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename"));
+		final CqlIdentifier keyspaceName;
+		try {
+			keyspaceName = Targets.requireKeyspaceName(getKeyspace, name.getKeyspace(), node);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
 
 		final var typeName = name.getStringTypeName();
@@ -65,7 +64,7 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 			}
 
 			return CompletableFuture.failedStage(new InvalidQueryException(node,
-				"Type %s.%s doesn't exist".formatted(keyspaceName, typeName)));
+				"Type %s.%s doesn't exist".formatted(keyspaceName.asInternal(), typeName)));
 		}
 
 		final var kind = FieldBindings.ALTER_TYPE_KIND.require(raw).name();

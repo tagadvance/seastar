@@ -9,7 +9,6 @@ import com.datastax.oss.driver.api.core.metadata.schema.IndexKind;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.metadata.schema.DefaultIndexMetadata;
 import com.tagadvance.seastar.SeaStarDriverContext;
-import com.tagadvance.seastar.SeaStarTable;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -42,23 +41,14 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 		final var tableName = FieldBindings.CREATE_INDEX_TABLE_NAME.require(raw);
 		final var ifNotExists = FieldBindings.CREATE_INDEX_IF_NOT_EXISTS.require(raw);
 
-		final var keyspace = Optional.ofNullable(
-				tableName.hasKeyspace() ? tableName.getKeyspace() : null)
-			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
-			.orElse(null);
-		if (keyspace == null) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename"));
+		final Target target;
+		try {
+			target = Targets.require(context, getKeyspace, tableName, coordinator);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
 		final var table = tableName.getName();
-		final var optionalTable = context.getSeaStarKeyspace(CqlIdentifier.fromInternal(keyspace))
-			.flatMap(ksx -> ksx.getSeaStarTable(CqlIdentifier.fromInternal(table)));
-		if (optionalTable.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"Table '%s.%s' doesn't exist".formatted(keyspace, table)));
-		}
-		final var seaStarTable = optionalTable.get();
+		final var seaStarTable = target.table();
 
 		final var targets = FieldBindings.CREATE_INDEX_RAW_TARGETS.require(raw);
 		if (targets.isEmpty()) {
@@ -81,10 +71,9 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 				"Index '%s' already exists".formatted(indexName.asInternal())));
 		}
 
-		final var target = column.asInternal();
-		final var index = new DefaultIndexMetadata(CqlIdentifier.fromInternal(keyspace),
-			seaStarTable.getName(), indexName, IndexKind.COMPOSITES, target,
-			Map.of("target", target));
+		final var indexTarget = column.asInternal();
+		final var index = new DefaultIndexMetadata(target.keyspace().name(), seaStarTable.getName(),
+			indexName, IndexKind.COMPOSITES, indexTarget, Map.of("target", indexTarget));
 		seaStarTable.addIndex(index);
 
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));

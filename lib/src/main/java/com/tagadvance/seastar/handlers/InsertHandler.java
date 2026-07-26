@@ -5,14 +5,12 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
-import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -40,28 +38,13 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		final ExecutionInfo executionInfo, final ParsedInsert raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var keyspace = Optional.ofNullable(raw.keyspace())
-			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
-			.orElse(null);
-		if (keyspace == null) {
-			throw new InvalidQueryException(coordinator,
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename");
+		final Target target;
+		try {
+			target = Targets.require(context, getKeyspace, raw, coordinator);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
-		final var optionalKeyspace = context.getSeaStarKeyspace(
-			CqlIdentifier.fromInternal(keyspace));
-		if (optionalKeyspace.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"Keyspace '%s' does not exist".formatted(keyspace)));
-		}
-
-		final var optionalTable = optionalKeyspace.get()
-			.getSeaStarTable(CqlIdentifier.fromInternal(raw.name()));
-		if (optionalTable.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"table %s does not exist".formatted(raw.name())));
-		}
-		final var table = optionalTable.get();
+		final var table = target.table();
 
 		final var columnNames = FieldBindings.INSERT_COLUMN_NAMES.require(raw);
 		final var columnValues = FieldBindings.INSERT_COLUMN_VALUES.require(raw);
@@ -86,10 +69,7 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 			values.set(index, Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
 		}
 
-		final List<CqlIdentifier> primaryKey = new ArrayList<>();
-		table.getPartitionKey().stream().map(ColumnMetadata::getName).forEach(primaryKey::add);
-		table.getClusteringColumns().keySet().stream().map(ColumnMetadata::getName)
-			.forEach(primaryKey::add);
+		final var primaryKey = target.primaryKeyNames();
 		for (final var pk : primaryKey) {
 			if (!named.contains(pk)) {
 				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,

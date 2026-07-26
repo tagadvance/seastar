@@ -6,7 +6,6 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.Node;
-import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarDriverContext;
@@ -47,30 +46,15 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final ExecutionInfo executionInfo, final Parsed raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var keyspace = Optional.ofNullable(raw.keyspace())
-			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
-			.orElse(null);
-		if (keyspace == null) {
-			throw new InvalidQueryException(coordinator,
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename");
+		final Target target;
+		try {
+			target = Targets.require(context, getKeyspace, raw, coordinator);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
-		final var optionalKeyspace = context.getSeaStarKeyspace(
-			CqlIdentifier.fromInternal(keyspace));
-		if (optionalKeyspace.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"Keyspace '%s' does not exist".formatted(keyspace)));
-		}
-
-		final var optionalTable = optionalKeyspace.get()
-			.getSeaStarTable(CqlIdentifier.fromInternal(raw.name()));
-		if (optionalTable.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"table %s does not exist".formatted(raw.name())));
-		}
-		final var table = optionalTable.get();
+		final var table = target.table();
 		final var codecRegistry = context.getCodecRegistry();
-		final var primaryKey = primaryKeyNames(table);
+		final var primaryKey = target.primaryKeyNames();
 
 		final var conditionList = raw.getConditions();
 		final var ifExists = FieldBindings.MODIFICATION_IF_EXISTS.require(raw);
@@ -202,15 +186,6 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		return predicates.stream().reduce(Predicate::and)
 			.orElseThrow(() -> new IllegalStateException(
 				"a WHERE clause with relations must yield at least one predicate"));
-	}
-
-	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {
-		final Set<CqlIdentifier> names = new HashSet<>();
-		table.getPartitionKey().stream().map(ColumnMetadata::getName).forEach(names::add);
-		table.getClusteringColumns().keySet().stream().map(ColumnMetadata::getName)
-			.forEach(names::add);
-
-		return names;
 	}
 
 }
