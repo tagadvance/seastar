@@ -1166,6 +1166,23 @@ abstract class AbstractCqlSessionTest {
 		assertNull(bound.getRoutingKey());
 	}
 
+	@Test
+	@Order(67)
+	@DisplayName("A rethrown DriverException carries execution info")
+	void testDriverExceptionCarriesExecutionInfo() {
+		createLwtTable();
+
+		final var error = assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT nope FROM foo.lwt"));
+
+		final var executionInfo = error.getExecutionInfo();
+		assertNotNull(executionInfo);
+		assertEquals("SELECT nope FROM foo.lwt",
+			((SimpleStatement) executionInfo.getRequest()).getQuery());
+		assertTrue(executionInfo.getWarnings().isEmpty());
+		assertTrue(executionInfo.isSchemaInAgreement());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
