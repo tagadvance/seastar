@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The default build must stay green without Docker: the container suite is opt-in precisely so a
+  # contributor without a daemon is not blocked.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The published bytecode is always 17. The newer runtimes are here because the handlers
+        # setAccessible into package-private cassandra-all fields, which is the thing most likely to
+        # break on a JDK bump.
+        java: ['17', '21', '25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            ${{ matrix.java }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        run: ./gradlew build -PtestJavaVersion=${{ matrix.java }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-jdk${{ matrix.java }}
+          path: lib/build/reports/tests/
