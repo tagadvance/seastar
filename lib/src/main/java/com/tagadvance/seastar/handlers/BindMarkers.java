@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
 import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
 import com.tagadvance.seastar.SeaStarDriverContext;
@@ -25,6 +26,7 @@ import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
 import org.apache.cassandra.cql3.Term;
+import org.apache.cassandra.cql3.UserTypes;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
@@ -149,8 +151,32 @@ public final class BindMarkers {
 		for (int i = 0; i < columnNames.size(); i++) {
 			final var column = columnFor(table, columnNames.get(i).toString());
 			if (column != null && columnValues.get(i) instanceof Term.Raw term) {
-				putIfMarker(term, column, markers);
+				collectInsertValue(table, term, column, markers);
 			}
+		}
+	}
+
+	/**
+	 * Registers the markers in one INSERT value, descending into UDT literals so that a marker
+	 * standing in for a field is typed as that field rather than as the whole UDT.
+	 */
+	private static void collectInsertValue(final SeaStarTable table, final Term.Raw term,
+		final ColumnDefinition column, final NavigableMap<Integer, ColumnDefinition> markers) {
+		if (term instanceof UserTypes.Literal literal
+			&& column.getType() instanceof UserDefinedType udt) {
+			// Cassandra names a field variable "column.field"; see UserTypes.Literal.fieldSpecOf.
+			literal.entries.forEach((field, fieldTerm) -> {
+				final var name = CqlIdentifier.fromInternal(field.toString());
+				final var index = udt.firstIndexOf(name);
+				if (index >= 0) {
+					final var definition = syntheticDefinition(table,
+						"%s.%s".formatted(column.getName().asInternal(), name.asInternal()),
+						udt.getFieldTypes().get(index));
+					collectInsertValue(table, fieldTerm, definition, markers);
+				}
+			});
+		} else {
+			putIfMarker(term, column, markers);
 		}
 	}
 
