@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.jspecify.annotations.NonNull;
 
@@ -134,6 +135,13 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 			"newResultSetDefinitions must not be null");
 	}
 
+	/**
+	 * Values are looked up in the codec registry as they are bound rather than when the statement
+	 * runs, so a value the target column cannot hold fails with the
+	 * {@link com.datastax.oss.driver.api.core.type.codec.CodecNotFoundException} the real driver
+	 * throws, at the point the real driver throws it. Trailing values may be omitted; those bind
+	 * markers are simply left unset.
+	 */
 	@Override
 	public @NonNull BoundStatement bind(final Object @NonNull ... values) {
 		final var variables = getVariableDefinitions();
@@ -141,6 +149,11 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 			throw new IllegalArgumentException(
 				"Too many variables (expected %d, got %d)".formatted(variables.size(), values.length));
 		}
+
+		final var codecRegistry = context.getCodecRegistry();
+		IntStream.range(0, Math.min(values.length, variables.size()))
+			.filter(i -> values[i] != null)
+			.forEach(i -> codecRegistry.codecFor(variables.get(i).getType(), values[i]));
 
 		return new SeaStarBoundStatement(context, this, values);
 	}

@@ -35,8 +35,10 @@ public interface SeaStarRow extends SeaStarReadWriteLock, Row, Serializable {
 	default void validate(final int i, final Object value) {
 		final var dataType = getColumnDefinitions().get(i).getType();
 		final var codec = context().getCodecRegistry().codecFor(dataType);
+		// Guava's checkArgument only understands %s; a %d here is left in the message verbatim and
+		// pushes every argument into the wrong slot.
 		checkArgument(value == null || codec.accepts(value),
-			"Value %d (%s) is not compatible with column type %s", i, value, dataType);
+			"Value at index %s (%s) is not compatible with column type %s", i, value, dataType);
 	}
 
 	Row snapshot();
