@@ -4,15 +4,12 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import org.apache.cassandra.cql3.AbstractMarker;
-import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.utils.Pair;
@@ -52,7 +49,8 @@ final class Conditions {
 				.orElseThrow();
 			final var term = Reflections.getDeclaredField(condition, "value", Term.Raw.class)
 				.orElseThrow();
-			final var value = resolveTerm(term, table.get(index).getType(), codecRegistry, bindings);
+			final var value = Terms.resolve(term, table.get(index).getType(), codecRegistry,
+				coordinator, bindings);
 			conditions.add(new Condition(index, operator, value));
 		}
 
@@ -104,20 +102,6 @@ final class Conditions {
 			throw new UnsupportedOperationException(
 				"Only simple scalar IF conditions are supported");
 		}
-	}
-
-	private static Object resolveTerm(final Term.Raw term, final DataType dataType,
-		final CodecRegistry codecRegistry, final Object... bindings) {
-		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
-
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
-		} else if (term instanceof Constants.Literal literal) {
-			return codecRegistry.codecFor(dataType).parse(literal.getText());
-		}
-
-		throw new UnsupportedOperationException("Unsupported term %s".formatted(term));
 	}
 
 }

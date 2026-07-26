@@ -31,9 +31,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
 import org.apache.cassandra.cql3.Term;
@@ -240,12 +238,13 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 
 			final var dataType = table.get(index).getType();
 			if (relation.isEQ()) {
-				final var target = resolveTerm(single.getValue(), dataType, codecRegistry, bindings);
+				final var target = Terms.resolve(single.getValue(), dataType, codecRegistry,
+					coordinator, bindings);
 				predicates.add(row -> Objects.equals(row.getObject(index), target));
 			} else if (relation.isIN()) {
 				final Set<Object> targets = new HashSet<>();
 				for (final var term : single.getInValues()) {
-					targets.add(resolveTerm(term, dataType, codecRegistry, bindings));
+					targets.add(Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
 				}
 				predicates.add(row -> targets.contains(row.getObject(index)));
 			} else {
@@ -263,7 +262,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			return null;
 		}
 
-		final var value = resolveTerm(limit, DataTypes.INT, codecRegistry, bindings);
+		final var value = Terms.resolve(limit, DataTypes.INT, codecRegistry, coordinator, bindings);
 		if (!(value instanceof Number number)) {
 			throw new InvalidQueryException(coordinator, "Invalid limit value %s".formatted(value));
 		}
@@ -273,20 +272,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 
 		return n;
-	}
-
-	private static Object resolveTerm(final Term.Raw term, final DataType dataType,
-		final CodecRegistry codecRegistry, final Object... bindings) {
-		if (term instanceof AbstractMarker.Raw marker) {
-			final var bindIndex = Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.orElseThrow();
-
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
-		} else if (term instanceof Constants.Literal literal) {
-			return codecRegistry.codecFor(dataType).parse(literal.getText());
-		}
-
-		throw new UnsupportedOperationException("Unsupported term %s".formatted(term));
 	}
 
 	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {
