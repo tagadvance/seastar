@@ -105,7 +105,10 @@ public class SeaStarCqlRequestHandler {
 		} catch (final RuntimeException e) {
 			attach(executionInfo, e);
 
-			throw e;
+			// A handler that throws rather than returning a failed stage must not escape the async
+			// path; CompletionStage forbids it, and the sync processor is what turns this back into
+			// a throw.
+			return CompletableFuture.failedStage(e);
 		}
 	}
 
