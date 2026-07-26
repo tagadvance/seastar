@@ -364,7 +364,8 @@ class TranslationTest {
 
 			final var insert = Modifications.insert(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(0, id("id"), 1), new Assignment(1, id("name"), "Ann")),
+			assertEquals(
+				List.of(Assignment.set(0, id("id"), 1), Assignment.set(1, id("name"), "Ann")),
 				insert.assignments());
 			assertEquals(List.of(), insert.restrictions());
 			assertTrue(insert.ifNotExists());
@@ -391,7 +392,7 @@ class TranslationTest {
 
 			final var update = Modifications.update(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(1, id("name"), "Ann")), update.assignments());
+			assertEquals(List.of(Assignment.set(1, id("name"), "Ann")), update.assignments());
 			assertEquals(List.of(new Restriction(List.of(column(people, "id")), CqlOperator.EQ,
 				List.of(List.of(1)))), update.restrictions());
 			assertEquals(List.of(new Condition(2, id("age"), CqlOperator.EQ, 30)),
@@ -411,13 +412,27 @@ class TranslationTest {
 		}
 
 		@Test
-		@DisplayName("an UPDATE that does not simply set a column is rejected")
-		void updateUnsupportedAssignment() {
+		@DisplayName("an UPDATE that adds to a collection carries the operator and the added value")
+		void updateAppend() {
 			final var raw = (ParsedUpdate) parse(
 				"UPDATE ks.people SET tags = tags + ['x'] WHERE id = 1");
 
-			assertThrows(UnsupportedOperationException.class,
+			final var update = Modifications.update(context, NO_SESSION_KEYSPACE, raw, node);
+
+			assertEquals(List.of(new Assignment(3, id("tags"), Assignment.Operator.APPEND, null,
+				List.of("x"))), update.assignments());
+		}
+
+		@Test
+		@DisplayName("an UPDATE that adds to a non-collection, non-counter column is rejected")
+		void updateAppendToScalar() {
+			final var raw = (ParsedUpdate) parse(
+				"UPDATE ks.people SET age = age + 1 WHERE id = 1");
+
+			final var error = assertThrows(InvalidQueryException.class,
 				() -> Modifications.update(context, NO_SESSION_KEYSPACE, raw, node));
+
+			assertTrue(error.getMessage().contains("age"), error.getMessage());
 		}
 
 		@Test
@@ -428,7 +443,19 @@ class TranslationTest {
 
 			final var delete = Modifications.delete(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(1, id("name"), null)), delete.assignments());
+			assertEquals(List.of(Assignment.set(1, id("name"), null)), delete.assignments());
+		}
+
+		@Test
+		@DisplayName("DELETE of one collection element clears that element, not the column")
+		void deleteElement() {
+			final var raw = (DeleteStatement.Parsed) parse(
+				"DELETE tags[0] FROM ks.people WHERE id = 1");
+
+			final var delete = Modifications.delete(context, NO_SESSION_KEYSPACE, raw, node);
+
+			assertEquals(List.of(new Assignment(3, id("tags"),
+				Assignment.Operator.DELETE_LIST_ELEMENT, 0, null)), delete.assignments());
 		}
 
 		@Test

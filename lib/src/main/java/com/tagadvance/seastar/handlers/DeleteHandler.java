@@ -63,7 +63,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns);
+				applyDelete(table, matched, deletedColumns, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -76,12 +76,12 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns);
+				applyDelete(table, matched, deletedColumns, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
-			applyDelete(table, matched, deletedColumns);
+			applyDelete(table, matched, deletedColumns, coordinator);
 
 			return newAsyncResultSet(executionInfo);
 		});
@@ -94,13 +94,14 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	 * leaves the row in place.
 	 */
 	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
-		final List<Assignment> deletedColumns) {
+		final List<Assignment> deletedColumns, final Node coordinator) {
 		if (deletedColumns.isEmpty()) {
 			table.removeRowIf(matched::contains);
 		} else {
 			for (final var row : matched) {
 				for (final var deleted : deletedColumns) {
-					row.set(deleted.columnIndex(), deleted.value());
+					final var index = deleted.columnIndex();
+					row.set(index, deleted.apply(row.getObject(index), coordinator));
 				}
 			}
 		}
