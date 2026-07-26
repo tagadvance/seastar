@@ -5,13 +5,10 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
-import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import org.apache.cassandra.cql3.ColumnIdentifier;
-import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.utils.Pair;
 
@@ -22,15 +19,14 @@ import org.apache.cassandra.utils.Pair;
 final class Conditions {
 
 	private Conditions() {
+		// hidden constructor
 	}
 
-	record Condition(int index, Operator operator, Object value) {
-
-	}
-
-	static List<Condition> resolve(final SeaStarTable table, final Set<CqlIdentifier> primaryKey,
+	static List<Condition> translate(final Target target,
 		final List<Pair<ColumnIdentifier, ColumnCondition.Raw>> rawConditions,
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
+		final var table = target.table();
+		final var primaryKey = target.primaryKeyNames();
 		final List<Condition> conditions = new ArrayList<>(rawConditions.size());
 		for (final var raw : rawConditions) {
 			final var name = CqlIdentifier.fromInternal(raw.left.toString());
@@ -46,44 +42,44 @@ final class Conditions {
 
 			final var condition = raw.right;
 			requireScalar(condition);
-			final var operator = FieldBindings.CONDITION_OPERATOR.require(condition);
+			final var operator = CqlOperator.of(FieldBindings.CONDITION_OPERATOR.require(condition));
 			final var value = Terms.resolve(condition.getValue(), table.get(index).getType(),
 				codecRegistry, coordinator, bindings);
-			conditions.add(new Condition(index, operator, value));
+			conditions.add(new Condition(index, name, operator, value));
 		}
 
-		return conditions;
+		return List.copyOf(conditions);
 	}
 
 	static boolean hold(final List<Condition> conditions, final Row row) {
 		return conditions.stream()
-			.noneMatch(condition -> !satisfied(condition, row.getObject(condition.index())));
+			.allMatch(condition -> satisfied(condition, row.getObject(condition.columnIndex())));
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	private static boolean satisfied(final Condition condition, final Object actual) {
 		final var operator = condition.operator();
 		final var expected = condition.value();
-		if (operator == Operator.EQ) {
+		if (operator == CqlOperator.EQ) {
 			return Objects.equals(actual, expected);
 		}
-		if (operator == Operator.NEQ) {
+		if (operator == CqlOperator.NEQ) {
 			return !Objects.equals(actual, expected);
 		}
 		if (actual == null || expected == null) {
 			return false;
 		}
 		final int comparison = ((Comparable) actual).compareTo(expected);
-		if (operator == Operator.LT) {
+		if (operator == CqlOperator.LT) {
 			return comparison < 0;
 		}
-		if (operator == Operator.LTE) {
+		if (operator == CqlOperator.LTE) {
 			return comparison <= 0;
 		}
-		if (operator == Operator.GT) {
+		if (operator == CqlOperator.GT) {
 			return comparison > 0;
 		}
-		if (operator == Operator.GTE) {
+		if (operator == CqlOperator.GTE) {
 			return comparison >= 0;
 		}
 

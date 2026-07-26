@@ -10,16 +10,17 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 
+@ThreadSafe
 public class InsertHandler implements CqlHandler<ParsedInsert> {
 
 	private final Supplier<Optional<CqlIdentifier>> getKeyspace;
@@ -38,75 +39,62 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		final ExecutionInfo executionInfo, final ParsedInsert raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final Target target;
+		final Modification insert;
 		try {
-			target = Targets.require(context, getKeyspace, raw, coordinator);
+			insert = Modifications.insert(context, getKeyspace, raw, coordinator, bindings);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
+
+		final var target = insert.target();
 		final var table = target.table();
+		final var assignments = insert.assignments();
 
-		final var columnNames = FieldBindings.INSERT_COLUMN_NAMES.require(raw);
-		final var columnValues = FieldBindings.INSERT_COLUMN_VALUES.require(raw);
-		final var ifNotExists = FieldBindings.MODIFICATION_IF_NOT_EXISTS.require(raw);
-
-		final var codecRegistry = context.getCodecRegistry();
 		final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
-		final var named = new HashSet<CqlIdentifier>();
-		final var namedIndices = new ArrayList<Integer>(columnNames.size());
-		for (int i = 0; i < columnNames.size(); i++) {
-			final var name = CqlIdentifier.fromInternal(columnNames.get(i).toString());
-			final var index = table.firstIndexOf(name);
-			if (index < 0) {
-				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(name.asInternal())));
-			}
-			named.add(name);
-			namedIndices.add(index);
+		assignments.forEach(assignment -> values.set(assignment.columnIndex(), assignment.value()));
 
-			final var dataType = table.get(index).getType();
-			final var term = columnValues.get(i);
-			values.set(index, Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
-		}
-
-		final var primaryKey = target.primaryKeyNames();
-		for (final var pk : primaryKey) {
-			if (!named.contains(pk)) {
+		final var named = assignments.stream().map(Assignment::column).toList();
+		for (final var part : target.primaryKeyNames()) {
+			if (!named.contains(part)) {
 				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-					"Missing mandatory PRIMARY KEY part %s".formatted(pk.asInternal())));
+					"Missing mandatory PRIMARY KEY part %s".formatted(part.asInternal())));
 			}
 		}
 
-		final var pkIndices = primaryKey.stream().mapToInt(table::firstIndexOf).toArray();
+		final var pkIndices = target.primaryKeyNames().stream().mapToInt(table::firstIndexOf)
+			.toArray();
 		final Predicate<SeaStarRow> samePrimaryKey = existing -> {
 			for (final var index : pkIndices) {
 				if (!Objects.equals(existing.getObject(index), values.get(index))) {
 					return false;
 				}
 			}
+
 			return true;
 		};
 
 		final AsyncResultSet result = table.writeLockUnchecked(() -> {
-			if (ifNotExists) {
-				final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
+			final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
+			if (insert.ifNotExists()) {
 				if (existing == null) {
 					table.addRow(values);
+
 					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-				return AppliedResultSets.ofExisting(context, table, executionInfo, existing.snapshot());
+
+				return AppliedResultSets.ofExisting(context, table, executionInfo,
+					existing.snapshot());
 			}
 			// INSERT is an upsert; write only the named columns, preserving any columns this
 			// statement did not specify on a row that already shares this primary key. An
 			// explicitly-inserted NULL still clears its column; an unnamed column is left as-is.
-			final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
 			if (existing == null) {
 				table.addRow(values);
 			} else {
-				for (final var index : namedIndices) {
-					existing.set(index, values.get(index));
-				}
+				assignments.forEach(
+					assignment -> existing.set(assignment.columnIndex(), assignment.value()));
 			}
+
 			return newAsyncResultSet(executionInfo);
 		});
 
