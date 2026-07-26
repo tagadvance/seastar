@@ -38,7 +38,6 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var keyspace = Optional.of(raw)
@@ -77,14 +76,19 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 		} else {
 			final var table1 = ksx.newSeaStarTable(table);
 
+			@SuppressWarnings("unchecked")
 			final Map<ColumnIdentifier, Object> rawColumns = Reflections.getDeclaredField(raw,
 				"rawColumns", Map.class).orElseGet(Collections::emptyMap);
+			@SuppressWarnings("unchecked")
 			final List<ColumnIdentifier> partitionKeyColumns = Reflections.getDeclaredField(raw,
 				"partitionKeyColumns", List.class).orElseGet(Collections::emptyList);
+			@SuppressWarnings("unchecked")
 			final List<ColumnIdentifier> clusteringColumns = Reflections.getDeclaredField(raw,
 				"clusteringColumns", List.class).orElseGet(Collections::emptyList);
+			@SuppressWarnings("unchecked")
 			final Map<ColumnIdentifier, Boolean> clusteringOrder = Reflections.getDeclaredField(raw,
 				"clusteringOrder", Map.class).orElseGet(Collections::emptyMap);
+			@SuppressWarnings("unchecked")
 			final Set<ColumnIdentifier> staticColumns = Reflections.getDeclaredField(raw,
 				"staticColumns", Set.class).orElseGet(Collections::emptySet);
 

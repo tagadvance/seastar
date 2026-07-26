@@ -50,7 +50,6 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final ParsedUpdate raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
@@ -80,6 +79,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var primaryKey = primaryKeyNames(table);
 
+		@SuppressWarnings("unchecked")
 		final List<Pair<Object, Object>> conditionList = Reflections.getDeclaredField(raw,
 			"conditions", List.class).orElseGet(Collections::emptyList);
 		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
@@ -150,10 +150,10 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 
 	}
 
-	@SuppressWarnings("unchecked")
 	private static List<Assignment> resolveAssignments(final SeaStarTable table,
 		final Set<CqlIdentifier> primaryKey, final ParsedUpdate raw, final CodecRegistry codecRegistry,
 		final Node coordinator, final Object... bindings) {
+		@SuppressWarnings("unchecked")
 		final List<Pair<Object, Object>> updates = Reflections.getDeclaredField(raw, "updates",
 			List.class).orElseGet(Collections::emptyList);
 
