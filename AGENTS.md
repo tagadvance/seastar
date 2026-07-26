@@ -17,8 +17,9 @@ All tests should be annotated with a short human-readable `@DisplayName`.
 So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest` first, expressed only through the public driver API so both subclasses can run it. Add unit tests when appropriate, for what that suite cannot reach (internals, or error paths a live cluster will not produce), not as a substitute for it.
 
 ```bash
-./gradlew build                 # compile + test
-./gradlew :lib:test             # run all tests
+./gradlew build                 # compile + test; no Docker required
+./gradlew :lib:test             # run all tests except the container suite
+./gradlew :lib:containerTest    # run ContainerCqlSessionTest; needs Docker, skips without it
 ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'          # single class
 ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.testSimpleSelect'  # single method
 ./gradlew :lib:publishToMavenLocal   # publish artifact locally

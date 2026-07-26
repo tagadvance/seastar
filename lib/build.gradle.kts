@@ -68,8 +68,22 @@ tasks.named<Jar>("jar") {
     }
 }
 
+// The container suite needs Docker, so it is opt-in: `./gradlew build` must be green on a
+// machine that has none.
 tasks.named<Test>("test") {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("container")
+    }
+}
+
+tasks.register<Test>("containerTest") {
+    description = "Runs the fidelity suite against a real Cassandra node. Requires Docker."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("container")
+    }
 }
 
 tasks.register<JavaExec>("inspectRaw") {
