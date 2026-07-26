@@ -4,16 +4,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.cassandra.cql3.AbstractMarker;
+import org.apache.cassandra.cql3.ArrayLiteral;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.FieldIdentifier;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.QualifiedName;
+import org.apache.cassandra.cql3.Sets;
 import org.apache.cassandra.cql3.Term;
+import org.apache.cassandra.cql3.Tuples;
+import org.apache.cassandra.cql3.TypeCast;
 import org.apache.cassandra.cql3.UTName;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.conditions.ColumnCondition;
+import org.apache.cassandra.cql3.functions.FunctionCall;
+import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.masking.ColumnMask;
 import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
@@ -57,7 +63,7 @@ final class FieldBindings {
 	 */
 	static final Class<?> RAW_COLLECTION = Reflections.requireClass(
 		"org.apache.cassandra.cql3.CQL3Type$Raw$RawCollection");
-	private static final Class<?> RAW_TYPE = Reflections.requireClass(
+	static final Class<?> RAW_TYPE = Reflections.requireClass(
 		"org.apache.cassandra.cql3.CQL3Type$Raw$RawType");
 	private static final Class<?> RAW_TUPLE = Reflections.requireClass(
 		"org.apache.cassandra.cql3.CQL3Type$Raw$RawTuple");
@@ -71,6 +77,12 @@ final class FieldBindings {
 	 */
 	private static final Class<?> COLUMN_PROPERTIES_RAW = Reflections.requireClass(
 		"org.apache.cassandra.cql3.statements.schema.CreateTableStatement$ColumnProperties$Raw");
+	/**
+	 * {@code Constants.NULL_LITERAL} is public, but its class is not, so a {@code null} term can only
+	 * be recognized by asking the class itself.
+	 */
+	static final Class<?> NULL_LITERAL = Reflections.requireClass(
+		"org.apache.cassandra.cql3.Constants$NullLiteral");
 
 	// CQL3Type.Raw - the parsed type of a column, UDT field or collection element.
 	static final FieldBinding<CollectionType.Kind> COLLECTION_KIND = FieldBinding.of(RAW_COLLECTION,
@@ -89,11 +101,29 @@ final class FieldBindings {
 		Integer.class);
 	static final FieldBinding<UTName> USER_TYPE_NAME = FieldBinding.of(RAW_UT, "name", UTName.class);
 
-	// Terms and bind markers.
+	// Terms and bind markers. A map literal publishes its entries; the other literals do not.
 	static final FieldBinding<Integer> MARKER_BIND_INDEX = FieldBinding.of(AbstractMarker.Raw.class,
 		"bindIndex", Integer.class);
 	static final FieldBinding<Term.Raw> SET_VALUE = FieldBinding.of(Operation.SetValue.class, "value",
 		Term.Raw.class);
+	/**
+	 * {@code [1, 2]} parses as an {@code ArrayLiteral} rather than a {@code Lists.Literal}: since
+	 * vectors were added the receiving type decides which of the two a bracket literal means.
+	 */
+	static final FieldBinding<List<Term.Raw>> ARRAY_ELEMENTS = FieldBinding.ofList(
+		ArrayLiteral.class, "elements");
+	static final FieldBinding<List<Term.Raw>> SET_ELEMENTS = FieldBinding.ofList(Sets.Literal.class,
+		"elements");
+	static final FieldBinding<List<Term.Raw>> TUPLE_ELEMENTS = FieldBinding.ofList(
+		Tuples.Literal.class, "elements");
+	static final FieldBinding<CQL3Type.Raw> TYPE_CAST_TYPE = FieldBinding.of(TypeCast.class, "type",
+		CQL3Type.Raw.class);
+	static final FieldBinding<Term.Raw> TYPE_CAST_TERM = FieldBinding.of(TypeCast.class, "term",
+		Term.Raw.class);
+	static final FieldBinding<FunctionName> FUNCTION_NAME = FieldBinding.of(FunctionCall.Raw.class,
+		"name", FunctionName.class);
+	static final FieldBinding<List<Term.Raw>> FUNCTION_TERMS = FieldBinding.ofList(
+		FunctionCall.Raw.class, "terms");
 
 	// Lightweight-transaction IF conditions. The condition's value has a public getValue().
 	static final FieldBinding<Operator> CONDITION_OPERATOR = FieldBinding.of(

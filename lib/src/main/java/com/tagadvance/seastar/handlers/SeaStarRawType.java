@@ -36,6 +36,15 @@ record SeaStarRawType(CQL3Type.Raw raw) {
 		return toNative();
 	}
 
+	/**
+	 * Resolves this parsed type only if it is a native one, and returns empty for a UDT, tuple, vector
+	 * or collection. For the places that name a type with no keyspace to resolve a named type against,
+	 * such as a type cast written inside a term.
+	 */
+	public Optional<DataType> toNativeDataType() {
+		return FieldBindings.RAW_TYPE.isInstance(raw) ? toNative() : Optional.empty();
+	}
+
 	private Optional<DataType> toNative() {
 		if (!(FieldBindings.NATIVE_TYPE.require(raw) instanceof Native n)) {
 			return Optional.empty();
