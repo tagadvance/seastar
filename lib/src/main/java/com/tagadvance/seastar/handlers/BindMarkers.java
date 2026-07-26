@@ -4,7 +4,9 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
+import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
+import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
@@ -42,9 +44,10 @@ import org.jspecify.annotations.NonNull;
  * columns of the target table. This is what {@code SeaStarPreparedStatement} exposes as
  * {@code getVariableDefinitions()} / {@code getResultSetDefinitions()}.
  *
- * <p>Best effort: if the keyspace/table cannot be resolved (or the statement type is unsupported),
- * empty definitions are returned rather than throwing, since metadata inspection must not fail
- * during prepare.
+ * <p>Resolution is what makes {@code prepare()} validate: a live cluster rejects a statement naming
+ * a keyspace, table or column that does not exist at prepare time, so this throws rather than
+ * answering with empty definitions. A statement that addresses no table - DDL, TRUNCATE - carries no
+ * markers and resolves to nothing, which is why preparing one succeeds.
  */
 public final class BindMarkers {
 
@@ -59,53 +62,54 @@ public final class BindMarkers {
 	private BindMarkers() {
 	}
 
+	/**
+	 * Resolves the bind markers a statement carries.
+	 *
+	 * <p>A live cluster validates at prepare time, so a statement naming a keyspace, table or column
+	 * that does not exist fails here rather than at bind or execute. Statements that address no table
+	 * at all - DDL, TRUNCATE - carry no markers and resolve to nothing, which is also what a cluster
+	 * does: preparing them succeeds.
+	 *
+	 * @throws InvalidQueryException if the statement addresses something that does not exist
+	 */
 	public static Definitions resolve(final SeaStarDriverContext context,
-		final CqlIdentifier sessionKeyspace, final CQLStatement.Raw raw) {
-		try {
-			return resolveInternal(context, sessionKeyspace, raw);
-		} catch (final RuntimeException e) {
-			return EMPTY;
-		}
-	}
-
-	private static Definitions resolveInternal(final SeaStarDriverContext context,
 		final CqlIdentifier sessionKeyspace, final CQLStatement.Raw raw) {
 		if (!(raw instanceof QualifiedStatement qualified)) {
 			return EMPTY;
 		}
 
+		final var coordinator = context.getNode();
 		// keyspace() throws rather than returning null when the statement was never qualified.
 		final var keyspace = Optional.of(qualified)
 			.filter(QualifiedStatement::isFullyQualified)
 			.map(QualifiedStatement::keyspace)
 			.map(CqlIdentifier::fromInternal)
 			.or(() -> Optional.ofNullable(sessionKeyspace))
-			.orElse(null);
-		if (keyspace == null) {
-			return EMPTY;
-		}
+			.orElseThrow(() -> new InvalidQueryException(coordinator,
+				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename"));
 
 		final var table = context.getSeaStarKeyspace(keyspace)
-			.flatMap(ks -> ks.getSeaStarTable(CqlIdentifier.fromInternal(qualified.name())))
-			.orElse(null);
-		if (table == null) {
-			return EMPTY;
-		}
+			.orElseThrow(() -> new InvalidQueryException(coordinator,
+				"keyspace %s does not exist".formatted(keyspace.asInternal())))
+			.getSeaStarTable(CqlIdentifier.fromInternal(qualified.name()))
+			.orElseThrow(() -> new InvalidQueryException(coordinator,
+				"table %s does not exist".formatted(qualified.name())));
 
 		final NavigableMap<Integer, ColumnDefinition> markers = new TreeMap<>();
 		final ColumnDefinitions resultSet;
 		if (raw instanceof ParsedInsert insert) {
-			collectInsert(table, insert, markers);
+			collectInsert(table, insert, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof ParsedUpdate update) {
-			collectUpdate(table, update, markers);
+			collectUpdate(table, update, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof DeleteStatement.Parsed delete) {
-			collectWhere(table, FieldBindings.DELETE_WHERE_CLAUSE.require(delete).relations, markers);
+			collectWhere(table, FieldBindings.DELETE_WHERE_CLAUSE.require(delete).relations, markers,
+				coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof SelectStatement.RawStatement select) {
-			collectSelect(table, select, markers);
-			resultSet = resolveSelectResult(table, select.selectClause);
+			collectSelect(table, select, markers, coordinator);
+			resultSet = resolveSelectResult(table, select.selectClause, coordinator);
 		} else {
 			return EMPTY;
 		}
@@ -143,14 +147,12 @@ public final class BindMarkers {
 	}
 
 	private static void collectInsert(final SeaStarTable table, final ParsedInsert raw,
-		final NavigableMap<Integer, ColumnDefinition> markers) {
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		final var columnNames = FieldBindings.INSERT_COLUMN_NAMES.require(raw);
 		final var columnValues = FieldBindings.INSERT_COLUMN_VALUES.require(raw);
 		for (int i = 0; i < columnNames.size(); i++) {
-			final var column = columnFor(table, columnNames.get(i).toString());
-			if (column != null) {
-				collectInsertValue(table, columnValues.get(i), column, markers);
-			}
+			final var column = requireColumn(table, columnNames.get(i).toString(), coordinator);
+			collectInsertValue(table, columnValues.get(i), column, markers);
 		}
 	}
 
@@ -179,21 +181,22 @@ public final class BindMarkers {
 	}
 
 	private static void collectUpdate(final SeaStarTable table, final ParsedUpdate raw,
-		final NavigableMap<Integer, ColumnDefinition> markers) {
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var update : FieldBindings.UPDATE_UPDATES.require(raw)) {
-			final var column = columnFor(table, update.left.toString());
-			if (column != null && update.right instanceof Operation.SetValue setValue) {
+			final var column = requireColumn(table, update.left.toString(), coordinator);
+			if (update.right instanceof Operation.SetValue setValue) {
 				putIfMarker(FieldBindings.SET_VALUE.require(setValue), column, markers);
 			}
 		}
-		collectWhere(table, FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations, markers);
+		collectWhere(table, FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations, markers,
+			coordinator);
 	}
 
 	private static void collectSelect(final SeaStarTable table,
 		final SelectStatement.RawStatement raw,
-		final NavigableMap<Integer, ColumnDefinition> markers) {
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		if (raw.whereClause != null) {
-			collectWhere(table, raw.whereClause.relations, markers);
+			collectWhere(table, raw.whereClause.relations, markers, coordinator);
 		}
 		if (raw.limit instanceof AbstractMarker.Raw) {
 			putIfMarker(raw.limit, syntheticDefinition(table, "[limit]", DataTypes.INT), markers);
@@ -201,15 +204,12 @@ public final class BindMarkers {
 	}
 
 	private static void collectWhere(final SeaStarTable table, final List<Relation> relations,
-		final NavigableMap<Integer, ColumnDefinition> markers) {
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var relation : relations) {
 			if (!(relation instanceof SingleColumnRelation single)) {
 				continue;
 			}
-			final var column = columnFor(table, single.getEntity().toString());
-			if (column == null) {
-				continue;
-			}
+			final var column = requireColumn(table, single.getEntity().toString(), coordinator);
 			if (single.getValue() != null) {
 				putIfMarker(single.getValue(), column, markers);
 			}
@@ -222,7 +222,7 @@ public final class BindMarkers {
 	}
 
 	private static ColumnDefinitions resolveSelectResult(final SeaStarTable table,
-		final List<RawSelector> selectClause) {
+		final List<RawSelector> selectClause, final Node coordinator) {
 		if (selectClause.isEmpty()) {
 			return table.snapshot();
 		}
@@ -232,9 +232,12 @@ public final class BindMarkers {
 			if (!(selector.selectable instanceof Selectable.RawIdentifier identifier)) {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
-			final var index = table.firstIndexOf(Selectables.toIdentifier(identifier));
+			final var name = Selectables.toIdentifier(identifier);
+			final var index = table.firstIndexOf(name);
 			if (index < 0) {
-				return EmptyColumnDefinitions.INSTANCE;
+				throw new InvalidQueryException(coordinator,
+					"Undefined column name %s in table %s.%s".formatted(name.asInternal(),
+						table.getKeyspace().asInternal(), table.getName().asInternal()));
 			}
 			columns.add(table.get(index));
 		}
@@ -242,10 +245,20 @@ public final class BindMarkers {
 		return DefaultColumnDefinitions.valueOf(columns);
 	}
 
-	private static ColumnDefinition columnFor(final SeaStarTable table, final String name) {
+	/**
+	 * A live cluster rejects a prepare that names a column the table does not have, rather than
+	 * deferring the failure to bind or execute.
+	 */
+	private static ColumnDefinition requireColumn(final SeaStarTable table, final String name,
+		final Node coordinator) {
 		final var index = table.firstIndexOf(CqlIdentifier.fromInternal(name));
+		if (index < 0) {
+			throw new InvalidQueryException(coordinator,
+				"Undefined column name %s in table %s.%s".formatted(name,
+					table.getKeyspace().asInternal(), table.getName().asInternal()));
+		}
 
-		return index < 0 ? null : table.get(index);
+		return table.get(index);
 	}
 
 	private static void putIfMarker(final Term.Raw term, final ColumnDefinition column,

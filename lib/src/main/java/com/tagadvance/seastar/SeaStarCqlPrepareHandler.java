@@ -33,6 +33,15 @@ public class SeaStarCqlPrepareHandler {
 
 	public CompletableFuture<SeaStarPreparedStatement> handle() {
 		final var statement = new SeaStarPreparedStatement(context, initialRequest, keyspace);
+		try {
+			// Resolve now rather than on first access: a live cluster validates at prepare time, so
+			// the failure belongs to prepare() and a failed prepare must not be cached.
+			statement.primeDefinitions();
+		} catch (final RuntimeException e) {
+			LOG.debug("[{}] Failed to prepare statement: {}", logPrefix, initialRequest.getQuery());
+
+			return CompletableFuture.failedFuture(e);
+		}
 		LOG.debug("[{}] Successfully prepared statement: {}", logPrefix, statement);
 
 		return CompletableFuture.completedFuture(statement);
