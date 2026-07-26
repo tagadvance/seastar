@@ -86,9 +86,11 @@ a JDK bump is the most likely thing to break them. Run it with
    `git reset --hard final-push` and verify with `git log --oneline -5`.
 3. **A clean textual merge is not a clean semantic merge.** Build and run BOTH suites after every
    merge, never trust the diff.
-4. **`ContainerCqlSessionTest > DROP TABLE ...` is a known flake** - `DriverTimeoutException: Query
-   timed out after PT2S`, recurs across unrelated changes, passes on re-run. Diagnose the timeout
-   rather than the code. Undiagnosed.
+4. ~~**`ContainerCqlSessionTest > DROP TABLE ...` flake**~~ - FIXED. It was the driver's default
+   `basic.request.timeout` of 2 seconds, which a cold containerised node exceeds on DDL while it
+   waits for schema agreement. `ContainerCqlSessionTest` now raises the request and
+   schema-agreement timeouts to 30s. This costs nothing in fidelity: a timeout is a transport
+   concern, and SeaStar accepts and ignores timeouts anyway.
 5. **Benchmarks must be serialized.** `org.gradle.parallel=true` lets two benchmark tasks share the
    cores and silently corrupts comparative runs; a Gradle shared service now enforces this.
 6. **TestContainers drags in the 3.x DataStax driver**, whose Guava 19 and slf4j 1.7 shadow the
