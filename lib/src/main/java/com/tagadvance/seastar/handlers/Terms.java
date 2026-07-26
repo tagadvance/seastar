@@ -14,8 +14,9 @@ import org.apache.cassandra.cql3.UserTypes;
 
 /**
  * Resolves a parsed term into the Java value it stands for, against the type of the column or field
- * it is assigned to or compared with. Shared by every handler that reads values out of a statement,
- * so that a term means the same thing in an INSERT, an UPDATE, a WHERE clause, and an IF condition.
+ * it is assigned to or compared with. Shared by everything in the translation layer that reads
+ * values out of a statement, so that a term means the same thing in an INSERT, an UPDATE, a WHERE
+ * clause, and an IF condition.
  */
 final class Terms {
 

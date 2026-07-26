@@ -14,7 +14,6 @@ import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
-import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
 import com.tagadvance.seastar.SeaStarAsyncResultSet;
@@ -26,7 +25,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -37,11 +35,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Relation;
-import org.apache.cassandra.cql3.SingleColumnRelation;
-import org.apache.cassandra.cql3.Term;
-import org.apache.cassandra.cql3.selection.RawSelector;
-import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.SelectStatement.RawStatement;
 import org.jspecify.annotations.NonNull;
 
@@ -64,34 +57,24 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final ExecutionInfo executionInfo, final RawStatement raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final Target target;
-		try {
-			target = Targets.require(context, getKeyspace, raw, coordinator);
-		} catch (final InvalidQueryException e) {
-			return CompletableFuture.failedStage(e);
-		}
-		final var table = target.table();
-		final var codecRegistry = context.getCodecRegistry();
-		final var distinct = raw.parameters.isDistinct;
-
+		final Query query;
 		final Projection projection;
 		final Predicate<SeaStarRow> predicate;
-		final Integer limit;
 		final int[] distinctKey;
 		try {
-			projection = resolveProjection(table, raw.selectClause, coordinator);
-			if (distinct) {
-				validateDistinct(target, projection, coordinator);
+			query = Queries.translate(context, getKeyspace, raw, coordinator, bindings);
+			projection = projection(query);
+			if (query.distinct()) {
+				validateDistinct(query, projection, coordinator);
 			}
-			final var relations = raw.whereClause == null ? List.<Relation>of()
-				: raw.whereClause.relations;
-			predicate = resolveWhere(target, raw.parameters.allowFiltering, relations, codecRegistry,
-				coordinator, bindings);
-			limit = resolveLimit(raw.limit, codecRegistry, coordinator, bindings);
-			distinctKey = distinct ? partitionKeyIndices(table) : null;
+			predicate = resolveWhere(query, coordinator);
+			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
+
+		final var table = query.target().table();
+		final var limit = query.limit();
 
 		return table.readLockUnchecked(() -> {
 			var rows = table.rows();
@@ -122,37 +105,27 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 
 	}
 
-	private static Projection resolveProjection(final SeaStarTable table,
-		final List<RawSelector> selectClause, final Node coordinator) {
-		if (selectClause.isEmpty()) {
+	/**
+	 * The definitions and column positions a projection reads, or null for {@code SELECT *}, which
+	 * returns the table's own definitions.
+	 */
+	private static Projection projection(final Query query) {
+		final var indices = query.projection();
+		if (indices.isEmpty()) {
 			return null;
 		}
 
-		final List<ColumnDefinition> columns = new ArrayList<>();
-		final var indices = new int[selectClause.size()];
-		for (int i = 0; i < selectClause.size(); i++) {
-			final var selectable = selectClause.get(i).selectable;
-			if (!(selectable instanceof Selectable.RawIdentifier identifier)) {
-				throw new UnsupportedOperationException(
-					"Unsupported select item %s".formatted(selectable));
-			}
-			final var name = Selectables.toIdentifier(identifier);
-			final var index = table.firstIndexOf(name);
-			if (index < 0) {
-				throw new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(name.asInternal()));
-			}
-			indices[i] = index;
-			columns.add(table.get(index));
-		}
+		final var table = query.target().table();
+		final List<ColumnDefinition> columns = indices.stream().map(table::get).toList();
 
-		return new Projection(DefaultColumnDefinitions.valueOf(columns), indices);
+		return new Projection(DefaultColumnDefinitions.valueOf(columns),
+			indices.stream().mapToInt(Integer::intValue).toArray());
 	}
 
-	private static void validateDistinct(final Target target, final Projection projection,
+	private static void validateDistinct(final Query query, final Projection projection,
 		final Node coordinator) {
-		final var table = target.table();
-		final var partitionKey = target.partitionKeyNames();
+		final var table = query.target().table();
+		final var partitionKey = query.target().partitionKeyNames();
 		// A null projection means SELECT *, which requests every column; validate them all.
 		final var size = table.size();
 		final var selected = projection == null ? null : projection.indices();
@@ -169,9 +142,10 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 	}
 
-	private static int[] partitionKeyIndices(final SeaStarTable table) {
-		return table.getPartitionKey().stream().map(ColumnMetadata::getName)
-			.mapToInt(table::firstIndexOf).toArray();
+	private static int[] partitionKeyIndices(final Target target) {
+		final var table = target.table();
+
+		return target.partitionKeyNames().stream().mapToInt(table::firstIndexOf).toArray();
 	}
 
 	private static List<Object> partitionKeyValues(final SeaStarRow row, final int[] indices) {
@@ -203,76 +177,39 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return target;
 	}
 
-	private static Predicate<SeaStarRow> resolveWhere(final Target target,
-		final boolean allowFiltering, final List<Relation> relations,
-		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
-		if (relations.isEmpty()) {
+	/**
+	 * The test a row has to pass to be returned, or null when the statement restricts nothing.
+	 *
+	 * <p>A restriction on a column that is neither part of the primary key nor served by a secondary
+	 * index means a scan, which Cassandra refuses without ALLOW FILTERING.
+	 */
+	private static Predicate<SeaStarRow> resolveWhere(final Query query, final Node coordinator) {
+		if (query.restrictions().isEmpty()) {
 			return null;
 		}
 
-		final var table = target.table();
+		final var target = query.target();
 		final var primaryKey = target.primaryKeyNames();
-		final var indexed = indexedColumns(table);
+		final var indexed = indexedColumns(target.table());
 		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
-		for (final var relation : relations) {
-			if (!(relation instanceof SingleColumnRelation single)) {
-				throw new UnsupportedOperationException(
-					"Unsupported relation %s".formatted(relation));
-			}
-			final var name = CqlIdentifier.fromInternal(single.getEntity().toString());
-			final var index = table.firstIndexOf(name);
-			if (index < 0) {
-				throw new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(name.asInternal()));
-			}
+		for (final var restriction : query.restrictions()) {
 			// A secondary index permits an equality restriction on its column without ALLOW
 			// FILTERING; other non-primary-key restrictions still require it.
-			final var indexedEquality = indexed.contains(name) && relation.isEQ();
-			if (!primaryKey.contains(name) && !indexedEquality && !allowFiltering) {
+			final var indexedEquality = indexed.contains(restriction.column())
+				&& restriction.operator() == CqlOperator.EQ;
+			if (!primaryKey.contains(restriction.column()) && !indexedEquality
+				&& !query.allowFiltering()) {
 				throw new InvalidQueryException(coordinator,
 					"Cannot execute this query as it might involve data filtering and thus may have "
 						+ "unpredictable performance. If you want to execute this query despite the "
 						+ "performance unpredictability, use ALLOW FILTERING");
 			}
-
-			final var dataType = table.get(index).getType();
-			if (relation.isEQ()) {
-				final var expected = Terms.resolve(single.getValue(), dataType, codecRegistry,
-					coordinator, bindings);
-				predicates.add(row -> Objects.equals(row.getObject(index), expected));
-			} else if (relation.isIN()) {
-				final Set<Object> targets = new HashSet<>();
-				for (final var term : single.getInValues()) {
-					targets.add(Terms.resolve(term, dataType, codecRegistry, coordinator, bindings));
-				}
-				predicates.add(row -> targets.contains(row.getObject(index)));
-			} else {
-				throw new UnsupportedOperationException(
-					"Unsupported operator %s in WHERE".formatted(relation.operator()));
-			}
+			predicates.add(restriction.toPredicate());
 		}
 
 		return predicates.stream().reduce(Predicate::and)
 			.orElseThrow(() -> new IllegalStateException(
 				"a WHERE clause with relations must yield at least one predicate"));
-	}
-
-	private static Integer resolveLimit(final Term.Raw limit, final CodecRegistry codecRegistry,
-		final Node coordinator, final Object... bindings) {
-		if (limit == null) {
-			return null;
-		}
-
-		final var value = Terms.resolve(limit, DataTypes.INT, codecRegistry, coordinator, bindings);
-		if (!(value instanceof Number number)) {
-			throw new InvalidQueryException(coordinator, "Invalid limit value %s".formatted(value));
-		}
-		final var n = number.intValue();
-		if (n <= 0) {
-			throw new InvalidQueryException(coordinator, "LIMIT must be strictly positive");
-		}
-
-		return n;
 	}
 
 	private static Row project(final Row source, final Projection projection) {
