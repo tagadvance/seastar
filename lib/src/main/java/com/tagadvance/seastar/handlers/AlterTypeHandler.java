@@ -19,7 +19,6 @@ import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.FieldIdentifier;
-import org.apache.cassandra.cql3.UTName;
 import org.apache.cassandra.cql3.statements.schema.AlterTypeStatement.Raw;
 
 /**
@@ -44,7 +43,7 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var node = executionInfo.getCoordinator();
-		final var name = Reflections.getDeclaredField(raw, "name", UTName.class).orElseThrow();
+		final var name = FieldBindings.ALTER_TYPE_NAME.require(raw);
 		final var keyspaceName = Optional.ofNullable(name.getKeyspace())
 			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
 			.orElse(null);
@@ -60,8 +59,7 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 			.orElse(null);
 		if (udt == null) {
 			// A missing keyspace is reported the same way, matching AlterTypeStatement.apply.
-			final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
-				.orElse(false);
+			final var ifExists = FieldBindings.ALTER_TYPE_IF_EXISTS.require(raw);
 			if (ifExists) {
 				return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 			}
@@ -70,9 +68,7 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 				"Type %s.%s doesn't exist".formatted(keyspaceName, typeName)));
 		}
 
-		final var kind = Reflections.getDeclaredField(raw, "kind", Enum.class)
-			.map(Enum::name)
-			.orElseThrow();
+		final var kind = FieldBindings.ALTER_TYPE_KIND.require(raw).name();
 		try {
 			return CompletableFuture.completedStage(switch (kind) {
 				case "ADD_FIELD" -> addField(executionInfo, raw, keyspace, udt);
@@ -88,13 +84,9 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 	private AsyncResultSet addField(final ExecutionInfo executionInfo, final Raw raw,
 		final SeaStarKeyspace keyspace, final SeaStarUserDefinedType udt) {
 		final var node = executionInfo.getCoordinator();
-		final var fieldName = identifier(
-			Reflections.getDeclaredField(raw, "newFieldName", FieldIdentifier.class).orElseThrow());
-		final var ifFieldNotExists = Reflections.getDeclaredField(raw, "ifFieldNotExists",
-			Boolean.class).orElse(false);
-		final var rawType = Reflections.getDeclaredField(raw, "newFieldType", Object.class)
-			.map(SeaStarRawType::from)
-			.orElseThrow();
+		final var fieldName = identifier(FieldBindings.ALTER_TYPE_NEW_FIELD_NAME.require(raw));
+		final var ifFieldNotExists = FieldBindings.ALTER_TYPE_IF_FIELD_NOT_EXISTS.require(raw);
+		final var rawType = new SeaStarRawType(FieldBindings.ALTER_TYPE_NEW_FIELD_TYPE.require(raw));
 
 		return udt.writeLockUnchecked(() -> {
 			if (udt.firstIndexOf(fieldName) >= 0) {
@@ -116,14 +108,11 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 		});
 	}
 
-	@SuppressWarnings("unchecked")
 	private AsyncResultSet renameFields(final ExecutionInfo executionInfo, final Raw raw,
 		final SeaStarUserDefinedType udt) {
 		final var node = executionInfo.getCoordinator();
-		final Map<Object, Object> renamedFields = Reflections.getDeclaredField(raw, "renamedFields",
-			Map.class).orElseThrow();
-		final var ifFieldExists = Reflections.getDeclaredField(raw, "ifFieldExists", Boolean.class)
-			.orElse(false);
+		final var renamedFields = FieldBindings.ALTER_TYPE_RENAMED_FIELDS.require(raw);
+		final var ifFieldExists = FieldBindings.ALTER_TYPE_IF_FIELD_EXISTS.require(raw);
 
 		return udt.writeLockUnchecked(() -> {
 			final Map<CqlIdentifier, CqlIdentifier> renames = new LinkedHashMap<>();
@@ -159,7 +148,7 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 		});
 	}
 
-	private static CqlIdentifier identifier(final Object fieldIdentifier) {
+	private static CqlIdentifier identifier(final FieldIdentifier fieldIdentifier) {
 		return CqlIdentifier.fromInternal(fieldIdentifier.toString());
 	}
 

@@ -10,7 +10,6 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.metadata.schema.DefaultIndexMetadata;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarTable;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -18,7 +17,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.statements.schema.CreateIndexStatement.Raw;
 
@@ -37,15 +35,12 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var tableName = Reflections.getDeclaredField(raw, "tableName", QualifiedName.class)
-			.orElseThrow();
-		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class)
-			.orElse(false);
+		final var tableName = FieldBindings.CREATE_INDEX_TABLE_NAME.require(raw);
+		final var ifNotExists = FieldBindings.CREATE_INDEX_IF_NOT_EXISTS.require(raw);
 
 		final var keyspace = Optional.ofNullable(
 				tableName.hasKeyspace() ? tableName.getKeyspace() : null)
@@ -65,14 +60,12 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 		}
 		final var seaStarTable = optionalTable.get();
 
-		final List<Object> targets = Reflections.getDeclaredField(raw, "rawIndexTargets", List.class)
-			.orElseGet(List::of);
+		final var targets = FieldBindings.CREATE_INDEX_RAW_TARGETS.require(raw);
 		if (targets.isEmpty()) {
 			return CompletableFuture.failedStage(
 				new InvalidQueryException(coordinator, "Only CREATE INDEX on a single column is supported"));
 		}
-		final var columnId = Reflections.getDeclaredField(targets.get(0), "column",
-			ColumnIdentifier.class).orElseThrow();
+		final var columnId = FieldBindings.INDEX_TARGET_COLUMN.require(targets.get(0));
 		final var column = CqlIdentifier.fromInternal(columnId.toString());
 		if (seaStarTable.firstIndexOf(column) < 0) {
 			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
@@ -99,14 +92,13 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 
 	private static CqlIdentifier resolveIndexName(final Raw raw, final String table,
 		final CqlIdentifier column) {
-		final var indexName = Reflections.getDeclaredField(raw, "indexName", QualifiedName.class)
-			.orElse(null);
-		if (indexName != null && indexName.getName() != null) {
-			return CqlIdentifier.fromInternal(indexName.getName());
-		}
-
-		// Cassandra derives an unspecified index name as <table>_<column>_idx.
-		return CqlIdentifier.fromInternal("%s_%s_idx".formatted(table, column.asInternal()));
+		// CREATE INDEX ON ... leaves the name unset, so absence here is a valid answer.
+		return FieldBindings.CREATE_INDEX_INDEX_NAME.find(raw)
+			.map(QualifiedName::getName)
+			.map(CqlIdentifier::fromInternal)
+			// Cassandra derives an unspecified index name as <table>_<column>_idx.
+			.orElseGet(() -> CqlIdentifier.fromInternal(
+				"%s_%s_idx".formatted(table, column.asInternal())));
 	}
 
 }

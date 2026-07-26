@@ -63,14 +63,9 @@ public class InsertHandler implements CqlHandler<ParsedInsert> {
 		}
 		final var table = optionalTable.get();
 
-		@SuppressWarnings("unchecked")
-		final List<Object> columnNames = Reflections.getDeclaredField(raw, "columnNames", List.class)
-			.orElseGet(Collections::emptyList);
-		@SuppressWarnings("unchecked")
-		final List<Object> columnValues = Reflections.getDeclaredField(raw, "columnValues",
-			List.class).orElseGet(Collections::emptyList);
-		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class)
-			.orElse(false);
+		final var columnNames = FieldBindings.INSERT_COLUMN_NAMES.require(raw);
+		final var columnValues = FieldBindings.INSERT_COLUMN_VALUES.require(raw);
+		final var ifNotExists = FieldBindings.MODIFICATION_IF_NOT_EXISTS.require(raw);
 
 		final var codecRegistry = context.getCodecRegistry();
 		final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));

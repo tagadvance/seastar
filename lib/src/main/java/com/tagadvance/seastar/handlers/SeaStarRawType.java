@@ -5,18 +5,12 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.tagadvance.seastar.SeaStarKeyspace;
-import java.util.List;
 import java.util.Optional;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.CQL3Type.Native;
-import org.apache.cassandra.cql3.UTName;
 import org.apache.cassandra.db.marshal.CollectionType.Kind;
 
 record SeaStarRawType(CQL3Type.Raw raw) {
-
-	public static SeaStarRawType from(final Object o) {
-		return new SeaStarRawType((CQL3Type.Raw) o);
-	}
 
 	/**
 	 * Resolves this parsed type to a driver {@link DataType}. UDT references are resolved against
@@ -33,16 +27,17 @@ record SeaStarRawType(CQL3Type.Raw raw) {
 		if (raw.isUDT()) {
 			return Optional.of(toUserDefined(keyspace, coordinator));
 		}
-		final var kind = Reflections.getDeclaredField(raw, "kind", Kind.class);
-		if (kind.isPresent()) {
-			return toCollection(kind.get(), keyspace, coordinator);
+		// CQL3Type.Raw publishes isUDT/isTuple/isVector but no isCollection, so a collection is
+		// recognized by its implementation class rather than by probing for a field.
+		if (FieldBindings.RAW_COLLECTION.isInstance(raw)) {
+			return toCollection(FieldBindings.COLLECTION_KIND.require(raw), keyspace, coordinator);
 		}
+
 		return toNative();
 	}
 
 	private Optional<DataType> toNative() {
-		final var type = Reflections.getDeclaredField(raw, "type", CQL3Type.class).orElse(null);
-		if (!(type instanceof Native n)) {
+		if (!(FieldBindings.NATIVE_TYPE.require(raw) instanceof Native n)) {
 			return Optional.empty();
 		}
 
@@ -74,10 +69,8 @@ record SeaStarRawType(CQL3Type.Raw raw) {
 	private Optional<DataType> toCollection(final Kind kind, final SeaStarKeyspace keyspace,
 		final Node coordinator) {
 		final var frozen = raw.isFrozen();
-		final var values = Reflections.getDeclaredField(raw, "values", CQL3Type.Raw.class)
-			.orElseThrow(() -> new IllegalStateException(
-				"declared field values is required to resolve a collection type"));
-		final var valueType = from(values).toDataType(keyspace, coordinator);
+		final var values = FieldBindings.COLLECTION_VALUES.require(raw);
+		final var valueType = new SeaStarRawType(values).toDataType(keyspace, coordinator);
 		if (valueType.isEmpty()) {
 			return Optional.empty();
 		}
@@ -85,46 +78,38 @@ record SeaStarRawType(CQL3Type.Raw raw) {
 		return switch (kind) {
 			case LIST -> Optional.of(DataTypes.listOf(valueType.get(), frozen));
 			case SET -> Optional.of(DataTypes.setOf(valueType.get(), frozen));
-			case MAP -> {
-				final var keys = Reflections.getDeclaredField(raw, "keys", CQL3Type.Raw.class)
-					.orElseThrow(() -> new IllegalStateException(
-						"declared field keys is required to resolve a map type"));
-				yield from(keys).toDataType(keyspace, coordinator)
-					.map(keyType -> DataTypes.mapOf(keyType, valueType.get(), frozen));
-			}
+			// Only a map carries a key type; keys is null for a list or a set.
+			case MAP -> new SeaStarRawType(FieldBindings.COLLECTION_KEYS.require(raw))
+				.toDataType(keyspace, coordinator)
+				.map(keyType -> DataTypes.mapOf(keyType, valueType.get(), frozen));
 		};
 	}
 
 	private Optional<DataType> toTuple(final SeaStarKeyspace keyspace, final Node coordinator) {
-		final List<?> types = Reflections.getDeclaredField(raw, "types", List.class)
-			.orElseThrow(() -> new IllegalStateException(
-				"declared field types is required to resolve a tuple type"));
+		final var types = FieldBindings.TUPLE_TYPES.require(raw);
 		final var componentTypes = new DataType[types.size()];
 		for (int i = 0; i < types.size(); i++) {
-			final var componentType = from(types.get(i)).toDataType(keyspace, coordinator);
+			final var componentType = new SeaStarRawType(types.get(i)).toDataType(keyspace,
+				coordinator);
 			if (componentType.isEmpty()) {
 				return Optional.empty();
 			}
 			componentTypes[i] = componentType.get();
 		}
+
 		return Optional.of(DataTypes.tupleOf(componentTypes));
 	}
 
 	private Optional<DataType> toVector(final SeaStarKeyspace keyspace, final Node coordinator) {
-		final var element = Reflections.getDeclaredField(raw, "element", CQL3Type.Raw.class)
-			.orElseThrow(() -> new IllegalStateException(
-				"declared field element is required to resolve a vector type"));
-		final var dimension = Reflections.getDeclaredField(raw, "dimension", Integer.class)
-			.orElseThrow(() -> new IllegalStateException(
-				"declared field dimension is required to resolve a vector type"));
-		return from(element).toDataType(keyspace, coordinator)
+		final var element = FieldBindings.VECTOR_ELEMENT.require(raw);
+		final var dimension = FieldBindings.VECTOR_DIMENSION.require(raw);
+
+		return new SeaStarRawType(element).toDataType(keyspace, coordinator)
 			.map(elementType -> DataTypes.vectorOf(elementType, dimension));
 	}
 
 	private DataType toUserDefined(final SeaStarKeyspace keyspace, final Node coordinator) {
-		final var name = Reflections.getDeclaredField(raw, "name", UTName.class)
-			.orElseThrow(() -> new IllegalStateException(
-				"declared field name is required to resolve a user-defined type"));
+		final var name = FieldBindings.USER_TYPE_NAME.require(raw);
 		final var udtName = name.getStringTypeName();
 		final var udt = keyspace.getSeaStarUserDefinedType(udtName)
 			.orElseThrow(() -> new InvalidQueryException(coordinator, "Unknown type " + name));

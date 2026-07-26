@@ -30,10 +30,7 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
-import org.apache.cassandra.cql3.Term;
-import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
-import org.apache.cassandra.utils.Pair;
 
 @ThreadSafe
 public class UpdateHandler implements CqlHandler<ParsedUpdate> {
@@ -79,11 +76,8 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var primaryKey = primaryKeyNames(table);
 
-		@SuppressWarnings("unchecked")
-		final List<Pair<Object, Object>> conditionList = Reflections.getDeclaredField(raw,
-			"conditions", List.class).orElseGet(Collections::emptyList);
-		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
-			.orElse(false);
+		final var conditionList = raw.getConditions();
+		final var ifExists = FieldBindings.MODIFICATION_IF_EXISTS.require(raw);
 
 		final List<Assignment> assignments;
 		final Where where;
@@ -153,9 +147,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	private static List<Assignment> resolveAssignments(final SeaStarTable table,
 		final Set<CqlIdentifier> primaryKey, final ParsedUpdate raw, final CodecRegistry codecRegistry,
 		final Node coordinator, final Object... bindings) {
-		@SuppressWarnings("unchecked")
-		final List<Pair<Object, Object>> updates = Reflections.getDeclaredField(raw, "updates",
-			List.class).orElseGet(Collections::emptyList);
+		final var updates = FieldBindings.UPDATE_UPDATES.require(raw);
 
 		final List<Assignment> assignments = new ArrayList<>(updates.size());
 		for (final var update : updates) {
@@ -173,8 +165,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				throw new UnsupportedOperationException(
 					"Unsupported UPDATE assignment %s".formatted(update.right));
 			}
-			final var term = Reflections.getDeclaredField(setValue, "value", Term.Raw.class)
-				.orElseThrow();
+			final var term = FieldBindings.SET_VALUE.require(setValue);
 			final var value = Terms.resolve(term, table.get(index).getType(), codecRegistry,
 				coordinator, bindings);
 			assignments.add(new Assignment(index, value));
@@ -190,9 +181,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	private static Where resolveWhere(final SeaStarTable table, final Set<CqlIdentifier> primaryKey,
 		final ParsedUpdate raw, final CodecRegistry codecRegistry, final Node coordinator,
 		final Object... bindings) {
-		final var whereClause = Reflections.getDeclaredField(raw, "whereClause", WhereClause.class)
-			.orElseThrow();
-		final List<Relation> relations = whereClause.relations;
+		final List<Relation> relations = FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations;
 
 		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
 		final Set<CqlIdentifier> restricted = new HashSet<>();
@@ -237,7 +226,8 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		}
 
 		final Predicate<SeaStarRow> predicate = predicates.stream().reduce(Predicate::and)
-			.orElseThrow();
+			.orElseThrow(() -> new IllegalStateException(
+				"a WHERE clause with relations must yield at least one predicate"));
 		// Only equality on every primary key part can synthesize a row for an upsert.
 		final var canUpsert = upsertKey.keySet().size() == primaryKey.size();
 

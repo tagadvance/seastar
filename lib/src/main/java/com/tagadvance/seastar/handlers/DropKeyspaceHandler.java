@@ -38,8 +38,8 @@ public class DropKeyspaceHandler implements CqlHandler<Raw> {
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var name = Reflections.getDeclaredField(raw, "keyspaceName", String.class).orElseThrow();
-		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class).orElse(false);
+		final var name = FieldBindings.DROP_KEYSPACE_NAME.require(raw);
+		final var ifExists = FieldBindings.DROP_KEYSPACE_IF_EXISTS.require(raw);
 
 		final var id = CqlIdentifier.fromInternal(name);
 		if (context.getSeaStarKeyspace(id).isEmpty()) {

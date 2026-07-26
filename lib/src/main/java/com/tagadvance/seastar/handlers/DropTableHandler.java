@@ -13,7 +13,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.statements.schema.DropTableStatement.Raw;
 
 @ThreadSafe
@@ -35,8 +34,8 @@ public class DropTableHandler implements CqlHandler<Raw> {
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var name = Reflections.getDeclaredField(raw, "name", QualifiedName.class).orElseThrow();
-		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class).orElse(false);
+		final var name = FieldBindings.DROP_TABLE_NAME.require(raw);
+		final var ifExists = FieldBindings.DROP_TABLE_IF_EXISTS.require(raw);
 
 		final var keyspace = Optional.ofNullable(name.hasKeyspace() ? name.getKeyspace() : null)
 			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))

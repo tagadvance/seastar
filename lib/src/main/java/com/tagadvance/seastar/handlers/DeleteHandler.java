@@ -13,7 +13,6 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -25,12 +24,9 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
-import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.statements.DeleteStatement.Parsed;
-import org.apache.cassandra.utils.Pair;
 
 @ThreadSafe
 public class DeleteHandler implements CqlHandler<Parsed> {
@@ -76,10 +72,8 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var codecRegistry = context.getCodecRegistry();
 		final var primaryKey = primaryKeyNames(table);
 
-		final List<Pair<Object, Object>> conditionList = Reflections.getDeclaredField(raw,
-			"conditions", List.class).orElseGet(Collections::emptyList);
-		final var ifExists = Reflections.getDeclaredField(raw, "ifExists", Boolean.class)
-			.orElse(false);
+		final var conditionList = raw.getConditions();
+		final var ifExists = FieldBindings.MODIFICATION_IF_EXISTS.require(raw);
 
 		final int[] deletedColumns;
 		final Predicate<SeaStarRow> predicate;
@@ -137,11 +131,9 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	private static int[] resolveDeletedColumns(final SeaStarTable table,
 		final Set<CqlIdentifier> primaryKey, final Parsed raw, final Node coordinator) {
-		final List<Operation.ColumnDeletion> deletions = Reflections.getDeclaredField(raw,
-			"deletions", List.class).orElseGet(Collections::emptyList);
+		final var deletions = FieldBindings.DELETE_DELETIONS.require(raw);
 
 		final var indices = new int[deletions.size()];
 		for (int i = 0; i < deletions.size(); i++) {
@@ -165,9 +157,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	private static Predicate<SeaStarRow> resolveWhere(final SeaStarTable table,
 		final Set<CqlIdentifier> primaryKey, final Parsed raw, final CodecRegistry codecRegistry,
 		final Node coordinator, final Object... bindings) {
-		final var whereClause = Reflections.getDeclaredField(raw, "whereClause", WhereClause.class)
-			.orElseThrow();
-		final List<Relation> relations = whereClause.relations;
+		final List<Relation> relations = FieldBindings.DELETE_WHERE_CLAUSE.require(raw).relations;
 
 		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
 		final Set<CqlIdentifier> restricted = new HashSet<>();
@@ -209,7 +199,9 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				"Some partition key parts are missing from the WHERE clause");
 		}
 
-		return predicates.stream().reduce(Predicate::and).orElseThrow();
+		return predicates.stream().reduce(Predicate::and)
+			.orElseThrow(() -> new IllegalStateException(
+				"a WHERE clause with relations must yield at least one predicate"));
 	}
 
 	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {

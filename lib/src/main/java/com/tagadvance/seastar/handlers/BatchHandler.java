@@ -5,8 +5,6 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.tagadvance.seastar.SeaStarDriverContext;
-import java.util.Collections;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
@@ -42,11 +40,9 @@ public class BatchHandler implements CqlHandler<Parsed> {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Parsed raw, final Object... bindings) {
-		final List<CQLStatement.Raw> children = Reflections.getDeclaredField(raw, "parsedStatements",
-			List.class).orElseGet(Collections::emptyList);
+		final var children = FieldBindings.BATCH_STATEMENTS.require(raw);
 
 		final var registry = this.registry.get();
 		CompletionStage<AsyncResultSet> chain = CompletableFuture.completedStage(null);

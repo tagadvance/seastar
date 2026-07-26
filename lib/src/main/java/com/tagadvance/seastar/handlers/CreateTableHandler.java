@@ -10,18 +10,14 @@ import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.ColumnIdentifier;
-import org.apache.cassandra.cql3.functions.masking.ColumnMask;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement.Raw;
 
 public class CreateTableHandler implements CqlHandler<Raw> {
@@ -49,9 +45,8 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 		}
 
 		final var table = raw.table();
-		final var ifNotExists = Reflections.getDeclaredField(raw, "ifNotExists", Boolean.class).orElse(false);
-		final var useCompactStorage = Reflections.getDeclaredField(raw, "useCompactStorage",
-			Boolean.class).orElse(false);
+		final var ifNotExists = FieldBindings.CREATE_TABLE_IF_NOT_EXISTS.require(raw);
+		final var useCompactStorage = FieldBindings.CREATE_TABLE_USE_COMPACT_STORAGE.require(raw);
 
 		if (useCompactStorage) {
 			throw new UnsupportedOperationException("COMPACT STORAGE is not supported");
@@ -76,24 +71,16 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 		} else {
 			final var table1 = ksx.newSeaStarTable(table);
 
-			@SuppressWarnings("unchecked")
-			final Map<ColumnIdentifier, Object> rawColumns = Reflections.getDeclaredField(raw,
-				"rawColumns", Map.class).orElseGet(Collections::emptyMap);
-			@SuppressWarnings("unchecked")
-			final List<ColumnIdentifier> partitionKeyColumns = Reflections.getDeclaredField(raw,
-				"partitionKeyColumns", List.class).orElseGet(Collections::emptyList);
-			@SuppressWarnings("unchecked")
-			final List<ColumnIdentifier> clusteringColumns = Reflections.getDeclaredField(raw,
-				"clusteringColumns", List.class).orElseGet(Collections::emptyList);
-			@SuppressWarnings("unchecked")
-			final Map<ColumnIdentifier, Boolean> clusteringOrder = Reflections.getDeclaredField(raw,
-				"clusteringOrder", Map.class).orElseGet(Collections::emptyMap);
-			@SuppressWarnings("unchecked")
-			final Set<ColumnIdentifier> staticColumns = Reflections.getDeclaredField(raw,
-				"staticColumns", Set.class).orElseGet(Collections::emptySet);
+			final var rawColumns = FieldBindings.CREATE_TABLE_RAW_COLUMNS.require(raw);
+			final var partitionKeyColumns = FieldBindings.CREATE_TABLE_PARTITION_KEY_COLUMNS.require(
+				raw);
+			final var clusteringColumns = FieldBindings.CREATE_TABLE_CLUSTERING_COLUMNS.require(raw);
+			final var clusteringOrder = FieldBindings.CREATE_TABLE_CLUSTERING_ORDER.require(raw);
+			final var staticColumns = FieldBindings.CREATE_TABLE_STATIC_COLUMNS.require(raw);
 
+			// A mask is only present on a column declared with MASKED WITH.
 			rawColumns.values().forEach(value ->
-				Reflections.getDeclaredField(value, "rawMask", ColumnMask.Raw.class).ifPresent(mask -> {
+				FieldBindings.COLUMN_RAW_MASK.find(value).ifPresent(mask -> {
 					throw new UnsupportedOperationException("Column masks are not supported");
 				}));
 
@@ -107,9 +94,9 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 
 			for (final var key : ordered) {
 				final var value = rawColumns.get(key);
-				final var dataType = Reflections.getDeclaredField(value, "rawType", Object.class)
-					.map(SeaStarRawType::from)
-					.flatMap(rawType -> rawType.toDataType(ksx, executionInfo.getCoordinator()));
+				final var rawType = FieldBindings.COLUMN_RAW_TYPE.require(value);
+				final var dataType = new SeaStarRawType(rawType).toDataType(ksx,
+					executionInfo.getCoordinator());
 				if (dataType.isEmpty()) {
 					throw new InvalidQueryException(executionInfo.getCoordinator(),
 						"Unknown type for column '%s'".formatted(key));

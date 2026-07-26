@@ -127,16 +127,15 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final var indices = new int[selectClause.size()];
 		for (int i = 0; i < selectClause.size(); i++) {
 			final var selectable = selectClause.get(i).selectable;
-			if (!(selectable instanceof Selectable.RawIdentifier)) {
+			if (!(selectable instanceof Selectable.RawIdentifier identifier)) {
 				throw new UnsupportedOperationException(
 					"Unsupported select item %s".formatted(selectable));
 			}
-			final var text = Reflections.getDeclaredField(selectable, "text", String.class)
-				.orElseThrow();
-			final var index = table.firstIndexOf(CqlIdentifier.fromInternal(text));
+			final var name = CqlIdentifier.fromInternal(identifier.toString());
+			final var index = table.firstIndexOf(name);
 			if (index < 0) {
 				throw new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(text));
+					"Undefined column name %s".formatted(name.asInternal()));
 			}
 			indices[i] = index;
 			columns.add(table.get(index));
@@ -218,13 +217,11 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 				throw new UnsupportedOperationException(
 					"Unsupported relation %s".formatted(relation));
 			}
-			final var text = Reflections.getDeclaredField(single.getEntity(), "text", String.class)
-				.orElseThrow();
-			final var name = CqlIdentifier.fromInternal(text);
+			final var name = CqlIdentifier.fromInternal(single.getEntity().toString());
 			final var index = table.firstIndexOf(name);
 			if (index < 0) {
 				throw new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(text));
+					"Undefined column name %s".formatted(name.asInternal()));
 			}
 			// A secondary index permits an equality restriction on its column without ALLOW
 			// FILTERING; other non-primary-key restrictions still require it.
@@ -253,7 +250,9 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			}
 		}
 
-		return predicates.stream().reduce(Predicate::and).orElseThrow();
+		return predicates.stream().reduce(Predicate::and)
+			.orElseThrow(() -> new IllegalStateException(
+				"a WHERE clause with relations must yield at least one predicate"));
 	}
 
 	private static Integer resolveLimit(final Term.Raw limit, final CodecRegistry codecRegistry,

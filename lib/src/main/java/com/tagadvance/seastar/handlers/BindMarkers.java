@@ -27,7 +27,6 @@ import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.UserTypes;
-import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
@@ -35,7 +34,6 @@ import org.apache.cassandra.cql3.statements.QualifiedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
-import org.apache.cassandra.utils.Pair;
 import org.jspecify.annotations.NonNull;
 
 /**
@@ -100,7 +98,7 @@ public final class BindMarkers {
 			collectUpdate(table, update, markers);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof DeleteStatement.Parsed delete) {
-			collectWhere(table, whereRelations(delete), markers);
+			collectWhere(table, FieldBindings.DELETE_WHERE_CLAUSE.require(delete).relations, markers);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof SelectStatement.RawStatement select) {
 			collectSelect(table, select, markers);
@@ -141,17 +139,14 @@ public final class BindMarkers {
 		return indices.size() == partitionKey.size() ? indices : List.of();
 	}
 
-	@SuppressWarnings("unchecked")
 	private static void collectInsert(final SeaStarTable table, final ParsedInsert raw,
 		final NavigableMap<Integer, ColumnDefinition> markers) {
-		final List<Object> columnNames = Reflections.getDeclaredField(raw, "columnNames",
-			List.class).orElseThrow();
-		final List<Object> columnValues = Reflections.getDeclaredField(raw, "columnValues",
-			List.class).orElseThrow();
+		final var columnNames = FieldBindings.INSERT_COLUMN_NAMES.require(raw);
+		final var columnValues = FieldBindings.INSERT_COLUMN_VALUES.require(raw);
 		for (int i = 0; i < columnNames.size(); i++) {
 			final var column = columnFor(table, columnNames.get(i).toString());
-			if (column != null && columnValues.get(i) instanceof Term.Raw term) {
-				collectInsertValue(table, term, column, markers);
+			if (column != null) {
+				collectInsertValue(table, columnValues.get(i), column, markers);
 			}
 		}
 	}
@@ -180,19 +175,15 @@ public final class BindMarkers {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	private static void collectUpdate(final SeaStarTable table, final ParsedUpdate raw,
 		final NavigableMap<Integer, ColumnDefinition> markers) {
-		final List<Pair<Object, Object>> updates = Reflections.getDeclaredField(raw, "updates",
-			List.class).orElseThrow();
-		for (final var update : updates) {
+		for (final var update : FieldBindings.UPDATE_UPDATES.require(raw)) {
 			final var column = columnFor(table, update.left.toString());
 			if (column != null && update.right instanceof Operation.SetValue setValue) {
-				Reflections.getDeclaredField(setValue, "value", Term.Raw.class)
-					.ifPresent(term -> putIfMarker(term, column, markers));
+				putIfMarker(FieldBindings.SET_VALUE.require(setValue), column, markers);
 			}
 		}
-		collectWhere(table, whereRelations(raw), markers);
+		collectWhere(table, FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations, markers);
 	}
 
 	private static void collectSelect(final SeaStarTable table,
@@ -235,25 +226,17 @@ public final class BindMarkers {
 
 		final List<ColumnDefinition> columns = new ArrayList<>(selectClause.size());
 		for (final var selector : selectClause) {
-			if (!(selector.selectable instanceof Selectable.RawIdentifier)) {
+			if (!(selector.selectable instanceof Selectable.RawIdentifier identifier)) {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
-			final var text = Reflections.getDeclaredField(selector.selectable, "text", String.class)
-				.orElse(null);
-			final var column = text == null ? null : columnFor(table, text);
-			if (column == null) {
+			final var index = table.firstIndexOf(CqlIdentifier.fromInternal(identifier.toString()));
+			if (index < 0) {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
-			columns.add(column);
+			columns.add(table.get(index));
 		}
 
 		return DefaultColumnDefinitions.valueOf(columns);
-	}
-
-	private static List<Relation> whereRelations(final Object raw) {
-		return Reflections.getDeclaredField(raw, "whereClause", WhereClause.class)
-			.map(where -> where.relations)
-			.orElseGet(List::of);
 	}
 
 	private static ColumnDefinition columnFor(final SeaStarTable table, final String name) {
@@ -265,8 +248,7 @@ public final class BindMarkers {
 	private static void putIfMarker(final Term.Raw term, final ColumnDefinition column,
 		final NavigableMap<Integer, ColumnDefinition> markers) {
 		if (term instanceof AbstractMarker.Raw marker) {
-			Reflections.getDeclaredField(marker, "bindIndex", Integer.class)
-				.ifPresent(bindIndex -> markers.put(bindIndex, column));
+			markers.put(FieldBindings.MARKER_BIND_INDEX.require(marker), column);
 		}
 	}
 
