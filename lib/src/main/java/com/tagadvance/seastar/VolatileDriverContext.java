@@ -19,7 +19,9 @@ import com.datastax.oss.driver.api.core.specex.SpeculativeExecutionPolicy;
 import com.datastax.oss.driver.api.core.ssl.SslEngineFactory;
 import com.datastax.oss.driver.internal.core.addresstranslation.PassThroughAddressTranslator;
 import com.datastax.oss.driver.internal.core.context.DefaultDriverContext;
+import com.datastax.oss.driver.internal.core.metadata.NoopNodeStateListener;
 import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
+import com.datastax.oss.driver.internal.core.session.throttling.PassThroughRequestThrottler;
 import com.google.errorprone.annotations.ThreadSafe;
 import java.util.Collections;
 import java.util.HashMap;
@@ -69,15 +71,29 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 		return sessionName;
 	}
 
+	/**
+	 * SeaStar dispatches through {@link SeaStarRequestProcessorRegistry}, whose processors take a
+	 * {@link SeaStarCqlSession} rather than the driver's {@code DefaultSession}. The driver's own
+	 * registry cannot be built here and would never be consulted, so there is no empty answer to
+	 * give.
+	 *
+	 * @throws UnsupportedOperationException always
+	 */
 	@Override
 	protected RequestProcessorRegistry buildRequestProcessorRegistry() {
-		throw new UnsupportedOperationException();
+		throw new UnsupportedOperationException(
+			"SeaStar does not support the driver's RequestProcessorRegistry; it dispatches through SeaStarRequestProcessorRegistry");
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #buildRequestProcessorRegistry()
+	 */
 	@Override
 	@NonNull
 	public RequestProcessorRegistry getRequestProcessorRegistry() {
-		throw new UnsupportedOperationException();
+		throw new UnsupportedOperationException(
+			"SeaStar does not support the driver's RequestProcessorRegistry; it dispatches through SeaStarRequestProcessorRegistry");
 	}
 
 	@Override
@@ -98,10 +114,18 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 		return Collections.emptyMap();
 	}
 
+	/**
+	 * SeaStar holds no connection, so nothing can ever drop and there is no reconnection to schedule.
+	 * The driver's {@link ReconnectionPolicy} contract hands out retry delays, and there is no
+	 * meaningful delay to invent for a session that never reconnects.
+	 *
+	 * @throws UnsupportedOperationException always
+	 */
 	@Override
 	@NonNull
 	public ReconnectionPolicy getReconnectionPolicy() {
-		throw new UnsupportedOperationException();
+		throw new UnsupportedOperationException(
+			"SeaStar does not support reconnection policies; it holds no connection to reconnect");
 	}
 
 	@Override
@@ -122,16 +146,24 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 		return Optional.empty();
 	}
 
+	/**
+	 * Requests are answered from memory on the calling thread, so there is nothing to throttle. The
+	 * driver already ships the "no limit" answer as {@link PassThroughRequestThrottler}.
+	 */
 	@Override
 	@NonNull
 	public RequestThrottler getRequestThrottler() {
-		throw new UnsupportedOperationException();
+		return new PassThroughRequestThrottler(this);
 	}
 
+	/**
+	 * SeaStar's single node never changes state, so a listener would never be notified. The driver
+	 * already ships the "nobody is listening" answer as {@link NoopNodeStateListener}.
+	 */
 	@Override
 	@NonNull
 	public NodeStateListener getNodeStateListener() {
-		throw new UnsupportedOperationException();
+		return new NoopNodeStateListener(this);
 	}
 
 	@Override
@@ -177,10 +209,18 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 			.collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 	}
 
+	/**
+	 * SeaStar models a single node with no token ring: there is nothing to partition data across, so
+	 * there are no token ranges and no replicas to compute. The driver's contract already allows for
+	 * an absent token map (it is also empty on a real cluster while schema metadata is disabled), so
+	 * an empty {@link Optional} is the honest answer.
+	 *
+	 * @return {@link Optional#empty()}, always
+	 */
 	@Override
 	@NonNull
 	public Optional<TokenMap> getTokenMap() {
-		throw new UnsupportedOperationException();
+		return Optional.empty();
 	}
 
 }
