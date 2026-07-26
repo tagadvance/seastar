@@ -47,7 +47,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		try {
 			delete = Modifications.delete(context, getKeyspace, raw, coordinator, bindings);
 			validateDeletedColumns(delete, coordinator);
-			predicate = resolveWhere(delete, coordinator);
+			predicate = RestrictionRules.forDelete(delete, coordinator);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -115,31 +115,6 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 						deleted.column().asInternal()));
 			}
 		}
-	}
-
-	private static Predicate<SeaStarRow> resolveWhere(final Modification delete,
-		final Node coordinator) {
-		final var primaryKey = delete.target().primaryKeyNames();
-		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
-		final Set<CqlIdentifier> restricted = new HashSet<>();
-		for (final var restriction : delete.restrictions()) {
-			if (!primaryKey.contains(restriction.column())) {
-				throw new InvalidQueryException(coordinator,
-					"Non PRIMARY KEY column %s found in where clause".formatted(
-						restriction.column().asInternal()));
-			}
-			restricted.add(restriction.column());
-			predicates.add(restriction.toPredicate());
-		}
-
-		if (!restricted.containsAll(primaryKey)) {
-			throw new InvalidQueryException(coordinator,
-				"Some partition key parts are missing from the WHERE clause");
-		}
-
-		return predicates.stream().reduce(Predicate::and)
-			.orElseThrow(() -> new IllegalStateException(
-				"a WHERE clause with relations must yield at least one predicate"));
 	}
 
 }
