@@ -67,7 +67,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				apply(matched, assignments);
+				apply(matched, assignments, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -80,18 +80,18 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				apply(matched, assignments);
+				apply(matched, assignments, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
 			if (!matched.isEmpty()) {
-				apply(matched, assignments);
+				apply(matched, assignments, coordinator);
 			} else if (upsertKey != null) {
 				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 				upsertKey.forEach(values::set);
-				assignments.forEach(
-					assignment -> values.set(assignment.columnIndex(), assignment.value()));
+				assignments.forEach(assignment -> values.set(assignment.columnIndex(),
+					assignment.apply(null, coordinator)));
 				table.addRow(values);
 			}
 
@@ -101,10 +101,12 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		return CompletableFuture.completedStage(result);
 	}
 
-	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments) {
+	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments,
+		final Node coordinator) {
 		for (final var row : matched) {
 			for (final var assignment : assignments) {
-				row.set(assignment.columnIndex(), assignment.value());
+				final var index = assignment.columnIndex();
+				row.set(index, assignment.apply(row.getObject(index), coordinator));
 			}
 		}
 	}
