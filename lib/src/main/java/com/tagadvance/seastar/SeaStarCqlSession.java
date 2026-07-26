@@ -66,7 +66,7 @@ public class SeaStarCqlSession implements CqlSession {
 			new DeleteHandler(this::getKeyspace),
 			new TruncateHandler(this::getKeyspace),
 			new BatchHandler(this::handlerRegistry),
-			new SelectHandler());
+			new SelectHandler(this::getKeyspace));
 	}
 
 	CqlHandlerRegistry handlerRegistry() {

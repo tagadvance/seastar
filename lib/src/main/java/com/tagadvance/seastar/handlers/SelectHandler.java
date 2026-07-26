@@ -1,5 +1,7 @@
 package com.tagadvance.seastar.handlers;
 
+import static java.util.Objects.requireNonNull;
+
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
@@ -25,12 +27,15 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
@@ -40,7 +45,14 @@ import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.SelectStatement.RawStatement;
 import org.jspecify.annotations.NonNull;
 
+@ThreadSafe
 public class SelectHandler implements CqlHandler<RawStatement> {
+
+	private final Supplier<Optional<CqlIdentifier>> getKeyspace;
+
+	public SelectHandler(final Supplier<Optional<CqlIdentifier>> getKeyspace) {
+		this.getKeyspace = requireNonNull(getKeyspace, "getKeyspace must not be null");
+	}
 
 	@Override
 	public boolean canProcess(final CQLStatement.Raw raw) {
@@ -52,20 +64,13 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final ExecutionInfo executionInfo, final RawStatement raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var optionalKeyspace = context.getSeaStarKeyspace(
-			CqlIdentifier.fromInternal(raw.keyspace()));
-		if (optionalKeyspace.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"Keyspace '%s' does not exist".formatted(raw.keyspace())));
+		final Target target;
+		try {
+			target = Targets.require(context, getKeyspace, raw, coordinator);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
-		final var optionalTable = optionalKeyspace.get()
-			.getSeaStarTable(CqlIdentifier.fromInternal(raw.name()));
-		if (optionalTable.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"table %s does not exist".formatted(raw.name())));
-		}
-		final var table = optionalTable.get();
+		final var table = target.table();
 		final var codecRegistry = context.getCodecRegistry();
 		final var distinct = raw.parameters.isDistinct;
 
@@ -76,11 +81,11 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		try {
 			projection = resolveProjection(table, raw.selectClause, coordinator);
 			if (distinct) {
-				validateDistinct(table, projection, coordinator);
+				validateDistinct(target, projection, coordinator);
 			}
 			final var relations = raw.whereClause == null ? List.<Relation>of()
 				: raw.whereClause.relations;
-			predicate = resolveWhere(table, raw.parameters.allowFiltering, relations, codecRegistry,
+			predicate = resolveWhere(target, raw.parameters.allowFiltering, relations, codecRegistry,
 				coordinator, bindings);
 			limit = resolveLimit(raw.limit, codecRegistry, coordinator, bindings);
 			distinctKey = distinct ? partitionKeyIndices(table) : null;
@@ -144,9 +149,10 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return new Projection(DefaultColumnDefinitions.valueOf(columns), indices);
 	}
 
-	private static void validateDistinct(final SeaStarTable table, final Projection projection,
+	private static void validateDistinct(final Target target, final Projection projection,
 		final Node coordinator) {
-		final var partitionKey = partitionKeyNamesOnly(table);
+		final var table = target.table();
+		final var partitionKey = target.partitionKeyNames();
 		// A null projection means SELECT *, which requests every column; validate them all.
 		final var size = table.size();
 		final var selected = projection == null ? null : projection.indices();
@@ -177,11 +183,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return values;
 	}
 
-	private static Set<CqlIdentifier> partitionKeyNamesOnly(final SeaStarTable table) {
-		return table.getPartitionKey().stream().map(ColumnMetadata::getName)
-			.collect(Collectors.toSet());
-	}
-
 	private static Set<CqlIdentifier> indexedColumns(final SeaStarTable table) {
 		final Set<CqlIdentifier> columns = new HashSet<>();
 		for (final var index : table.getIndexes().values()) {
@@ -202,14 +203,15 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return target;
 	}
 
-	private static Predicate<SeaStarRow> resolveWhere(final SeaStarTable table,
+	private static Predicate<SeaStarRow> resolveWhere(final Target target,
 		final boolean allowFiltering, final List<Relation> relations,
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
 		if (relations.isEmpty()) {
 			return null;
 		}
 
-		final var primaryKey = primaryKeyNames(table);
+		final var table = target.table();
+		final var primaryKey = target.primaryKeyNames();
 		final var indexed = indexedColumns(table);
 		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
 		for (final var relation : relations) {
@@ -235,9 +237,9 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 
 			final var dataType = table.get(index).getType();
 			if (relation.isEQ()) {
-				final var target = Terms.resolve(single.getValue(), dataType, codecRegistry,
+				final var expected = Terms.resolve(single.getValue(), dataType, codecRegistry,
 					coordinator, bindings);
-				predicates.add(row -> Objects.equals(row.getObject(index), target));
+				predicates.add(row -> Objects.equals(row.getObject(index), expected));
 			} else if (relation.isIN()) {
 				final Set<Object> targets = new HashSet<>();
 				for (final var term : single.getInValues()) {
@@ -271,15 +273,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 
 		return n;
-	}
-
-	private static Set<CqlIdentifier> primaryKeyNames(final SeaStarTable table) {
-		final Set<CqlIdentifier> names = new HashSet<>();
-		table.getPartitionKey().stream().map(ColumnMetadata::getName).forEach(names::add);
-		table.getClusteringColumns().keySet().stream().map(ColumnMetadata::getName)
-			.forEach(names::add);
-
-		return names;
 	}
 
 	private static Row project(final Row source, final Projection projection) {
