@@ -59,7 +59,7 @@ final class Restrictions {
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
 		final var column = column(table, relation.getEntity(), coordinator);
 		final var operator = CqlOperator.of(relation.operator());
-		final var termType = termType(column.type(), operator);
+		final var termType = termType(column, operator, coordinator);
 
 		if (operator == CqlOperator.IN) {
 			final var inValues = relation.getInValues();
@@ -142,26 +142,37 @@ final class Restrictions {
 
 	/**
 	 * CONTAINS compares against what a collection holds rather than against the collection, so its
-	 * term resolves as an element, a value or a key. A column that holds no collection at all is
-	 * {@link RestrictionRules}' to reject, so the column's own type stands in here.
+	 * term resolves as an element, a value or a key. A column holding neither settles the relation
+	 * here, before its term is read against a type that was never going to fit.
 	 */
-	private static DataType termType(final DataType columnType, final CqlOperator operator) {
+	private static DataType termType(final Restriction.Column column, final CqlOperator operator,
+		final Node coordinator) {
+		final var type = column.type();
 		if (operator == CqlOperator.CONTAINS) {
-			if (columnType instanceof ListType list) {
+			if (type instanceof ListType list) {
 				return list.getElementType();
 			}
-			if (columnType instanceof SetType set) {
+			if (type instanceof SetType set) {
 				return set.getElementType();
 			}
-			if (columnType instanceof MapType map) {
+			if (type instanceof MapType map) {
 				return map.getValueType();
 			}
+
+			throw new InvalidQueryException(coordinator,
+				"Cannot use CONTAINS on non-collection column %s".formatted(
+					column.name().asInternal()));
 		}
-		if (operator == CqlOperator.CONTAINS_KEY && columnType instanceof MapType map) {
-			return map.getKeyType();
+		if (operator == CqlOperator.CONTAINS_KEY) {
+			if (type instanceof MapType map) {
+				return map.getKeyType();
+			}
+
+			throw new InvalidQueryException(coordinator,
+				"Cannot use CONTAINS KEY on non-map column %s".formatted(column.name().asInternal()));
 		}
 
-		return columnType;
+		return type;
 	}
 
 	private static Restriction.Column column(final SeaStarTable table,

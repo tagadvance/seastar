@@ -3,9 +3,6 @@ package com.tagadvance.seastar.handlers;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.type.ListType;
-import com.datastax.oss.driver.api.core.type.MapType;
-import com.datastax.oss.driver.api.core.type.SetType;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.HashSet;
@@ -162,7 +159,6 @@ final class RestrictionRules {
 				case ANN -> throw new InvalidQueryException(coordinator,
 					"ANN ordering is only supported on vector-indexed columns, and %s is not one"
 						.formatted(label(restriction)));
-				case CONTAINS, CONTAINS_KEY -> validateContains(restriction, coordinator);
 				default -> {
 					// The comparisons need no check of their own beyond an orderable column.
 				}
@@ -177,25 +173,6 @@ final class RestrictionRules {
 								column.name().asInternal(), column.type().asCql(true, true)));
 					});
 			}
-		}
-	}
-
-	private static void validateContains(final Restriction restriction, final Node coordinator) {
-		final var column = restriction.column();
-		final var type = column.type();
-		if (restriction.operator() == CqlOperator.CONTAINS_KEY) {
-			if (!(type instanceof MapType)) {
-				throw new InvalidQueryException(coordinator,
-					"Cannot use CONTAINS KEY on non-map column %s".formatted(
-						column.name().asInternal()));
-			}
-
-			return;
-		}
-		if (!(type instanceof ListType || type instanceof SetType || type instanceof MapType)) {
-			throw new InvalidQueryException(coordinator,
-				"Cannot use CONTAINS on non-collection column %s".formatted(
-					column.name().asInternal()));
 		}
 	}
 
