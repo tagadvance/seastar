@@ -11,12 +11,12 @@ import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
+import com.tagadvance.seastar.handlers.CqlParsers;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 
 /**
@@ -83,7 +83,7 @@ public class SeaStarCqlRequestHandler {
 
 		final CQLStatement.Raw raw;
 		try {
-			raw = QueryProcessor.parseStatement(query);
+			raw = CqlParsers.parse(node, query);
 		} catch (final Exception e) {
 			attach(executionInfo, e);
 
