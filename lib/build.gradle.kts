@@ -131,7 +131,7 @@ fun registerColdJvmBenchmark(name: String, probe: String, samples: Int, probeArg
     }
 
 registerColdJvmBenchmark("startupBenchmark", "com.tagadvance.seastar.bench.StartupProbe", 20,
-    listOf("plain")).configure {
+    listOf("plain/clinitFirst/parseFirst")).configure {
     description = "Cold and warm SeaStarCqlSession startup, one fresh JVM per sample."
 }
 
@@ -140,11 +140,16 @@ registerColdJvmBenchmark("startupSchemaBenchmark", "com.tagadvance.seastar.bench
     description = "Startup seeded with a realistic fixture schema via withSchema."
 }
 
-listOf("queryProcessor", "direct", "clinitOnly", "equivalence").forEach { mode ->
-    registerColdJvmBenchmark("parserCost${mode.replaceFirstChar(Char::uppercase)}Benchmark",
-        "com.tagadvance.seastar.bench.ParserCostProbe", 20, listOf(mode)).configure {
-        description = "Attributes the one-time cassandra-all parser cost ($mode)."
-    }
+// The three variants are interleaved rather than run one after another: they are compared against
+// each other, so a machine that throttles part way through must not favour whichever ran first.
+registerColdJvmBenchmark("parserCostBenchmark", "com.tagadvance.seastar.bench.ParserCostProbe", 20,
+    listOf("direct/queryProcessor/clinitOnly")).configure {
+    description = "Attributes the one-time cassandra-all parser cost in a cold JVM."
+}
+
+registerColdJvmBenchmark("parserEquivalenceCheck", "com.tagadvance.seastar.bench.ParserCostProbe", 1,
+    listOf("equivalence")).configure {
+    description = "Checks both parser entry points return the same parse tree type."
 }
 
 listOf("warm" to 3, "cold" to 1).forEach { (mode, samples) ->
