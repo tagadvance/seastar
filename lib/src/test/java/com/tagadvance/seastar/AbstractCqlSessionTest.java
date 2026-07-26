@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
@@ -1399,6 +1401,28 @@ abstract class AbstractCqlSessionTest {
 		session.execute("DELETE FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}");
 		assertNull(session.execute(
 			"SELECT note FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}").one());
+	}
+
+	@Test
+	@Order(80)
+	@DisplayName("ExecutionInfo answers its routine getters instead of throwing")
+	void testExecutionInfoRoutineGetters() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.exec_info (id int PRIMARY KEY)");
+
+		final var executionInfo = session.execute("SELECT * FROM foo.exec_info")
+			.getExecutionInfo();
+
+		assertNull(executionInfo.getPagingState());
+		assertNull(executionInfo.getSafePagingState());
+		assertTrue(executionInfo.getIncomingPayload().isEmpty());
+		assertNull(executionInfo.getTracingId());
+
+		final var error = assertThrows(IllegalStateException.class, executionInfo::getQueryTrace);
+		assertEquals("Tracing was disabled for this request", error.getMessage());
+
+		final var stage = executionInfo.getQueryTraceAsync().toCompletableFuture();
+		final var asyncError = assertThrows(CompletionException.class, stage::join);
+		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
 	}
 
 	@AfterAll

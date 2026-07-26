@@ -12,8 +12,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 public class SeaStarExecutionInfo implements ExecutionInfo {
 
@@ -52,9 +54,16 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 		return Collections.emptyList();
 	}
 
+	/**
+	 * SeaStar answers every query from memory in a single page, so there is never a next page to
+	 * fetch.
+	 *
+	 * @return {@code null}, always, which the driver defines as "there is no next page"
+	 */
 	@Override
+	@Nullable
 	public ByteBuffer getPagingState() {
-		throw new UnsupportedOperationException();
+		return null;
 	}
 
 	@Override
@@ -63,10 +72,14 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 		return List.of();
 	}
 
+	/**
+	 * There is no server to send a custom payload back, so the payload is always empty - the same
+	 * answer a live cluster gives when nothing set one.
+	 */
 	@Override
 	@NonNull
 	public Map<String, ByteBuffer> getIncomingPayload() {
-		throw new UnsupportedOperationException();
+		return Map.of();
 	}
 
 	@Override
@@ -74,15 +87,31 @@ public class SeaStarExecutionInfo implements ExecutionInfo {
 		return true;
 	}
 
+	/**
+	 * SeaStar never traces: there is no coordinator to record a trace and no {@code system_traces}
+	 * keyspace to read it back from. Tracing is therefore always disabled, which the driver reports
+	 * as a {@code null} tracing id.
+	 *
+	 * @return {@code null}, always
+	 */
 	@Override
+	@Nullable
 	public UUID getTracingId() {
-		throw new UnsupportedOperationException();
+		return null;
 	}
 
+	/**
+	 * Fails the same way the real driver does when {@link #getTracingId()} is {@code null}, so client
+	 * code that fetches a trace sees the familiar failure instead of an
+	 * {@link UnsupportedOperationException}.
+	 *
+	 * @return a stage failed with {@link IllegalStateException}, always
+	 */
 	@Override
 	@NonNull
 	public CompletionStage<QueryTrace> getQueryTraceAsync() {
-		throw new UnsupportedOperationException();
+		return CompletableFuture.failedFuture(
+			new IllegalStateException("Tracing was disabled for this request"));
 	}
 
 	@Override
