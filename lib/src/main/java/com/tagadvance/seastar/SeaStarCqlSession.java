@@ -25,8 +25,10 @@ import com.tagadvance.seastar.handlers.TruncateHandler;
 import com.tagadvance.seastar.handlers.UpdateHandler;
 import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -38,6 +40,8 @@ public class SeaStarCqlSession implements CqlSession {
 	private final AtomicReference<CqlIdentifier> keyspace = new AtomicReference<>();
 	private final SeaStarRequestProcessorRegistry registry;
 	private final CqlHandlerRegistry handlerRegistry;
+	private final AtomicBoolean closed = new AtomicBoolean();
+	private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
 
 	public SeaStarCqlSession(final @NonNull SeaStarDriverContext context,
 		final @Nullable CqlIdentifier keyspace) {
@@ -151,30 +155,56 @@ public class SeaStarCqlSession implements CqlSession {
 		return Optional.empty();
 	}
 
+	/**
+	 * Mirrors {@code DefaultSession#execute}: once the session is closed, the request is not
+	 * processed and the failure is reported through the processor, so a synchronous call throws
+	 * {@link IllegalStateException} while an asynchronous one returns a failed stage.
+	 */
 	@Override
 	public <RequestT extends Request, ResultT> ResultT execute(@NonNull final RequestT request,
 		final @NonNull GenericType<ResultT> resultType) {
 		final var processor = registry.processorFor(request, resultType);
 
-		return processor.process(request, this, context, context.getSessionName());
+		return closed.get() ? processor.newFailure(new IllegalStateException("Session is closed"))
+			: processor.process(request, this, context, context.getSessionName());
 	}
 
 	@Override
 	@NonNull
 	public CompletionStage<Void> closeFuture() {
-		return CompletableFuture.completedStage(null);
+		return closeFuture;
 	}
 
+	/**
+	 * Closes the session. The first call discards every keyspace held by the context and completes
+	 * {@link #closeFuture()}; subsequent calls are no-ops that return the same stage.
+	 *
+	 * <p>Dropping the keyspaces is deliberate: the storage model is named {@code Volatile*} because
+	 * it lives only for the session, and discarding it turns a leaked session into a loud, obvious
+	 * failure instead of a test that quietly reads another test's data. Note that this diverges from
+	 * the real driver, which keeps {@link #getMetadata()} readable after close - there the schema
+	 * belongs to the cluster, whereas here the session <em>is</em> the cluster.
+	 */
 	@Override
 	@NonNull
 	public CompletionStage<Void> closeAsync() {
-		return CompletableFuture.completedStage(null);
+		if (closed.compareAndSet(false, true)) {
+			Set.copyOf(context.getSeaStarKeyspaces().keySet())
+				.forEach(context::removeSeaStarKeyspace);
+			closeFuture.complete(null);
+		}
+
+		return closeFuture;
 	}
 
+	/**
+	 * SeaStar runs every request on the calling thread and completes it before returning, so there is
+	 * never an in-flight request to abort; a forced close is an ordinary close.
+	 */
 	@Override
 	@NonNull
 	public CompletionStage<Void> forceCloseAsync() {
-		return CompletableFuture.completedStage(null);
+		return closeAsync();
 	}
 
 	@NonNull
