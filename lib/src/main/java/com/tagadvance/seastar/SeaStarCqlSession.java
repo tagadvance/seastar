@@ -138,10 +138,17 @@ public class SeaStarCqlSession implements CqlSession {
 		keyspace.set(identifier);
 	}
 
+	/**
+	 * SeaStar collects no metrics. The driver's own contract for this method is "empty if metrics are
+	 * disabled", which is exactly SeaStar's situation, so client code that logs metrics when they are
+	 * available keeps working.
+	 *
+	 * @return {@link Optional#empty()}, always
+	 */
 	@Override
 	@NonNull
 	public Optional<Metrics> getMetrics() {
-		throw new UnsupportedOperationException("Metrics are not supported in SeaStarCqlSession");
+		return Optional.empty();
 	}
 
 	@Override

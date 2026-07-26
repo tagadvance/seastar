@@ -1425,6 +1425,13 @@ abstract class AbstractCqlSessionTest {
 		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
 	}
 
+	@Test
+	@Order(81)
+	@DisplayName("getMetrics is empty because metrics are disabled")
+	void testGetMetricsIsEmpty() {
+		assertTrue(session.getMetrics().isEmpty());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
