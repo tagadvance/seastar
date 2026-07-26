@@ -27,14 +27,17 @@ import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.PropertyDefinitions;
 import org.apache.cassandra.cql3.statements.UpdateStatement;
+import org.apache.cassandra.cql3.statements.schema.AlterKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.AlterTableStatement;
 import org.apache.cassandra.cql3.statements.schema.AlterTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateIndexStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement;
+import org.apache.cassandra.cql3.statements.schema.DropIndexStatement;
 import org.apache.cassandra.cql3.statements.schema.DropKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.DropTableStatement;
+import org.apache.cassandra.cql3.statements.schema.DropTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.cql3.statements.schema.KeyspaceAttributes;
 import org.apache.cassandra.db.marshal.CollectionType;
@@ -279,6 +282,22 @@ final class FieldBindings {
 		CreateIndexStatement.Raw.class, "ifNotExists", Boolean.class);
 	static final FieldBinding<ColumnIdentifier> INDEX_TARGET_COLUMN = FieldBinding.of(
 		IndexTarget.Raw.class, "column", ColumnIdentifier.class);
+	static final FieldBinding<QualifiedName> DROP_INDEX_NAME = FieldBinding.of(
+		DropIndexStatement.Raw.class, "name", QualifiedName.class);
+	static final FieldBinding<Boolean> DROP_INDEX_IF_EXISTS = FieldBinding.of(
+		DropIndexStatement.Raw.class, "ifExists", Boolean.class);
+
+	static final FieldBinding<UTName> DROP_TYPE_NAME = FieldBinding.of(DropTypeStatement.Raw.class,
+		"name", UTName.class);
+	static final FieldBinding<Boolean> DROP_TYPE_IF_EXISTS = FieldBinding.of(
+		DropTypeStatement.Raw.class, "ifExists", Boolean.class);
+
+	static final FieldBinding<String> ALTER_KEYSPACE_NAME = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "keyspaceName", String.class);
+	static final FieldBinding<KeyspaceAttributes> ALTER_KEYSPACE_ATTRIBUTES = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "attrs", KeyspaceAttributes.class);
+	static final FieldBinding<Boolean> ALTER_KEYSPACE_IF_EXISTS = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "ifExists", Boolean.class);
 
 	private FieldBindings() {
 		// hidden constructor

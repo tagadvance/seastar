@@ -218,6 +218,13 @@ public class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
+	public void removeIndex(final CqlIdentifier name) {
+		requireNonNull(name, "name must not be null");
+
+		writeLock(() -> indexes.remove(name));
+	}
+
+	@Override
 	@NonNull
 	public Map<CqlIdentifier, IndexMetadata> getIndexes() {
 		return readLockUnchecked(() -> Map.copyOf(indexes));
