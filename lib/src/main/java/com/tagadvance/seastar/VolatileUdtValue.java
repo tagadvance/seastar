@@ -10,6 +10,7 @@ import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
@@ -116,6 +117,33 @@ public class VolatileUdtValue implements SeaStarUdtValue {
 	@NonNull
 	public ProtocolVersion protocolVersion() {
 		return type.context().getProtocolVersion();
+	}
+
+	// Value equality, matching DefaultUdtValue. Without it a UDT read out of a row could never equal
+	// one built from a literal, so WHERE and IF comparisons on a UDT column would never match.
+	@Override
+	public boolean equals(final Object other) {
+		if (other == this) {
+			return true;
+		}
+		if (!(other instanceof UdtValue that)) {
+			return false;
+		}
+		if (!getType().equals(that.getType())) {
+			return false;
+		}
+
+		return readLockUnchecked(() -> IntStream.range(0, values.size())
+			.allMatch(i -> Objects.equals(getObject(i), that.getObject(i))));
+	}
+
+	@Override
+	public int hashCode() {
+		return readLockUnchecked(() -> {
+			final var fields = IntStream.range(0, values.size()).mapToObj(this::getObject).toList();
+
+			return Objects.hash(getType(), fields);
+		});
 	}
 
 	@Immutable
