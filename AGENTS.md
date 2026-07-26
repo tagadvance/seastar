@@ -39,9 +39,35 @@ Each SeaStar class is deliberately **analogous to** a driver-internal class (the
 1. `SeaStarCqlSession.execute(request, resultType)` → `SeaStarRequestProcessorRegistry.processorFor(...)` picks a `SeaStarRequestProcessor` by matching the result type (`Statement.SYNC`/`ASYNC`, prepare sync/async). Registered in `SeaStarBuiltInRequestProcessors`.
 2. Sync processors delegate to their async counterpart and block (`CompletableFutures.getUninterruptibly`).
 3. `SeaStarCqlRequestHandler.handle()` extracts the query string + bound values (from `SimpleStatement` or `SeaStarBoundStatement`), parses it via Cassandra's `QueryProcessor`, then dispatches to a `CqlHandler` through `CqlHandlerRegistry`.
-4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`) mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
+4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`) has the statement translated (see below), then mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
 
 There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are currently constructed inline in `SeaStarCqlRequestHandler`'s constructor (there's a TODO to move this out).
+
+### The translation layer
+Handlers do not read the parse tree. A statement is translated once, into a small model that names
+only columns, values and operators, and the handler works from that:
+
+- **`Targets`/`Target`** resolve the keyspace and table a statement names - the statement's own
+  keyspace, else the session's, then the keyspace, then the table - and report the three failures
+  (no keyspace, unknown keyspace, unknown table) identically for every statement. `Target` also owns
+  the primary key and partition key name sets. Every handler that addresses a table starts here.
+- **`Queries`/`Query`** translate a SELECT; **`Modifications`/`Modification`** translate an INSERT,
+  UPDATE or DELETE, into `Restriction`, `Assignment` and `Condition`. `Restrictions`, `Conditions`
+  and `Terms` do the pieces; `CqlOperator` is SeaStar's own operator enum.
+- Only these classes import `org.apache.cassandra.*`. A handler's remaining imports are
+  `CQLStatement` and the `Raw` type it is generic over, both of which come from the `CqlHandler`
+  interface rather than from reading a statement.
+
+The split is deliberate: **translation says what the statement is, the handler says whether it is
+allowed and what it does.** Resolving a column name to a position, a term to a value or an operator
+to a `CqlOperator` is translation. ALLOW FILTERING, "a primary key part is missing", "a PRIMARY KEY
+part was found in the SET part" and DISTINCT validation are the handler's, because they are rules
+about the store rather than about the statement.
+
+A restriction becomes a row predicate in exactly one place (`Restriction#toPredicate`), so the
+operators SeaStar does not evaluate yet - the range comparisons, CONTAINS, LIKE, IS NOT NULL - are
+carried through translation and rejected there. Implementing them, and the collection forms of
+`Assignment`, is a change to one file rather than to SELECT, UPDATE and DELETE separately.
 
 ### Reflection into Cassandra internals
 The `CQLStatement.Raw` parse-tree objects from `cassandra-all` expose much of their state only as package-private fields. Where a public accessor exists, handlers use it (`ModificationStatement.Parsed#getConditions()`, `ColumnCondition.Raw#getValue()`, `QualifiedStatement#keyspace()`/`name()`, `Selectable.RawIdentifier#toFieldIdentifier()`, `CreateTableStatement.Raw#keyspace()`/`table()`, `CreateKeyspaceStatement.Raw#keyspaceName`). What is left has no accessor and no alternative, and lives in one place:
@@ -71,7 +97,7 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 ## Adding a new CQL statement type
 
 1. Write a `CqlHandler<SomeRawStatement>` where `SomeRawStatement` is the `cassandra-all` parse-tree type (find it under `org.apache.cassandra.cql3.statements...`).
-2. Implement `canProcess` (instanceof check) and `processCql` (prefer a public accessor; where there is none, add a `FieldBinding` to `FieldBindings` and read through it; mutate the `Volatile*` model; return an `AsyncResultSet` via the `newAsyncResultSet` defaults on `CqlHandler`).
+2. Implement `canProcess` (instanceof check) and `processCql`. Resolve the table through `Targets` rather than by hand, and read the statement in the translation layer rather than in the handler: extend `Queries`/`Modifications`, or add a translator beside them, and add a `FieldBinding` to `FieldBindings` for any state with no public accessor. The handler then mutates the `Volatile*` model and returns an `AsyncResultSet` via the `newAsyncResultSet` defaults on `CqlHandler`.
 3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlRequestHandler`.
 4. Match real Cassandra's failure behavior — throw the same driver exception type (`AlreadyExistsException`, `InvalidQueryException`, …) that a live cluster would.
 
