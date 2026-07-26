@@ -15,7 +15,7 @@ git log --oneline main..final-push
 ./gradlew :lib:containerTest # needs Docker
 ```
 
-Last verified: 168 tests green locally, 95 green on the container.
+Last verified: 171 tests green locally (on JDK 17, 21 and 25), 98 green on the container.
 
 ### Done
 
