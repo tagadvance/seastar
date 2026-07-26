@@ -131,7 +131,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 				throw new UnsupportedOperationException(
 					"Unsupported select item %s".formatted(selectable));
 			}
-			final var name = CqlIdentifier.fromInternal(identifier.toString());
+			final var name = Selectables.toIdentifier(identifier);
 			final var index = table.firstIndexOf(name);
 			if (index < 0) {
 				throw new InvalidQueryException(coordinator,
