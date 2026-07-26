@@ -8,28 +8,30 @@ repositories {
     mavenCentral()
 }
 
+// Versions are pinned rather than dynamic: the handlers reflect into package-private
+// cassandra-all fields, so an unannounced upgrade can break the build with no code change.
 dependencies {
-    api("org.slf4j:slf4j-api:2.+")
-    api("jakarta.annotation:jakarta.annotation-api:3.0.0")
-    api("net.jcip:jcip-annotations:1.0")
+    api("org.slf4j:slf4j-api:2.0.17")
+    api("org.jspecify:jspecify:1.0.0")
+    // Annotations are documentation only; nothing reads them reflectively at runtime.
+    compileOnly("net.jcip:jcip-annotations:1.0")
     // cassandra-all is designed for running a Cassandra server/node
-    implementation("org.apache.cassandra:cassandra-all:5.+")
-    implementation("org.apache.cassandra:java-driver-core:4.+")
-    implementation("org.apache.cassandra:java-driver-query-builder:4.+")
+    implementation("org.apache.cassandra:cassandra-all:5.0.8")
+    implementation("org.apache.cassandra:java-driver-core:4.19.3")
+    implementation("org.apache.cassandra:java-driver-query-builder:4.19.3")
     implementation("com.google.guava:guava:33.5.0-jre")
-    implementation("com.google.code.gson:gson:2.+")
 }
 
 testing {
     suites {
         val test by getting(JvmTestSuite::class) {
-            useJUnitJupiter("6.+")
+            useJUnitJupiter("6.1.2")
             dependencies {
-                implementation("org.mockito:mockito-core:5.+")
-                implementation("org.mockito:mockito-junit-jupiter:5.+")
-                implementation("org.testcontainers:testcontainers:2.+")
-                implementation("org.testcontainers:testcontainers-junit-jupiter:2.+")
-                implementation("org.testcontainers:testcontainers-cassandra:2.+")
+                implementation("org.mockito:mockito-core:5.23.0")
+                implementation("org.mockito:mockito-junit-jupiter:5.23.0")
+                implementation("org.testcontainers:testcontainers:2.0.5")
+                implementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
+                implementation("org.testcontainers:testcontainers-cassandra:2.0.5")
             }
         }
     }
