@@ -4,6 +4,10 @@ plugins {
     signing
 }
 
+base {
+    archivesName = "seastar"
+}
+
 repositories {
     mavenCentral()
 }
