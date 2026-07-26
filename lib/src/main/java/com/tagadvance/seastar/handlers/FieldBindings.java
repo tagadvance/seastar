@@ -10,6 +10,7 @@ import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.FieldIdentifier;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Operator;
+import org.apache.cassandra.cql3.Ordering;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.Sets;
 import org.apache.cassandra.cql3.Term;
@@ -124,6 +125,19 @@ final class FieldBindings {
 		"name", FunctionName.class);
 	static final FieldBinding<List<Term.Raw>> FUNCTION_TERMS = FieldBinding.ofList(
 		FunctionCall.Raw.class, "terms");
+
+	/**
+	 * SELECT ORDER BY. {@code SelectStatement.Parameters#orderings} is public, but the elements it
+	 * holds publish nothing: {@code Ordering.Raw} and its {@code SingleColumn} expression keep the
+	 * column and the direction package-private, and {@code bind} - the only public reader - resolves
+	 * them against a {@code TableMetadata} SeaStar does not have.
+	 */
+	static final FieldBinding<Ordering.Raw.Expression> ORDERING_EXPRESSION = FieldBinding.of(
+		Ordering.Raw.class, "expression", Ordering.Raw.Expression.class);
+	static final FieldBinding<Ordering.Direction> ORDERING_DIRECTION = FieldBinding.of(
+		Ordering.Raw.class, "direction", Ordering.Direction.class);
+	static final FieldBinding<ColumnIdentifier> ORDERING_COLUMN = FieldBinding.of(
+		Ordering.Raw.SingleColumn.class, "column", ColumnIdentifier.class);
 
 	// Lightweight-transaction IF conditions. The condition's value has a public getValue().
 	static final FieldBinding<Operator> CONDITION_OPERATOR = FieldBinding.of(
