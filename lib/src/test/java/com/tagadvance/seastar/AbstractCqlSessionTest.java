@@ -1423,6 +1423,64 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("SELECT myColumn FROM foo.cased WHERE id = 1"));
 	}
 
+	@Test
+	@Order(81)
+	@DisplayName("An unqualified statement resolves its table against the session keyspace")
+	void testUnqualifiedStatementsUseSessionKeyspace() {
+		session.execute("USE foo");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.unqualified (id int PRIMARY KEY, name text)");
+
+		session.execute("INSERT INTO unqualified (id, name) VALUES (1, 'inserted')");
+		final var inserted = session.execute("SELECT * FROM unqualified").all();
+		assertEquals(1, inserted.size());
+		assertEquals("inserted", inserted.get(0).getString("name"));
+
+		session.execute("UPDATE unqualified SET name = 'updated' WHERE id = 1");
+		assertEquals("updated",
+			session.execute("SELECT name FROM unqualified WHERE id = 1").one().getString("name"));
+
+		session.execute("DELETE FROM unqualified WHERE id = 1");
+		assertNull(session.execute("SELECT name FROM unqualified WHERE id = 1").one());
+
+		session.execute("TRUNCATE unqualified");
+	}
+
+	@Test
+	@Order(82)
+	@DisplayName("An unqualified prepared statement exposes its variable and result definitions")
+	void testUnqualifiedPreparedMetadata() {
+		session.execute("USE foo");
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.unqualified_prepared (id int PRIMARY KEY, name text)");
+
+		final var prepared = session.prepare("SELECT name FROM unqualified_prepared WHERE id = ?");
+
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(1, variables.size());
+		assertEquals("id", variables.get(0).getName().asInternal());
+		assertEquals(DataTypes.INT, variables.get(0).getType());
+
+		final var result = prepared.getResultSetDefinitions();
+		assertEquals(1, result.size());
+		assertTrue(result.contains("name"));
+	}
+
+	@Test
+	@Order(83)
+	@DisplayName("A statement naming an unknown keyspace throws InvalidQueryException")
+	void testUnknownKeyspace() {
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("SELECT * FROM no_such_keyspace.people"));
+		assertThrows(InvalidQueryException.class, () -> session.execute(
+			"INSERT INTO no_such_keyspace.people (id, name) VALUES (1, 'x')"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("UPDATE no_such_keyspace.people SET name = 'x' WHERE id = 1"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("DELETE FROM no_such_keyspace.people WHERE id = 1"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("TRUNCATE no_such_keyspace.people"));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

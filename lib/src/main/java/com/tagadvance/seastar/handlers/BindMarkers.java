@@ -74,7 +74,10 @@ public final class BindMarkers {
 			return EMPTY;
 		}
 
-		final var keyspace = Optional.ofNullable(qualified.keyspace())
+		// keyspace() throws rather than returning null when the statement was never qualified.
+		final var keyspace = Optional.of(qualified)
+			.filter(QualifiedStatement::isFullyQualified)
+			.map(QualifiedStatement::keyspace)
 			.map(CqlIdentifier::fromInternal)
 			.or(() -> Optional.ofNullable(sessionKeyspace))
 			.orElse(null);
