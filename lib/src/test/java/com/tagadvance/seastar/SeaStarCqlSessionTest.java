@@ -55,6 +55,35 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 	}
 
 	/**
+	 * Not shared with {@link ContainerCqlSessionTest}: the cache under test is SeaStar's own, and a
+	 * live cluster keeps prepared statements current through the protocol's result metadata id
+	 * instead. Unlike the UDT test above, the event is not fired by hand - {@code ALTER TABLE} is
+	 * what has to announce it.
+	 */
+	@Test
+	@DisplayName("ALTER TABLE evicts cached prepared statements naming the altered table")
+	void testPreparedStatementEvictedOnTableChange() throws Exception {
+		try (final var session = SeaStarCqlSession.builder().build()) {
+			final var context = session.getContext();
+			session.execute("CREATE KEYSPACE ks WITH replication = "
+				+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
+			session.execute("CREATE TABLE ks.people (id int PRIMARY KEY, name text)");
+
+			final var processor = new SeaStarCqlPrepareAsyncProcessor(Optional.of(context));
+			final var request = new DefaultPrepareRequest("SELECT * FROM ks.people WHERE id = ?");
+			processor.process(request, session, context, "test").toCompletableFuture().get();
+
+			// Hold a strong reference so the weak-valued cache cannot drop it before the event.
+			final var cached = processor.getCache().getIfPresent(request);
+			assertNotNull(cached);
+
+			session.execute("ALTER TABLE ks.people ADD nickname text");
+
+			assertNull(processor.getCache().getIfPresent(request));
+		}
+	}
+
+	/**
 	 * Not shared with {@link ContainerCqlSessionTest}: a live cluster does have a token ring, so it
 	 * answers this with a populated {@link com.datastax.oss.driver.api.core.metadata.TokenMap}.
 	 */

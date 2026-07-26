@@ -38,6 +38,27 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	void addColumn(final SeaStarColumn column);
 
 	/**
+	 * Adds a column where a live node keeps it - after the primary key columns, in alphabetical order
+	 * among the rest - and opens a slot for it in every existing row, filled with {@code null}. This
+	 * is {@code ALTER TABLE ... ADD}; {@link #addColumn(SeaStarColumn)} appends and is for building a
+	 * table that has no rows yet.
+	 */
+	SeaStarColumn insertColumn(CqlIdentifier name, DataType type, boolean isStatic);
+
+	/**
+	 * Removes a column and its slot from every existing row, discarding the values it held. This is
+	 * {@code ALTER TABLE ... DROP}; re-adding the column afterwards brings it back empty, as it does
+	 * on a live node.
+	 */
+	void removeColumn(CqlIdentifier name);
+
+	/**
+	 * Renames a column in place, keeping its position, its type and its place in the partition or
+	 * clustering key. Row values are positional, so nothing about them changes.
+	 */
+	void renameColumn(CqlIdentifier from, CqlIdentifier to);
+
+	/**
 	 * Marks an already-added column as part of the partition key. Partition key columns are ordered
 	 * in the sequence they are marked.
 	 */

@@ -9,6 +9,7 @@ import com.datastax.oss.driver.api.core.metrics.Metrics;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.google.errorprone.annotations.ThreadSafe;
+import com.tagadvance.seastar.handlers.AlterTableHandler;
 import com.tagadvance.seastar.handlers.AlterTypeHandler;
 import com.tagadvance.seastar.handlers.BatchHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
@@ -62,6 +63,7 @@ public class SeaStarCqlSession implements CqlSession {
 			new CreateTypeHandler(this::getKeyspace),
 			new AlterTypeHandler(this::getKeyspace),
 			new CreateTableHandler(this::getKeyspace),
+			new AlterTableHandler(this::getKeyspace),
 			new CreateIndexHandler(this::getKeyspace),
 			new DropTableHandler(this::getKeyspace),
 			new DropKeyspaceHandler(this::getKeyspace, this::setKeyspace),

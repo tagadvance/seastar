@@ -33,7 +33,9 @@ public class VolatileRow implements SeaStarRow {
 		final @NonNull SeaStarTable table, final @NonNull List<Object> data) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.table = requireNonNull(table, "table must not be null");
-		this.data = validate(data);
+		// A copy, and a mutable one: ALTER TABLE ADD and DROP open and close a slot in every row, and
+		// the caller's list may be immutable (SeaStarTable#addRow(Object...) hands over a List.of).
+		this.data = new ArrayList<>(validate(data));
 		this.attachmentPoint = context;
 	}
 
@@ -73,6 +75,22 @@ public class VolatileRow implements SeaStarRow {
 		table.readLock(() -> writeLock(() -> {
 			data.set(i, value);
 		}));
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>Takes only this row's lock: the table holds its own write lock across the whole column
+	 * change, so taking it again here would be redundant.
+	 */
+	@Override
+	public void insertValue(final int i, final @Nullable Object value) {
+		writeLock(() -> data.add(i, value));
+	}
+
+	@Override
+	public void removeValue(final int i) {
+		writeLock(() -> data.remove(i));
 	}
 
 	@Override
