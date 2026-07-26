@@ -19,7 +19,6 @@ import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
 import com.tagadvance.seastar.SeaStarAsyncResultSet;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
-import com.tagadvance.seastar.SeaStarTable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
