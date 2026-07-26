@@ -24,6 +24,7 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
+import org.apache.cassandra.cql3.MultiColumnRelation;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
@@ -184,12 +185,39 @@ public final class BindMarkers {
 		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var update : FieldBindings.UPDATE_UPDATES.require(raw)) {
 			final var column = requireColumn(table, update.left.toString(), coordinator);
-			if (update.right instanceof Operation.SetValue setValue) {
-				putIfMarker(FieldBindings.SET_VALUE.require(setValue), column, markers);
-			}
+			updateTerms(update.right).forEach(term -> putIfMarker(term, column, markers));
 		}
 		collectWhere(table, FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations, markers,
 			coordinator);
+	}
+
+	/**
+	 * The terms one {@code SET} item is written with. A marker inside a collection or element form
+	 * is typed as the whole column, which is coarser than a cluster types it, but leaving it out
+	 * would put a gap in the bind indices and cost the statement its variable definitions entirely.
+	 */
+	private static List<Term.Raw> updateTerms(final Operation.RawUpdate raw) {
+		if (raw instanceof Operation.SetValue setValue) {
+			return List.of(FieldBindings.SET_VALUE.require(setValue));
+		}
+		if (raw instanceof Operation.Addition addition) {
+			return List.of(FieldBindings.ADDITION_VALUE.require(addition));
+		}
+		if (raw instanceof Operation.Substraction subtraction) {
+			return List.of(FieldBindings.SUBTRACTION_VALUE.require(subtraction));
+		}
+		if (raw instanceof Operation.Prepend prepend) {
+			return List.of(FieldBindings.PREPEND_VALUE.require(prepend));
+		}
+		if (raw instanceof Operation.SetElement setElement) {
+			return List.of(FieldBindings.SET_ELEMENT_SELECTOR.require(setElement),
+				FieldBindings.SET_ELEMENT_VALUE.require(setElement));
+		}
+		if (raw instanceof Operation.SetField setField) {
+			return List.of(FieldBindings.SET_FIELD_VALUE.require(setField));
+		}
+
+		return List.of();
 	}
 
 	private static void collectSelect(final SeaStarTable table,
@@ -206,6 +234,14 @@ public final class BindMarkers {
 	private static void collectWhere(final SeaStarTable table, final List<Relation> relations,
 		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var relation : relations) {
+			if (relation instanceof MultiColumnRelation multi) {
+				// A multi-column relation compares a tuple of clustering columns, so its markers sit
+				// inside a tuple literal rather than beside the column they stand for.
+				multi.getEntities()
+					.forEach(entity -> requireColumn(table, entity.toString(), coordinator));
+
+				continue;
+			}
 			if (!(relation instanceof SingleColumnRelation single)) {
 				continue;
 			}

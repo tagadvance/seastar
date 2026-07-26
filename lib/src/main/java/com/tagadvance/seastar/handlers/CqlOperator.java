@@ -57,6 +57,21 @@ enum CqlOperator {
 		};
 	}
 
+	/**
+	 * Whether this operator pins each column it restricts to a value, which is what Cassandra
+	 * requires of a partition key and of every clustering column but the deepest restricted one.
+	 */
+	boolean isEquality() {
+		return this == EQ || this == IN;
+	}
+
+	/**
+	 * Whether this operator bounds a range rather than naming a value.
+	 */
+	boolean isSlice() {
+		return this == LT || this == LTE || this == GT || this == GTE;
+	}
+
 	@Override
 	public String toString() {
 		return symbol;

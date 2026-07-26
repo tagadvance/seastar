@@ -1792,15 +1792,15 @@ abstract class AbstractCqlSessionTest {
 	@Order(110)
 	@DisplayName("A partition reads back in clustering order, and LIMIT applies to that order")
 	void testClusteringOrder() {
-		session.execute("CREATE TABLE IF NOT EXISTS foo.evt (pk int, ck int, v text, "
+		session.execute("CREATE TABLE IF NOT EXISTS foo.evt_order (pk int, ck int, v text, "
 			+ "PRIMARY KEY (pk, ck)) WITH CLUSTERING ORDER BY (ck DESC)");
-		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 2, 'b')");
-		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 1, 'a')");
-		session.execute("INSERT INTO foo.evt (pk, ck, v) VALUES (1, 3, 'c')");
+		session.execute("INSERT INTO foo.evt_order (pk, ck, v) VALUES (1, 2, 'b')");
+		session.execute("INSERT INTO foo.evt_order (pk, ck, v) VALUES (1, 1, 'a')");
+		session.execute("INSERT INTO foo.evt_order (pk, ck, v) VALUES (1, 3, 'c')");
 
-		assertEquals(List.of(3, 2, 1), clustering("SELECT ck FROM foo.evt WHERE pk = 1"));
+		assertEquals(List.of(3, 2, 1), clustering("SELECT ck FROM foo.evt_order WHERE pk = 1"));
 		// The limit takes the first rows of the ordered partition, not the first ones written.
-		assertEquals(List.of(3, 2), clustering("SELECT ck FROM foo.evt WHERE pk = 1 LIMIT 2"));
+		assertEquals(List.of(3, 2), clustering("SELECT ck FROM foo.evt_order WHERE pk = 1 LIMIT 2"));
 	}
 
 	@Test
@@ -1959,6 +1959,382 @@ abstract class AbstractCqlSessionTest {
 		}
 
 		return hex.toString();
+	}
+
+	// The query engine: WHERE restrictions, the rules about which of them a table will answer, the
+	// UPDATE assignment forms and counters.
+
+	/**
+	 * A table with a two-part clustering key, which is what the restriction rules are about: a
+	 * partition to reach and clustering columns to walk left to right.
+	 */
+	private void createEventTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.evt "
+			+ "(pk int, ck1 int, ck2 int, v text, PRIMARY KEY ((pk), ck1, ck2))");
+		Stream.of("(1, 1, 1, 'a')", "(1, 1, 2, 'b')", "(1, 2, 1, 'c')", "(1, 3, 1, 'd')",
+				"(2, 1, 1, 'e')")
+			.forEach(values -> session.execute(
+				"INSERT INTO foo.evt (pk, ck1, ck2, v) VALUES " + values));
+	}
+
+	private void createCollectionTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.writes (id int PRIMARY KEY, l list<int>, "
+			+ "s set<int>, m map<text, int>, n text)");
+	}
+
+	/**
+	 * The values of one column of a query's result, sorted, because which order rows come back in is
+	 * a different question from which rows come back.
+	 */
+	private List<String> texts(final String cql) {
+		return session.execute(cql).all().stream().map(row -> row.getString(0)).sorted().toList();
+	}
+
+	private List<Integer> ints(final String cql) {
+		return session.execute(cql).all().stream().map(row -> row.getInt(0)).sorted().toList();
+	}
+
+	/**
+	 * Asserts that a statement is rejected as invalid and that the message says what was at fault.
+	 * The wording is Cassandra's own and differs between versions; the name does not.
+	 */
+	private void assertInvalid(final String cql, final String named) {
+		final var error = assertThrows(InvalidQueryException.class, () -> session.execute(cql),
+			"expected to be rejected: " + cql);
+		assertTrue(error.getMessage().contains(named),
+			"expected the message for [%s] to name %s but it was: %s".formatted(cql, named,
+				error.getMessage()));
+	}
+
+	@Test
+	@Order(120)
+	@DisplayName("A range on a clustering column selects the rows inside it")
+	void testClusteringRange() {
+		createEventTable();
+
+		assertEquals(List.of("c", "d"), texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 > 1"));
+		assertEquals(List.of("a", "b", "c"), texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 <= 2"));
+		assertEquals(List.of("c"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 > 1 AND ck1 < 3"));
+		assertEquals(List.of("b"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 = 1 AND ck2 > 1"));
+	}
+
+	@Test
+	@Order(121)
+	@DisplayName("A multi-column relation compares the clustering columns lexicographically")
+	void testMultiColumnRelation() {
+		createEventTable();
+
+		assertEquals(List.of("b", "c", "d"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND (ck1, ck2) > (1, 1)"));
+		assertEquals(List.of("a", "b"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND (ck1, ck2) < (2, 1)"));
+		assertEquals(List.of("a", "c"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND (ck1, ck2) IN ((1, 1), (2, 1))"));
+		// A multi-column relation names clustering columns, in key order, and nothing else.
+		assertInvalid("SELECT * FROM foo.evt WHERE (pk, ck1) = (1, 1)", "pk");
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND (ck2, ck1) > (1, 1)", "ck");
+	}
+
+	@Test
+	@Order(122)
+	@DisplayName("Clustering columns are restricted left to right, with a range only on the last")
+	void testClusteringPrefixRules() {
+		createEventTable();
+
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND ck2 = 1", "ck2");
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND ck1 > 1 AND ck2 > 1", "ck2");
+		// ALLOW FILTERING is Cassandra's way of saying "scan", and a scan has no prefix to respect.
+		assertEquals(List.of("a", "c", "d", "e"),
+			texts("SELECT v FROM foo.evt WHERE ck2 = 1 ALLOW FILTERING"));
+		assertEquals(List.of("d"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 > 2 AND ck2 > 0 ALLOW FILTERING"));
+		// IN pins a column just as = does, so a range may still follow it.
+		assertEquals(List.of("b"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 IN (1, 2) AND ck2 > 1"));
+	}
+
+	@Test
+	@Order(123)
+	@DisplayName("A query that cannot reach one partition needs ALLOW FILTERING")
+	void testFilteringRules() {
+		createEventTable();
+		session.execute("CREATE TABLE IF NOT EXISTS foo.two_part "
+			+ "(pk1 int, pk2 int, v text, PRIMARY KEY ((pk1, pk2)))");
+		session.execute("INSERT INTO foo.two_part (pk1, pk2, v) VALUES (1, 2, 'x')");
+
+		Stream.of("SELECT v FROM foo.evt WHERE ck1 = 1", "SELECT v FROM foo.evt WHERE pk > 1",
+				"SELECT v FROM foo.evt WHERE pk = 1 AND v = 'a'",
+				"SELECT v FROM foo.two_part WHERE pk1 = 1")
+			.forEach(cql -> assertInvalid(cql, "ALLOW FILTERING"));
+
+		assertEquals(List.of("a", "b", "e"),
+			texts("SELECT v FROM foo.evt WHERE ck1 = 1 ALLOW FILTERING"));
+		assertEquals(List.of("e"), texts("SELECT v FROM foo.evt WHERE pk > 1 ALLOW FILTERING"));
+		assertEquals(List.of("x"), texts("SELECT v FROM foo.two_part WHERE pk1 = 1 ALLOW FILTERING"));
+		// The whole partition key pinned by = or IN reaches partitions without a scan.
+		assertEquals(List.of("x"), texts("SELECT v FROM foo.two_part WHERE pk1 = 1 AND pk2 = 2"));
+	}
+
+	@Test
+	@Order(124)
+	@DisplayName("A column restricted twice, one of them by equality, is rejected")
+	void testConflictingRestrictions() {
+		createEventTable();
+
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND ck1 = 1 AND ck1 = 2", "ck1");
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND ck1 = 1 AND ck1 > 0", "ck1");
+		assertInvalid("SELECT * FROM foo.evt WHERE pk = 1 AND ck1 > 1 AND ck1 > 2", "ck1");
+		// One lower bound and one upper bound is a range, not a conflict.
+		assertEquals(List.of("c"),
+			texts("SELECT v FROM foo.evt WHERE pk = 1 AND ck1 > 1 AND ck1 < 3"));
+	}
+
+	@Test
+	@Order(125)
+	@DisplayName("CONTAINS matches a collection's elements and CONTAINS KEY a map's keys")
+	void testContains() {
+		createCollectionTable();
+		session.execute("INSERT INTO foo.writes (id, l, s, m, n) VALUES "
+			+ "(1, [1, 2], {3}, {'a': 4}, 'text')");
+		session.execute("INSERT INTO foo.writes (id, l, s, m, n) VALUES "
+			+ "(2, [5], {6}, {'b': 7}, 'more')");
+
+		assertEquals(List.of(1), ints("SELECT id FROM foo.writes WHERE l CONTAINS 2 ALLOW FILTERING"));
+		assertEquals(List.of(2), ints("SELECT id FROM foo.writes WHERE s CONTAINS 6 ALLOW FILTERING"));
+		assertEquals(List.of(1), ints("SELECT id FROM foo.writes WHERE m CONTAINS 4 ALLOW FILTERING"));
+		assertEquals(List.of(2),
+			ints("SELECT id FROM foo.writes WHERE m CONTAINS KEY 'b' ALLOW FILTERING"));
+		assertEquals(List.of(),
+			ints("SELECT id FROM foo.writes WHERE l CONTAINS 99 ALLOW FILTERING"));
+
+		assertInvalid("SELECT id FROM foo.writes WHERE n CONTAINS 'text' ALLOW FILTERING", "n");
+		assertInvalid("SELECT id FROM foo.writes WHERE l CONTAINS KEY 1 ALLOW FILTERING", "l");
+		// CONTAINS reads the whole collection, so it is a scan whatever else is restricted.
+		assertInvalid("SELECT id FROM foo.writes WHERE id = 1 AND l CONTAINS 2", "ALLOW FILTERING");
+	}
+
+	@Test
+	@Order(126)
+	@DisplayName("An operator no table can answer is rejected rather than ignored")
+	void testUnanswerableOperators() {
+		createCollectionTable();
+
+		assertInvalid("SELECT id FROM foo.writes WHERE n LIKE 'te%' ALLOW FILTERING", "n");
+		assertInvalid("SELECT id FROM foo.writes WHERE n IS NOT NULL ALLOW FILTERING", "n");
+		assertInvalid("SELECT id FROM foo.writes WHERE id != 1 ALLOW FILTERING", "id");
+	}
+
+	@Test
+	@Order(127)
+	@DisplayName("DELETE removes a whole partition, and a range of clustering rows within one")
+	void testPartitionAndRangeDelete() {
+		createEventTable();
+
+		session.execute("DELETE FROM foo.evt WHERE pk = 1 AND ck1 > 2");
+		assertEquals(List.of("a", "b", "c"), texts("SELECT v FROM foo.evt WHERE pk = 1"));
+
+		session.execute("DELETE FROM foo.evt WHERE pk = 1 AND ck1 = 1");
+		assertEquals(List.of("c"), texts("SELECT v FROM foo.evt WHERE pk = 1"));
+
+		session.execute("DELETE FROM foo.evt WHERE pk = 1");
+		assertEquals(List.of(), texts("SELECT v FROM foo.evt WHERE pk = 1"));
+		assertEquals(List.of("e"), texts("SELECT v FROM foo.evt WHERE pk = 2"));
+	}
+
+	@Test
+	@Order(128)
+	@DisplayName("DELETE needs the whole partition key, and the whole primary key to clear a column")
+	void testDeleteRestrictionRules() {
+		createEventTable();
+
+		assertInvalid("DELETE FROM foo.evt WHERE ck1 = 1", "pk");
+		assertInvalid("DELETE FROM foo.evt WHERE pk = 1 AND v = 'a'", "v");
+		// Clearing a named column writes into a row, so it cannot address a range of them.
+		assertInvalid("DELETE v FROM foo.evt WHERE pk = 1", "columns");
+		assertInvalid("DELETE v FROM foo.evt WHERE pk = 1 AND ck1 > 1", "columns");
+
+		session.execute("DELETE v FROM foo.evt WHERE pk = 1 AND ck1 = 1 AND ck2 = 1");
+		final var row = session.execute(
+			"SELECT v FROM foo.evt WHERE pk = 1 AND ck1 = 1 AND ck2 = 1").one();
+		assertNotNull(row);
+		assertNull(row.getString("v"));
+	}
+
+	@Test
+	@Order(129)
+	@DisplayName("UPDATE needs the whole primary key pinned by equality or IN")
+	void testUpdateRestrictionRules() {
+		createEventTable();
+
+		assertInvalid("UPDATE foo.evt SET v = 'z' WHERE pk = 1", "ck1");
+		assertInvalid("UPDATE foo.evt SET v = 'z' WHERE pk = 1 AND ck1 = 1", "ck2");
+		assertInvalid("UPDATE foo.evt SET v = 'z' WHERE pk = 1 AND ck1 = 1 AND ck2 > 1", "Slice");
+		assertInvalid("UPDATE foo.evt SET v = 'z' WHERE ck1 = 1 AND ck2 = 1", "pk");
+		assertInvalid("UPDATE foo.evt SET v = 'z' WHERE pk = 1 AND ck1 = 1 AND ck2 = 1 AND v = 'a'",
+			"v");
+
+		session.execute("UPDATE foo.evt SET v = 'z' WHERE pk = 1 AND ck1 IN (1, 2) AND ck2 = 1");
+		assertEquals(List.of("b", "d", "z", "z"), texts("SELECT v FROM foo.evt WHERE pk = 1"));
+	}
+
+	@Test
+	@Order(130)
+	@DisplayName("A collection column is appended to, prepended to and discarded from")
+	void testCollectionAssignments() {
+		createCollectionTable();
+		session.execute("INSERT INTO foo.writes (id, l, s, m) VALUES (10, [2], {2}, {'b': 2})");
+
+		session.execute("UPDATE foo.writes SET l = l + [3] WHERE id = 10");
+		session.execute("UPDATE foo.writes SET l = [1] + l WHERE id = 10");
+		session.execute("UPDATE foo.writes SET s = s + {1, 3} WHERE id = 10");
+		session.execute("UPDATE foo.writes SET m = m + {'a': 1} WHERE id = 10");
+		session.execute("UPDATE foo.writes SET m['c'] = 3 WHERE id = 10");
+
+		var row = session.execute("SELECT * FROM foo.writes WHERE id = 10").one();
+		assertNotNull(row);
+		assertEquals(List.of(1, 2, 3), row.getList("l", Integer.class));
+		assertEquals(Set.of(1, 2, 3), row.getSet("s", Integer.class));
+		assertEquals(Map.of("a", 1, "b", 2, "c", 3), row.getMap("m", String.class, Integer.class));
+
+		session.execute("UPDATE foo.writes SET l = l - [2] WHERE id = 10");
+		session.execute("UPDATE foo.writes SET s = s - {2} WHERE id = 10");
+		// A map is discarded from by key, so the term is a set of keys.
+		session.execute("UPDATE foo.writes SET m = m - {'b'} WHERE id = 10");
+		session.execute("UPDATE foo.writes SET l[0] = 9 WHERE id = 10");
+
+		row = session.execute("SELECT * FROM foo.writes WHERE id = 10").one();
+		assertNotNull(row);
+		assertEquals(List.of(9, 3), row.getList("l", Integer.class));
+		assertEquals(Set.of(1, 3), row.getSet("s", Integer.class));
+		assertEquals(Map.of("a", 1, "c", 3), row.getMap("m", String.class, Integer.class));
+	}
+
+	@Test
+	@Order(131)
+	@DisplayName("An assignment form the column's type cannot take is rejected")
+	void testAssignmentTypeErrors() {
+		createCollectionTable();
+		session.execute("INSERT INTO foo.writes (id, l, n) VALUES (11, [1], 'text')");
+
+		assertInvalid("UPDATE foo.writes SET n = n + 'more' WHERE id = 11", "n");
+		assertInvalid("UPDATE foo.writes SET n['a'] = 1 WHERE id = 11", "n");
+		assertInvalid("UPDATE foo.writes SET s['a'] = 1 WHERE id = 11", "s");
+		assertInvalid("UPDATE foo.writes SET l[9] = 1 WHERE id = 11", "l");
+		assertInvalid("DELETE n['a'] FROM foo.writes WHERE id = 11", "n");
+	}
+
+	@Test
+	@Order(132)
+	@DisplayName("DELETE of one collection element leaves the rest of the collection alone")
+	void testElementDeletion() {
+		createCollectionTable();
+		session.execute("INSERT INTO foo.writes (id, l, s, m) VALUES "
+			+ "(12, [1, 2, 3], {1, 2}, {'a': 1, 'b': 2})");
+
+		session.execute("DELETE m['a'] FROM foo.writes WHERE id = 12");
+		session.execute("DELETE s[1] FROM foo.writes WHERE id = 12");
+		session.execute("DELETE l[0] FROM foo.writes WHERE id = 12");
+
+		final var row = session.execute("SELECT * FROM foo.writes WHERE id = 12").one();
+		assertNotNull(row);
+		assertEquals(List.of(2, 3), row.getList("l", Integer.class));
+		assertEquals(Set.of(2), row.getSet("s", Integer.class));
+		assertEquals(Map.of("b", 2), row.getMap("m", String.class, Integer.class));
+	}
+
+	@Test
+	@Order(133)
+	@DisplayName("A field of an unfrozen user defined type is written and cleared on its own")
+	void testUserDefinedTypeFieldAssignment() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.addr (street text, city text)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.udt_writes "
+			+ "(id int PRIMARY KEY, home addr, frozen_home frozen<addr>)");
+		session.execute("INSERT INTO foo.udt_writes (id, home, frozen_home) VALUES "
+			+ "(1, {street: 'Main', city: 'Anytown'}, {street: 'Main', city: 'Anytown'})");
+
+		session.execute("UPDATE foo.udt_writes SET home.city = 'Elsewhere' WHERE id = 1");
+		var home = session.execute("SELECT home FROM foo.udt_writes WHERE id = 1").one()
+			.getUdtValue("home");
+		assertNotNull(home);
+		assertEquals("Main", home.getString("street"));
+		assertEquals("Elsewhere", home.getString("city"));
+
+		session.execute("DELETE home.street FROM foo.udt_writes WHERE id = 1");
+		home = session.execute("SELECT home FROM foo.udt_writes WHERE id = 1").one()
+			.getUdtValue("home");
+		assertNotNull(home);
+		assertNull(home.getString("street"));
+		assertEquals("Elsewhere", home.getString("city"));
+
+		// A frozen value is one cell, so no field of it can be written on its own.
+		assertInvalid("UPDATE foo.udt_writes SET frozen_home.city = 'Nowhere' WHERE id = 1",
+			"frozen_home");
+		assertInvalid("DELETE frozen_home.city FROM foo.udt_writes WHERE id = 1", "frozen_home");
+		assertInvalid("UPDATE foo.udt_writes SET home.nope = 'x' WHERE id = 1", "nope");
+	}
+
+	@Test
+	@Order(134)
+	@DisplayName("A counter column is incremented and decremented, and cannot be set or inserted")
+	void testCounters() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.counters (pk int PRIMARY KEY, n counter)");
+
+		// A counter that has never been written counts as zero, so the first increment creates it.
+		session.execute("UPDATE foo.counters SET n = n + 3 WHERE pk = 1");
+		session.execute("UPDATE foo.counters SET n = n + 4 WHERE pk = 1");
+		session.execute("UPDATE foo.counters SET n = n - 2 WHERE pk = 1");
+
+		final var row = session.execute("SELECT n FROM foo.counters WHERE pk = 1").one();
+		assertNotNull(row);
+		assertEquals(5L, row.getLong("n"));
+
+		assertInvalid("UPDATE foo.counters SET n = 5 WHERE pk = 1", "n");
+		assertInvalid("INSERT INTO foo.counters (pk, n) VALUES (2, 1)", "counter");
+		assertInvalid("UPDATE foo.counters SET n = n + 1 WHERE pk = 1 IF n = 5", "n");
+
+		session.execute("DELETE FROM foo.counters WHERE pk = 1");
+		assertNull(session.execute("SELECT n FROM foo.counters WHERE pk = 1").one());
+	}
+
+	@Test
+	@Order(135)
+	@DisplayName("A counter column cannot be part of a key or share a table with an ordinary column")
+	void testCounterTableShape() {
+		assertInvalid("CREATE TABLE foo.counter_mixed (pk int PRIMARY KEY, n counter, t text)",
+			"counter");
+		assertInvalid("CREATE TABLE foo.counter_key (pk counter PRIMARY KEY, n int)", "pk");
+		assertInvalid(
+			"CREATE TABLE foo.counter_clustering (pk int, ck counter, n counter, PRIMARY KEY (pk, ck))",
+			"ck");
+		assertDoesNotThrow(() -> session.execute("CREATE TABLE IF NOT EXISTS foo.counter_pair "
+			+ "(pk int PRIMARY KEY, a counter, b counter)"));
+
+		// A table the statement was refused for was never created.
+		assertTrue(session.getMetadata().getKeyspace("foo").orElseThrow().getTable("counter_mixed")
+			.isEmpty());
+	}
+
+	@Test
+	@Order(136)
+	@DisplayName("A range compares by the column's type, and only types that have an order")
+	void testRangeUsesColumnType() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ordering "
+			+ "(id int PRIMARY KEY, b blob, i inet, d duration, l list<int>)");
+		session.execute("INSERT INTO foo.ordering (id, b, i) VALUES (1, 0x01, '10.0.0.1')");
+		session.execute("INSERT INTO foo.ordering (id, b, i) VALUES (2, 0x80, '200.0.0.1')");
+
+		// Bytes order unsigned, so 0x80 is above 0x7f rather than below it as a signed byte would be,
+		// and an address orders by its bytes, which InetAddress itself does not answer for.
+		assertEquals(List.of(2), ints("SELECT id FROM foo.ordering WHERE b > 0x7f ALLOW FILTERING"));
+		assertEquals(List.of(1, 2),
+			ints("SELECT id FROM foo.ordering WHERE i > '1.0.0.0' ALLOW FILTERING"));
+		assertEquals(List.of(2),
+			ints("SELECT id FROM foo.ordering WHERE i > '100.0.0.0' ALLOW FILTERING"));
+
+		assertInvalid("SELECT id FROM foo.ordering WHERE d > 1m ALLOW FILTERING", "d");
+		assertInvalid("SELECT id FROM foo.ordering WHERE l > [1] ALLOW FILTERING", "l");
 	}
 
 	@AfterAll
