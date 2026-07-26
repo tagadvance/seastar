@@ -55,6 +55,14 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 		this.keyspace = keyspace;
 	}
 
+	/**
+	 * Resolves and caches the definitions, so that a statement this session rejects is rejected by
+	 * {@code prepare()} itself.
+	 */
+	void primeDefinitions() {
+		definitions();
+	}
+
 	private BindMarkers.Definitions definitions() {
 		var local = definitions;
 		if (local == null) {
@@ -70,16 +78,17 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 		return local;
 	}
 
-	private BindMarkers.Definitions resolveDefinitions() {
+	/**
+	 * Resolves the statement's definitions, failing the way a live cluster fails a prepare that names
+	 * something that does not exist. {@link SeaStarCqlPrepareHandler} calls this eagerly so the
+	 * failure surfaces from {@code prepare()} rather than from a later
+	 * {@link #getVariableDefinitions()}.
+	 */
+	BindMarkers.Definitions resolveDefinitions() {
 		final var explicit = Optional.ofNullable(prepareRequest.getKeyspace()).orElse(keyspace);
-		try {
-			final var raw = CqlParsers.parse(context.getNode(), getQuery());
+		final var raw = CqlParsers.parse(context.getNode(), getQuery());
 
-			return BindMarkers.resolve(context, explicit, raw);
-		} catch (final RuntimeException e) {
-			return new BindMarkers.Definitions(EmptyColumnDefinitions.INSTANCE,
-				EmptyColumnDefinitions.INSTANCE, List.of());
-		}
+		return BindMarkers.resolve(context, explicit, raw);
 	}
 
 	@Override
@@ -106,16 +115,29 @@ public class SeaStarPreparedStatement implements PreparedStatement {
 		return definitions().partitionKeyIndices();
 	}
 
+	/**
+	 * An opaque digest of the result-set definitions, as a buffer positioned to be read.
+	 *
+	 * <p>The same instance is returned on every call, which is what the driver does: a caller that
+	 * consumes the buffer leaves it drained for the next one. Handing out a fresh duplicate would be
+	 * friendlier but would let code pass here and fail against a cluster. Read-only, so the contents
+	 * at least cannot be rewritten.
+	 */
 	@Override
 	public ByteBuffer getResultMetadataId() {
-		final var current = resultMetadataId;
-		if (current != null) {
-			return current;
+		var current = resultMetadataId;
+		if (current == null) {
+			synchronized (this) {
+				current = resultMetadataId;
+				if (current == null) {
+					final var hash = getResultSetDefinitions().hashCode();
+					current = ByteBuffer.allocate(Integer.BYTES).putInt(hash).flip().asReadOnlyBuffer();
+					resultMetadataId = current;
+				}
+			}
 		}
 
-		final var hash = getResultSetDefinitions().hashCode();
-
-		return ByteBuffer.allocate(4).putInt(hash);
+		return current;
 	}
 
 	@Override
