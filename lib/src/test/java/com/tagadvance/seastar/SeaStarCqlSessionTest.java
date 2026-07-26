@@ -53,6 +53,18 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 	}
 
 	/**
+	 * Not shared with {@link ContainerCqlSessionTest}: a live cluster does have a token ring, so it
+	 * answers this with a populated {@link com.datastax.oss.driver.api.core.metadata.TokenMap}.
+	 */
+	@Test
+	@DisplayName("getTokenMap is empty because SeaStar models a single node with no token ring")
+	void testTokenMapIsEmpty() {
+		try (final var session = SeaStarCqlSession.builder().build()) {
+			assertTrue(session.getMetadata().getTokenMap().isEmpty());
+		}
+	}
+
+	/**
 	 * Not shared with {@link ContainerCqlSessionTest}: a real cluster owns the schema independently
 	 * of the session, so its metadata stays readable after close. SeaStar's storage <em>is</em> the
 	 * session, so closing discards it and a leaked session fails loudly.
