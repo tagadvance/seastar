@@ -1432,6 +1432,36 @@ abstract class AbstractCqlSessionTest {
 		assertTrue(session.getMetrics().isEmpty());
 	}
 
+	@Test
+	@Order(83)
+	@DisplayName("A closed session rejects further requests and completes its close future")
+	void testClosedSessionRejectsRequests() {
+		final var doomed = createInstance();
+		doomed.execute("CREATE KEYSPACE IF NOT EXISTS closing WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		doomed.execute("CREATE TABLE IF NOT EXISTS closing.t (id int PRIMARY KEY)");
+
+		assertFalse(doomed.closeFuture().toCompletableFuture().isDone());
+
+		doomed.close();
+
+		assertTrue(doomed.closeFuture().toCompletableFuture().isDone());
+		assertDoesNotThrow(doomed::close);
+
+		final var syncError = assertThrows(IllegalStateException.class,
+			() -> doomed.execute("SELECT * FROM closing.t"));
+		assertEquals("Session is closed", syncError.getMessage());
+
+		final var prepareError = assertThrows(IllegalStateException.class,
+			() -> doomed.prepare("SELECT * FROM closing.t WHERE id = ?"));
+		assertEquals("Session is closed", prepareError.getMessage());
+
+		final var stage = doomed.executeAsync("SELECT * FROM closing.t").toCompletableFuture();
+		final var asyncError = assertThrows(CompletionException.class, stage::join);
+		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
+		assertEquals("Session is closed", asyncError.getCause().getMessage());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

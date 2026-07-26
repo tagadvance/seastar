@@ -2,6 +2,7 @@ package com.tagadvance.seastar;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
@@ -47,6 +48,25 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 
 			assertNull(processor.getCache().getIfPresent(request));
 		}
+	}
+
+	/**
+	 * Not shared with {@link ContainerCqlSessionTest}: a real cluster owns the schema independently
+	 * of the session, so its metadata stays readable after close. SeaStar's storage <em>is</em> the
+	 * session, so closing discards it and a leaked session fails loudly.
+	 */
+	@Test
+	@DisplayName("Closing a session discards its keyspaces")
+	void testCloseDiscardsKeyspaces() {
+		final var session = (SeaStarCqlSession) SeaStarCqlSession.builder().build();
+		session.execute("CREATE KEYSPACE ks WITH replication = "
+			+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
+		assertTrue(session.getContext().getSeaStarKeyspace("ks").isPresent());
+
+		session.close();
+
+		assertTrue(session.getContext().getSeaStarKeyspaces().isEmpty());
+		assertTrue(session.getMetadata().getKeyspaces().isEmpty());
 	}
 
 }
