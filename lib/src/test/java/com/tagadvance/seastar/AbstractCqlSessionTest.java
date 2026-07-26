@@ -1359,6 +1359,48 @@ abstract class AbstractCqlSessionTest {
 		assertEquals("Anytown", home.getUdtValue("place").getString("city"));
 	}
 
+	@Test
+	@Order(78)
+	@DisplayName("A UDT literal can be assigned by UPDATE and compared by an IF condition")
+	void testUpdateUdtLiteral() {
+		createUdtLiteralTable();
+		session.execute("INSERT INTO foo.lit_people (id, home) VALUES (10, {street: 'Oak', zip: 9})");
+
+		session.execute("UPDATE foo.lit_people SET home = {street: 'Pine', zip: 7} WHERE id = 10");
+		assertEquals("Pine", session.execute("SELECT home FROM foo.lit_people WHERE id = 10")
+			.one()
+			.getUdtValue("home")
+			.getString("street"));
+
+		final var rejected = session.execute("UPDATE foo.lit_people SET home = {street: 'Elm'} "
+			+ "WHERE id = 10 IF home = {street: 'Oak', zip: 9}");
+		assertFalse(rejected.wasApplied());
+
+		final var applied = session.execute("UPDATE foo.lit_people SET home = {street: 'Elm'} "
+			+ "WHERE id = 10 IF home = {street: 'Pine', zip: 7}");
+		assertTrue(applied.wasApplied());
+	}
+
+	@Test
+	@Order(79)
+	@DisplayName("A UDT literal can select and delete by a UDT partition key")
+	void testSelectAndDeleteByUdtLiteral() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.lit_addr (street text, zip int)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.lit_keyed "
+			+ "(home frozen<lit_addr> PRIMARY KEY, note text)");
+		session.execute(
+			"INSERT INTO foo.lit_keyed (home, note) VALUES ({street: 'Main', zip: 1}, 'a')");
+
+		final var row = session.execute(
+			"SELECT note FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}").one();
+		assertNotNull(row);
+		assertEquals("a", row.getString("note"));
+
+		session.execute("DELETE FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}");
+		assertNull(session.execute(
+			"SELECT note FROM foo.lit_keyed WHERE home = {street: 'Main', zip: 1}").one());
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();
