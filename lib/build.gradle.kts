@@ -138,9 +138,13 @@ publishing {
     }
 }
 
-signing {
-    val signingKey = System.getenv("GPG_SIGNING_KEY")
-    val signingPassword = System.getenv("GPG_SIGNING_PASSWORD")
-    useInMemoryPgpKeys(signingKey, signingPassword)
-    sign(publishing.publications)
+// Only configure signing when a key is actually present, so that every documented Gradle
+// command - publishToMavenLocal included - works for a contributor with no credentials.
+val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
+
+if (!signingKey.isNullOrBlank()) {
+    signing {
+        useInMemoryPgpKeys(signingKey, providers.environmentVariable("GPG_SIGNING_PASSWORD").orNull)
+        sign(publishing.publications)
+    }
 }
