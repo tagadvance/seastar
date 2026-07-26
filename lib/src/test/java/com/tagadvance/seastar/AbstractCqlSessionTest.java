@@ -17,6 +17,7 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
+import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
@@ -1430,6 +1431,33 @@ abstract class AbstractCqlSessionTest {
 	@DisplayName("getMetrics is empty because metrics are disabled")
 	void testGetMetricsIsEmpty() {
 		assertTrue(session.getMetrics().isEmpty());
+	}
+
+	@Test
+	@Order(82)
+	@DisplayName("Keyspace metadata reports the replication and durable writes it was created with")
+	void testKeyspaceReplicationMetadata() {
+		session.execute("CREATE KEYSPACE IF NOT EXISTS repl_default WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		session.execute("CREATE KEYSPACE IF NOT EXISTS repl_durable_off WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 2 } AND durable_writes = false");
+
+		final var defaults = keyspaceMetadata("repl_default");
+		assertEquals(
+			Map.of("class", "org.apache.cassandra.locator.SimpleStrategy", "replication_factor",
+				"1"), defaults.getReplication());
+		assertTrue(defaults.isDurableWrites());
+
+		final var durableOff = keyspaceMetadata("repl_durable_off");
+		assertEquals("2", durableOff.getReplication().get("replication_factor"));
+		assertFalse(durableOff.isDurableWrites());
+	}
+
+	private KeyspaceMetadata keyspaceMetadata(final String name) {
+		return session.getMetadata()
+			.getKeyspace(name)
+			.orElseThrow(() -> new IllegalStateException(
+				"keyspace %s is required to read its metadata".formatted(name)));
 	}
 
 	@Test

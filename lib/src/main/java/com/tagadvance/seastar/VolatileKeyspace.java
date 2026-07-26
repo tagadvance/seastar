@@ -26,12 +26,18 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	private final SeaStarDriverContext context;
 	private final CqlIdentifier name;
+	private final Map<String, String> replication;
+	private final boolean durableWrites;
 	private final Map<CqlIdentifier, SeaStarUserDefinedType> userDefinedTypes;
 	private final Map<CqlIdentifier, SeaStarTable> tables;
 
-	public VolatileKeyspace(final SeaStarDriverContext context, final CqlIdentifier name) {
+	public VolatileKeyspace(final SeaStarDriverContext context, final CqlIdentifier name,
+		final Map<String, String> replication, final boolean durableWrites) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.name = requireNonNull(name, "name must not be null");
+		this.replication = Map.copyOf(
+			requireNonNull(replication, "replication must not be null"));
+		this.durableWrites = durableWrites;
 		this.userDefinedTypes = new ConcurrentHashMap<>();
 		this.tables = new ConcurrentHashMap<>();
 	}
@@ -100,7 +106,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	@Override
 	public boolean isDurableWrites() {
-		return false;
+		return durableWrites;
 	}
 
 	@Override
@@ -108,10 +114,15 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 		return false;
 	}
 
+	/**
+	 * The replication options this keyspace was created with, in the form a live cluster reports
+	 * them: the {@code class} entry holds the fully qualified strategy class name, and every value is
+	 * a string.
+	 */
 	@Override
 	@NonNull
 	public Map<String, String> getReplication() {
-		throw new UnsupportedOperationException();
+		return replication;
 	}
 
 	@Override
