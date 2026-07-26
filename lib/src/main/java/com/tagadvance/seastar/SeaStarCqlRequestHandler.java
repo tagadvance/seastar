@@ -7,19 +7,14 @@ import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
-import com.datastax.oss.driver.api.core.tracker.RequestTracker;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * {@link SeaStarCqlRequestHandler} is analogous to {@link CqlRequestHandler}.
@@ -27,23 +22,14 @@ import org.slf4j.LoggerFactory;
 @ThreadSafe
 public class SeaStarCqlRequestHandler {
 
-	private static final Logger logger = LoggerFactory.getLogger(SeaStarCqlRequestHandler.class);
-
 	private final Statement<?> initialStatement;
-	private final SeaStarCqlSession session;
 	private final SeaStarDriverContext context;
-	private final RequestTracker requestTracker;
-	private final List<Throwable> errors;
-
 	private final CqlHandlerRegistry registry;
 
 	protected SeaStarCqlRequestHandler(final Statement<?> statement,
 		final SeaStarCqlSession session, final SeaStarDriverContext context) {
 		this.initialStatement = statement;
-		this.session = session;
 		this.context = context;
-		this.requestTracker = context.getRequestTracker();
-		this.errors = new LinkedList<>();
 		this.registry = session.handlerRegistry();
 	}
 
@@ -119,47 +105,5 @@ public class SeaStarCqlRequestHandler {
 
 		return values;
 	}
-
-//	private void logServerWarnings(Statement<?> statement, DriverExecutionProfile executionProfile,
-//		List<String> warnings) {
-//		// use the RequestLogFormatter to format the query
-//		StringBuilder statementString = new StringBuilder();
-//		context.getRequestLogFormatter()
-//			.appendRequest(statement,
-//				executionProfile.getInt(DefaultDriverOption.REQUEST_LOGGER_MAX_QUERY_LENGTH,
-//					RequestLogger.DEFAULT_REQUEST_LOGGER_MAX_QUERY_LENGTH),
-//				executionProfile.getBoolean(DefaultDriverOption.REQUEST_LOGGER_VALUES,
-//					RequestLogger.DEFAULT_REQUEST_LOGGER_SHOW_VALUES),
-//				executionProfile.getInt(DefaultDriverOption.REQUEST_LOGGER_MAX_VALUES,
-//					RequestLogger.DEFAULT_REQUEST_LOGGER_MAX_VALUES),
-//				executionProfile.getInt(DefaultDriverOption.REQUEST_LOGGER_MAX_VALUE_LENGTH,
-//					RequestLogger.DEFAULT_REQUEST_LOGGER_MAX_VALUE_LENGTH), statementString);
-//		// log each warning separately
-//		warnings.forEach((warning) -> LOG.warn("Query '{}' generated server side warning(s): {}",
-//			statementString, warning));
-//	}
-
-//	private ExecutionInfo buildExecutionInfo(NodeResponseCallback callback, Result resultMessage,
-//		Frame responseFrame, boolean schemaInAgreement) {
-//		ByteBuffer pagingState =
-//			(resultMessage instanceof Rows) ? ((Rows) resultMessage).getMetadata().pagingState
-//				: null;
-//		return new SeaStarExecutionInfo(callback.statement, callback.node,
-//			startedSpeculativeExecutionsCount.get(), callback.execution, errors, pagingState,
-//			responseFrame, schemaInAgreement, session, context, executionProfile);
-//	}
-//
-//	private void setFinalError(Statement<?> statement, Throwable error, Node node, int execution) {
-//		if (error instanceof DriverException de) {
-//			de.setExecutionInfo(
-//				new SeaStarExecutionInfo(statement, execution, errors, context, session, context));
-//		}
-//		if (result.completeExceptionally(error)) {
-//			if (!(requestTracker instanceof NoopRequestTracker)) {
-//				requestTracker.onError(statement, error, 0, executionProfile, node,
-//					handlerLogPrefix);
-//			}
-//		}
-//	}
 
 }
