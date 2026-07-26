@@ -99,7 +99,7 @@ public class SeaStarCqlRequestHandler {
 		}
 
 		try {
-			return registry.processorFor(raw)
+			return registry.processorFor(raw, executionInfo)
 				.processCql(context, executionInfo, raw, values)
 				.whenComplete((result, error) -> attach(executionInfo, error));
 		} catch (final RuntimeException e) {
