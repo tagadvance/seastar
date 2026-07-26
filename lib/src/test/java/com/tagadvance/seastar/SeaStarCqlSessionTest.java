@@ -1,5 +1,6 @@
 package com.tagadvance.seastar;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
 import com.datastax.oss.driver.internal.core.cql.DefaultPrepareRequest;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,19 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 
 		assertTrue(session.getContext().getSeaStarKeyspaces().isEmpty());
 		assertTrue(session.getMetadata().getKeyspaces().isEmpty());
+	}
+
+	@Test
+	@DisplayName("A keyspace created outside CQL reports Cassandra's default replication")
+	void testProgrammaticKeyspaceDefaults() {
+		try (final var session = (SeaStarCqlSession) SeaStarCqlSession.builder().build()) {
+			final var keyspace = session.getContext().newSeaStarKeyspace("direct");
+
+			assertEquals(
+				Map.of("class", "org.apache.cassandra.locator.SimpleStrategy", "replication_factor",
+					"1"), keyspace.getReplication());
+			assertTrue(keyspace.isDurableWrites());
+		}
 	}
 
 }

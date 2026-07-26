@@ -18,12 +18,30 @@ public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContex
 
 	Optional<SeaStarKeyspace> getSeaStarKeyspace(CqlIdentifier id);
 
+	/**
+	 * The replication a keyspace gets when it is created outside CQL, matching what
+	 * {@code CREATE KEYSPACE ... WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor':
+	 * 1}} produces on a live cluster.
+	 */
+	Map<String, String> DEFAULT_REPLICATION = Map.of("class",
+		"org.apache.cassandra.locator.SimpleStrategy", "replication_factor", "1");
+
+	/**
+	 * Cassandra's own default for {@code durable_writes}.
+	 */
+	boolean DEFAULT_DURABLE_WRITES = true;
+
 	default SeaStarKeyspace newSeaStarKeyspace(final String name) {
 		return newSeaStarKeyspace(CqlIdentifier.fromInternal(name));
 	}
 
 	default SeaStarKeyspace newSeaStarKeyspace(final CqlIdentifier id) {
-		final var keyspace = new VolatileKeyspace(this, id);
+		return newSeaStarKeyspace(id, DEFAULT_REPLICATION, DEFAULT_DURABLE_WRITES);
+	}
+
+	default SeaStarKeyspace newSeaStarKeyspace(final CqlIdentifier id,
+		final Map<String, String> replication, final boolean durableWrites) {
+		final var keyspace = new VolatileKeyspace(this, id, replication, durableWrites);
 		putSeaStarKeyspace(id, keyspace);
 
 		return keyspace;
