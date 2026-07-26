@@ -5,12 +5,14 @@ import com.tagadvance.seastar.SeaStarCqlSession;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.cassandra.cql3.CQLFragmentParser;
+import org.apache.cassandra.cql3.CqlParser;
 
 /**
  * One cold-JVM sample of SeaStar startup. Run by {@link ColdJvmBenchmark}, which forks a fresh JVM
  * per sample so the class loading that dominates the cold number is never warmed away.
  *
- * <p>Usage: {@code StartupProbe [plain|schema]}
+ * <p>Usage: {@code StartupProbe [plain|schema|clinitFirst|parseFirst]}
  */
 public final class StartupProbe {
 
@@ -22,13 +24,15 @@ public final class StartupProbe {
 	private StartupProbe() {
 	}
 
-	public static void main(final String[] args) {
+	public static void main(final String[] args) throws ClassNotFoundException {
 		final var mode = args.length > 0 ? args[0] : "plain";
 		switch (mode) {
 			case "plain" -> plain();
 			case "schema" -> schema();
+			case "clinitFirst" -> parserSplit(true);
+			case "parseFirst" -> parserSplit(false);
 			default -> throw new IllegalArgumentException(
-				"mode must be plain or schema but was " + mode);
+				"mode must be plain, schema, clinitFirst or parseFirst but was " + mode);
 		}
 	}
 
@@ -95,6 +99,52 @@ public final class StartupProbe {
 		Metrics.millis("build.schema.warm", median(builds));
 
 		session.close();
+	}
+
+	/**
+	 * The same cold start as {@link #plain()}, with the first query broken into the three things it
+	 * actually pays for: {@code QueryProcessor}'s static initializer, the ANTLR parser, and the
+	 * handler dispatch. It measures in situ - rather than by extrapolation - what SeaStar would save
+	 * by parsing through {@code CQLFragmentParser} instead of {@code QueryProcessor}.
+	 *
+	 * <p>The two initializers share several hundred classes, so whichever runs first is charged for
+	 * them. Running the split both ways brackets the answer: {@code clinitFirst} is the most that
+	 * could be attributed to {@code QueryProcessor}, and parse-first is the marginal cost of keeping
+	 * it once the parser - which is not optional - has been loaded anyway.
+	 */
+	private static void parserSplit(final boolean clinitFirst) throws ClassNotFoundException {
+		final var beforeBuild = System.nanoTime();
+		final var session = SeaStarCqlSession.builder().build();
+		Metrics.millis("build.cold", System.nanoTime() - beforeBuild);
+
+		if (clinitFirst) {
+			loadQueryProcessor();
+			parseDirect();
+		} else {
+			parseDirect();
+			loadQueryProcessor();
+		}
+
+		final var beforeQuery = System.nanoTime();
+		session.execute(FIRST_QUERY);
+		Metrics.millis("query.remainder", System.nanoTime() - beforeQuery);
+		Metrics.millis("jvm.to.first.query", uptimeNanos());
+
+		session.close();
+	}
+
+	private static void loadQueryProcessor() throws ClassNotFoundException {
+		final var before = System.nanoTime();
+		Class.forName("org.apache.cassandra.cql3.QueryProcessor", true,
+			StartupProbe.class.getClassLoader());
+		Metrics.millis("queryProcessor.clinit", System.nanoTime() - before);
+	}
+
+	private static void parseDirect() {
+		final var before = System.nanoTime();
+		final var raw = CQLFragmentParser.parseAny(CqlParser::query, FIRST_QUERY, "query");
+		Metrics.millis("parse.direct", System.nanoTime() - before);
+		Metrics.count("parse.direct.raw.hash", raw.hashCode() == 0 ? 0 : 1);
 	}
 
 	private static long uptimeNanos() {

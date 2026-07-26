@@ -8,6 +8,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * Runs a probe class in a fresh JVM {@code N} times and reports the distribution of every metric it
@@ -17,7 +19,10 @@ import java.util.Map;
  * JMH's warmup would erase the very thing under test; each sample therefore has to pay the cost from
  * a cold JVM. That is the whole reason this exists instead of a {@code @Benchmark} method.
  *
- * <p>Usage: {@code ColdJvmBenchmark <probe-class> <samples> [probe args...]}
+ * <p>Usage: {@code ColdJvmBenchmark <probe-class> <samples> [probe args...]}. One argument may list
+ * slash separated variants ({@code direct/queryProcessor}); the variants are then run round robin
+ * rather than one after the other, so that a machine warming up or throttling during the run biases
+ * all of them equally, and every metric is reported once per variant.
  */
 public final class ColdJvmBenchmark {
 
@@ -32,15 +37,42 @@ public final class ColdJvmBenchmark {
 		final var probe = args[0];
 		final var samples = Integer.parseInt(args[1]);
 		final var probeArgs = List.of(args).subList(2, args.length);
+		final var variants = variants(probeArgs);
 
 		final Map<String, List<Double>> samplesByMetric = new LinkedHashMap<>();
-		for (int i = 0; i < samples; i++) {
-			run(probe, probeArgs).forEach(
-				(name, value) -> samplesByMetric.computeIfAbsent(name, key -> new ArrayList<>())
-					.add(value));
+		for (int i = 0; i < samples * variants.size(); i++) {
+			final var variant = variants.get(i % variants.size());
+			final var prefix = variants.size() == 1 ? "" : variant.get(variantIndex(probeArgs)) + '.';
+			run(probe, variant).forEach(
+				(name, value) -> samplesByMetric.computeIfAbsent(prefix + name,
+					key -> new ArrayList<>()).add(value));
 		}
 
 		print(probe, probeArgs, samples, samplesByMetric);
+	}
+
+	private static int variantIndex(final List<String> probeArgs) {
+		return IntStream.range(0, probeArgs.size())
+			.filter(index -> probeArgs.get(index).contains("/"))
+			.findFirst()
+			.orElse(-1);
+	}
+
+	/**
+	 * Expands the one argument holding slash separated variants into one argument list per variant.
+	 */
+	private static List<List<String>> variants(final List<String> probeArgs) {
+		final var index = variantIndex(probeArgs);
+		if (index < 0) {
+			return List.of(probeArgs);
+		}
+
+		return Stream.of(probeArgs.get(index).split("/")).map(variant -> {
+			final var expanded = new ArrayList<>(probeArgs);
+			expanded.set(index, variant);
+
+			return List.copyOf(expanded);
+		}).toList();
 	}
 
 	private static Map<String, Double> run(final String probe, final List<String> probeArgs)
