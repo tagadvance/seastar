@@ -67,7 +67,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			if (query.distinct()) {
 				validateDistinct(query, projection, coordinator);
 			}
-			predicate = resolveWhere(query, coordinator);
+			predicate = RestrictionRules.forSelect(query, coordinator);
 			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
@@ -155,61 +155,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		}
 
 		return values;
-	}
-
-	private static Set<CqlIdentifier> indexedColumns(final SeaStarTable table) {
-		final Set<CqlIdentifier> columns = new HashSet<>();
-		for (final var index : table.getIndexes().values()) {
-			columns.add(CqlIdentifier.fromInternal(indexTargetColumn(index.getTarget())));
-		}
-
-		return columns;
-	}
-
-	private static String indexTargetColumn(final String target) {
-		// Collection index targets look like values(col)/keys(col)/entries(col)/full(col); a simple
-		// index target is just the column name.
-		final var open = target.indexOf('(');
-		if (open >= 0 && target.endsWith(")")) {
-			return target.substring(open + 1, target.length() - 1);
-		}
-
-		return target;
-	}
-
-	/**
-	 * The test a row has to pass to be returned, or null when the statement restricts nothing.
-	 *
-	 * <p>A restriction on a column that is neither part of the primary key nor served by a secondary
-	 * index means a scan, which Cassandra refuses without ALLOW FILTERING.
-	 */
-	private static Predicate<SeaStarRow> resolveWhere(final Query query, final Node coordinator) {
-		if (query.restrictions().isEmpty()) {
-			return null;
-		}
-
-		final var target = query.target();
-		final var primaryKey = target.primaryKeyNames();
-		final var indexed = indexedColumns(target.table());
-		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
-		for (final var restriction : query.restrictions()) {
-			// A secondary index permits an equality restriction on its column without ALLOW
-			// FILTERING; other non-primary-key restrictions still require it.
-			final var indexedEquality = indexed.contains(restriction.column())
-				&& restriction.operator() == CqlOperator.EQ;
-			if (!primaryKey.contains(restriction.column()) && !indexedEquality
-				&& !query.allowFiltering()) {
-				throw new InvalidQueryException(coordinator,
-					"Cannot execute this query as it might involve data filtering and thus may have "
-						+ "unpredictable performance. If you want to execute this query despite the "
-						+ "performance unpredictability, use ALLOW FILTERING");
-			}
-			predicates.add(restriction.toPredicate());
-		}
-
-		return predicates.stream().reduce(Predicate::and)
-			.orElseThrow(() -> new IllegalStateException(
-				"a WHERE clause with relations must yield at least one predicate"));
 	}
 
 	private static Row project(final Row source, final Projection projection) {
