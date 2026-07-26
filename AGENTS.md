@@ -44,7 +44,16 @@ Each SeaStar class is deliberately **analogous to** a driver-internal class (the
 There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are currently constructed inline in `SeaStarCqlRequestHandler`'s constructor (there's a TODO to move this out).
 
 ### Reflection into Cassandra internals
-The `CQLStatement.Raw` parse-tree objects from `cassandra-all` expose most of their state only as package-private fields. Handlers read them via `Reflections.getDeclaredField(obj, "fieldName", Type.class)` (e.g. `ifNotExists`, `rawColumns`, `rawType`). This is central and fragile: **upgrading `cassandra-all` can silently break handlers** when field names change. `SeaStarRawType` wraps the reflected raw-type objects.
+The `CQLStatement.Raw` parse-tree objects from `cassandra-all` expose much of their state only as package-private fields. Where a public accessor exists, handlers use it (`ModificationStatement.Parsed#getConditions()`, `ColumnCondition.Raw#getValue()`, `QualifiedStatement#keyspace()`/`name()`, `Selectable.RawIdentifier#toFieldIdentifier()`, `CreateTableStatement.Raw#keyspace()`/`table()`, `CreateKeyspaceStatement.Raw#keyspaceName`). What is left has no accessor and no alternative, and lives in one place:
+
+- **`FieldBindings`** holds every (declaring class, field name, expected type) triple, resolved once at class-init. Handlers call `FieldBindings.SOME_FIELD.require(raw)` for state a statement always carries, or `.find(raw)` where absence is a genuine answer. Nothing defaults silently: a required field that has been renamed throws a `ReflectionException` naming the field, the class and the cassandra-all version.
+- **`FieldBindingsTest`** walks the table and fails the build if any binding stops resolving. That is the gate on a `cassandra-all` bump - upgrade deliberately, and expect this test to tell you what moved. `cassandra-all` is pinned to an exact version for the same reason.
+- **`Reflections`** is the low-level resolver behind those bindings; `SeaStarRawType` wraps the parsed type objects.
+
+Two standing caveats:
+
+- **`setAccessible` works only because `cassandra-all` is a plain classpath jar** (unnamed module), so no `--add-opens` flags are needed. If Cassandra ever modularizes, this breaks.
+- **`Raw#prepare(ClientState)` is not a way out.** It returns fully typed objects with public accessors, but resolves tables through the process-global `Schema.instance` singleton. Spiked against 5.0.8: `CreateTableStatement.parse(...).build()` fails with `InaccessibleObjectException` (`java.base` does not open `java.io` to the unnamed module), `Schema.instance.transform(...)` fails with `NoClassDefFoundError: TimeUUID$Generator`, and `raw.prepare(...)` throws `KeyspaceNotDefinedException`. Making it work means requiring `--add-opens` in every consumer's test JVM, ~300ms+ of forced `DatabaseDescriptor` init, and a mutable global shared by every session - which breaks the "Volatile = lives only for the session" model outright. Rejected; the trigger to revisit is Cassandra shipping an embeddable offline schema API, not a cleverer flag.
 
 ### Storage model: `SeaStar*` interfaces vs `Volatile*` implementations
 Two layered abstractions:
@@ -62,7 +71,7 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 ## Adding a new CQL statement type
 
 1. Write a `CqlHandler<SomeRawStatement>` where `SomeRawStatement` is the `cassandra-all` parse-tree type (find it under `org.apache.cassandra.cql3.statements...`).
-2. Implement `canProcess` (instanceof check) and `processCql` (read fields via `Reflections` if package-private; mutate the `Volatile*` model; return an `AsyncResultSet` via the `newAsyncResultSet` defaults on `CqlHandler`).
+2. Implement `canProcess` (instanceof check) and `processCql` (prefer a public accessor; where there is none, add a `FieldBinding` to `FieldBindings` and read through it; mutate the `Volatile*` model; return an `AsyncResultSet` via the `newAsyncResultSet` defaults on `CqlHandler`).
 3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlRequestHandler`.
 4. Match real Cassandra's failure behavior — throw the same driver exception type (`AlreadyExistsException`, `InvalidQueryException`, …) that a live cluster would.
 
