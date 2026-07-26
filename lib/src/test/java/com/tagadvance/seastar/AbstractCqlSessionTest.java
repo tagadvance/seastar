@@ -20,6 +20,7 @@ import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.servererrors.SyntaxError;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.VectorType;
@@ -1721,6 +1722,70 @@ abstract class AbstractCqlSessionTest {
 		assertNotNull(row);
 		assertEquals("Ann", row.getString("name"));
 		assertEquals(List.of(3), row.getList("tags", Integer.class));
+	}
+
+	@Test
+	@Order(95)
+	@DisplayName("executeAsync reports every failure as a failed stage, never as a throw")
+	void testExecuteAsyncNeverThrows() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.async_fail (id int PRIMARY KEY, name text)");
+
+		final var queries = List.of("SELECT * FROM no_such_keyspace.t",
+			"SELECT * FROM foo.no_such_table", "SELECT no_such_col FROM foo.async_fail",
+			"INSERT INTO no_such_keyspace.t (id) VALUES (1)", "SELECT FROM WHERE",
+			"CREATE MATERIALIZED VIEW foo.mv AS SELECT * FROM foo.async_fail "
+				+ "WHERE id IS NOT NULL PRIMARY KEY (id)");
+
+		for (final var query : queries) {
+			final var stage = assertDoesNotThrow(() -> session.executeAsync(query),
+				"executeAsync must not throw for: " + query);
+
+			final var async = assertThrows(CompletionException.class,
+				() -> stage.toCompletableFuture().join(), "stage must fail for: " + query);
+			final var sync = assertThrows(RuntimeException.class, () -> session.execute(query),
+				"execute must throw for: " + query);
+
+			assertEquals(sync.getClass(), async.getCause().getClass(),
+				"execute and executeAsync must agree for: " + query);
+		}
+	}
+
+	@Test
+	@Order(96)
+	@DisplayName("prepare rejects a statement naming a keyspace, table or column that does not exist")
+	void testPrepareValidatesAgainstTheSchema() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.prep (id int PRIMARY KEY, name text)");
+
+		assertThrows(InvalidQueryException.class,
+			() -> session.prepare("SELECT * FROM foo.no_such_table WHERE id = ?"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.prepare("SELECT * FROM no_such_keyspace.prep WHERE id = ?"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.prepare("INSERT INTO foo.prep (id, no_such_col) VALUES (?, ?)"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.prepare("SELECT no_such_col FROM foo.prep WHERE id = ?"));
+		assertThrows(InvalidQueryException.class,
+			() -> session.prepare("UPDATE foo.prep SET no_such_col = ? WHERE id = ?"));
+		assertThrows(SyntaxError.class, () -> session.prepare("SELECT FROM WHERE"));
+
+		// A statement that addresses no table carries no markers, and preparing it succeeds.
+		assertDoesNotThrow(() -> session.prepare("TRUNCATE foo.prep"));
+		assertDoesNotThrow(() -> session.prepare("SELECT * FROM foo.prep WHERE id = ?"));
+	}
+
+	@Test
+	@Order(97)
+	@DisplayName("getResultMetadataId returns a readable, stable, read-only identifier")
+	void testResultMetadataIdIsReadable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.meta_id (id int PRIMARY KEY, name text)");
+		final var prepared = session.prepare("SELECT * FROM foo.meta_id WHERE id = ?");
+
+		final var id = prepared.getResultMetadataId();
+		assertTrue(id.remaining() > 0, "the identifier must not be an empty buffer");
+		assertTrue(id.isReadOnly());
+
+		// The id is opaque but stable: asking twice describes the same result metadata.
+		assertEquals(id, prepared.getResultMetadataId());
 	}
 
 	@AfterAll
