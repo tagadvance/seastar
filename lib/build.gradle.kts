@@ -116,6 +116,19 @@ jmh {
     (project.findProperty("jmhIncludes") as String?)?.let { includes = it.split(",") }
 }
 
+// gradle.properties turns on parallel execution, which would let two benchmark tasks share the CPU
+// and quietly ruin both. This service serializes them however they are invoked.
+abstract class BenchmarkExclusivity : BuildService<BuildServiceParameters.None>
+
+val benchmarkExclusivity =
+    gradle.sharedServices.registerIfAbsent("benchmarkExclusivity", BenchmarkExclusivity::class) {
+        maxParallelUsages = 1
+    }
+
+tasks.named<me.champeau.jmh.JMHTask>("jmh") {
+    usesService(benchmarkExclusivity)
+}
+
 /**
  * Cold-JVM harnesses. These fork a fresh JVM per sample rather than using JMH steady-state
  * measurement, because class loading is most of what a startup number is made of.
@@ -128,6 +141,7 @@ fun registerColdJvmBenchmark(name: String, probe: String, samples: Int, probeArg
         classpath = sourceSet.runtimeClasspath
         systemProperty("logback.configurationFile", logbackConfiguration)
         args(listOf(probe, samples.toString()) + probeArgs)
+        usesService(benchmarkExclusivity)
     }
 
 registerColdJvmBenchmark("startupBenchmark", "com.tagadvance.seastar.bench.StartupProbe", 20,
