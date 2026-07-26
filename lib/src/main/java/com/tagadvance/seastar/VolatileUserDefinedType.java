@@ -7,7 +7,9 @@ import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -18,7 +20,7 @@ import org.jspecify.annotations.NonNull;
 @ThreadSafe
 public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 
-	private final ReadWriteLock lock = new ReentrantReadWriteLock();
+	private final ReadWriteLock lock;
 
 	private final SeaStarDriverContext context;
 	private final CqlIdentifier keyspace;
@@ -30,11 +32,20 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	public VolatileUserDefinedType(final SeaStarDriverContext context, final CqlIdentifier keyspace,
 		final CqlIdentifier name, final boolean isFrozen,
 		final List<UserDefinedTypeDefinition> definitions) {
+		this(context, keyspace, name, isFrozen,
+			new ArrayList<>(requireNonNull(definitions, "definitions must not be null")),
+			new ReentrantReadWriteLock());
+	}
+
+	private VolatileUserDefinedType(final SeaStarDriverContext context, final CqlIdentifier keyspace,
+		final CqlIdentifier name, final boolean isFrozen,
+		final List<UserDefinedTypeDefinition> definitions, final ReadWriteLock lock) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace = requireNonNull(keyspace, "keyspace must not be null");
 		this.name = requireNonNull(name, "name must not be null");
 		this.isFrozen = isFrozen;
-		this.definitions = requireNonNull(definitions, "definitions must not be null");
+		this.definitions = definitions;
+		this.lock = lock;
 		this.attachmentPoint = context;
 	}
 
@@ -91,11 +102,29 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 			() -> definitions.stream().map(UserDefinedTypeDefinition::dataType).toList());
 	}
 
+	// Copies share the definitions and the lock so that ALTER TYPE stays visible through every frozen
+	// and non-frozen variant handed out as a column type, the way schema propagates on a cluster.
 	@Override
 	@NonNull
 	public UserDefinedType copy(final boolean newFrozen) {
-		return readLockUnchecked(
-			() -> new VolatileUserDefinedType(context, keyspace, name, newFrozen, definitions));
+		return new VolatileUserDefinedType(context, keyspace, name, newFrozen, definitions, lock);
+	}
+
+	@Override
+	public void addField(final CqlIdentifier name, final DataType dataType) {
+		writeLock(() -> definitions.add(new UserDefinedTypeDefinition(name, dataType)));
+	}
+
+	@Override
+	public void renameFields(final Map<CqlIdentifier, CqlIdentifier> renames) {
+		writeLock(() -> {
+			final var renamed = definitions.stream()
+				.map(definition -> new UserDefinedTypeDefinition(
+					renames.getOrDefault(definition.name(), definition.name()), definition.dataType()))
+				.toList();
+			definitions.clear();
+			definitions.addAll(renamed);
+		});
 	}
 
 	@Override
