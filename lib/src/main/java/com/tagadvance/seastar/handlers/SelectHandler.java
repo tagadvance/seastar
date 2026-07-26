@@ -61,6 +61,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final Projection projection;
 		final Predicate<SeaStarRow> predicate;
 		final int[] distinctKey;
+		final RowOrdering ordering;
 		try {
 			query = Queries.translate(context, getKeyspace, raw, coordinator, bindings);
 			projection = projection(query);
@@ -69,6 +70,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			}
 			predicate = resolveWhere(query, coordinator);
 			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
+			ordering = RowOrdering.of(query.target().table(), false);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -87,6 +89,9 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 				final Set<List<Object>> seen = new HashSet<>();
 				rows = rows.filter(row -> seen.add(partitionKeyValues(row, distinctKey)));
 			}
+			// Ordering comes before the limit: LIMIT takes the first n rows of the result Cassandra
+			// would return, not the first n rows that happen to have been inserted.
+			rows = ordering.sort(rows);
 			if (limit != null) {
 				rows = rows.limit(limit);
 			}
