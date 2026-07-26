@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
+import com.tagadvance.seastar.SeaStarKeyspace;
 import com.tagadvance.seastar.VolatileUserDefinedType;
 import com.tagadvance.seastar.VolatileUserDefinedType.UserDefinedTypeDefinition;
 import java.util.ArrayList;
@@ -15,7 +16,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.UTName;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement.Raw;
 
 public class CreateTypeHandler implements CqlHandler<Raw> {
@@ -35,9 +35,6 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
 		final var name = FieldBindings.CREATE_TYPE_NAME.require(raw);
-		final var keyspace = Optional.of(name)
-			.map(UTName::getKeyspace)
-			.orElseGet(() -> getKeyspace.get().map(CqlIdentifier::asInternal).orElse(null));
 		final var udtName = name.getStringTypeName();
 		final var ifNotExists = FieldBindings.CREATE_TYPE_IF_NOT_EXISTS.require(raw);
 		final var fieldNames = FieldBindings.CREATE_TYPE_FIELD_NAMES.require(raw);
@@ -46,18 +43,14 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 			.map(SeaStarRawType::new)
 			.toList();
 
-		if (keyspace == null) {
-			throw new InvalidQueryException(executionInfo.getCoordinator(),
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename");
+		final SeaStarKeyspace ksx;
+		try {
+			ksx = Targets.requireKeyspace(context, getKeyspace, name.getKeyspace(),
+				executionInfo.getCoordinator());
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
-		final var optionalKeyspace = context.getSeaStarKeyspace(keyspace);
-		if (optionalKeyspace.isEmpty()) {
-			throw new InvalidQueryException(executionInfo.getCoordinator(),
-				"Keyspace '%s' does not exist".formatted(keyspace));
-		}
-
-		final var ksx = optionalKeyspace.get();
+		final var keyspace = ksx.name().asInternal();
 		final var optionalUdt = ksx.getSeaStarUserDefinedType(udtName);
 		if (optionalUdt.isPresent()) {
 			if (ifNotExists) {

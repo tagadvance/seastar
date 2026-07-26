@@ -13,7 +13,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.cql3.statements.QualifiedStatement;
 import org.apache.cassandra.cql3.statements.TruncateStatement;
 
 @ThreadSafe
@@ -35,25 +34,14 @@ public class TruncateHandler implements CqlHandler<TruncateStatement> {
 		final ExecutionInfo executionInfo, final TruncateStatement raw, final Object... bindings) {
 		final var coordinator = executionInfo.getCoordinator();
 
-		final var keyspace = Optional.of(raw)
-			.filter(QualifiedStatement::isFullyQualified)
-			.map(TruncateStatement::keyspace)
-			.or(() -> getKeyspace.get().map(CqlIdentifier::asInternal))
-			.orElse(null);
-		if (keyspace == null) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename"));
+		final Target target;
+		try {
+			target = Targets.require(context, getKeyspace, raw, coordinator);
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
 
-		final var table = raw.name();
-		final var optionalTable = context.getSeaStarKeyspace(CqlIdentifier.fromInternal(keyspace))
-			.flatMap(ksx -> ksx.getSeaStarTable(CqlIdentifier.fromInternal(table)));
-		if (optionalTable.isEmpty()) {
-			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-				"Table '%s.%s' doesn't exist".formatted(keyspace, table)));
-		}
-
-		optionalTable.get().truncate();
+		target.table().truncate();
 
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 	}

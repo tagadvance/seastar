@@ -9,6 +9,7 @@ import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
+import com.tagadvance.seastar.SeaStarKeyspace;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -36,14 +37,6 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 	@Override
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Raw raw, final Object... bindings) {
-		final var keyspace = Optional.of(raw)
-			.map(Raw::keyspace)
-			.orElseGet(() -> getKeyspace.get().map(CqlIdentifier::asInternal).orElse(null));
-		if (keyspace == null) {
-			throw new InvalidQueryException(executionInfo.getCoordinator(),
-				"No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.tablename");
-		}
-
 		final var table = raw.table();
 		final var ifNotExists = FieldBindings.CREATE_TABLE_IF_NOT_EXISTS.require(raw);
 		final var useCompactStorage = FieldBindings.CREATE_TABLE_USE_COMPACT_STORAGE.require(raw);
@@ -52,13 +45,14 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 			throw new UnsupportedOperationException("COMPACT STORAGE is not supported");
 		}
 
-		final var optionalKeyspace = context.getSeaStarKeyspace(keyspace);
-		if (optionalKeyspace.isEmpty()) {
-			throw new InvalidQueryException(executionInfo.getCoordinator(),
-				"Keyspace '%s' does not exist".formatted(keyspace));
+		final SeaStarKeyspace ksx;
+		try {
+			ksx = Targets.requireKeyspace(context, getKeyspace, raw.keyspace(),
+				executionInfo.getCoordinator());
+		} catch (final InvalidQueryException e) {
+			return CompletableFuture.failedStage(e);
 		}
-
-		final var ksx = optionalKeyspace.get();
+		final var keyspace = ksx.name().asInternal();
 		final var optionalTable = ksx.getSeaStarTable(table);
 		if (optionalTable.isPresent()) {
 			if (ifNotExists) {
