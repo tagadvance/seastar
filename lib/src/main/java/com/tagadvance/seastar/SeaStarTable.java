@@ -91,6 +91,11 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 */
 	void addIndex(IndexMetadata index);
 
+	/**
+	 * Forgets the index of that name, if this table holds one.
+	 */
+	void removeIndex(CqlIdentifier name);
+
 	Stream<SeaStarRow> rows();
 
 	void drop();

@@ -2040,6 +2040,40 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("ALTER TABLE foo.alter_bad WITH comment = 'hello'"));
 	}
 
+	@Test
+	@Order(144)
+	@DisplayName("DROP INDEX removes the index, and reports one that is not there by name")
+	void testDropIndex() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.drop_index (id int PRIMARY KEY, name text)");
+		session.execute("CREATE INDEX IF NOT EXISTS drop_index_name_idx ON foo.drop_index (name)");
+		assertTrue(indexNames("drop_index").contains("drop_index_name_idx"));
+
+		session.execute("DROP INDEX foo.drop_index_name_idx");
+
+		assertFalse(indexNames("drop_index").contains("drop_index_name_idx"));
+		// An index that is not there is named in the failure, and forgiven by IF EXISTS.
+		assertMentions("drop_index_name_idx", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP INDEX foo.drop_index_name_idx")));
+		assertDoesNotThrow(() -> session.execute("DROP INDEX IF EXISTS foo.drop_index_name_idx"));
+		// A missing keyspace reads as a missing index, because the index is what was looked up.
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP INDEX nope.nope_idx")));
+		assertDoesNotThrow(() -> session.execute("DROP INDEX IF EXISTS nope.nope_idx"));
+	}
+
+	private Set<String> indexNames(final String table) {
+		return session.getMetadata()
+			.getKeyspace("foo")
+			.flatMap(keyspace -> keyspace.getTable(table))
+			.orElseThrow()
+			.getIndexes()
+			.keySet()
+			.stream()
+			.map(CqlIdentifier::asInternal)
+			.collect(Collectors.toSet());
+	}
+
 	private List<String> columnNames(final String cql) {
 		return StreamSupport.stream(session.execute(cql).getColumnDefinitions().spliterator(), false)
 			.map(ColumnDefinition::getName)
