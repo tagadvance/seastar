@@ -8,11 +8,15 @@ import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarKeyspace;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -63,8 +67,6 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 					new AlreadyExistsException(executionInfo.getCoordinator(), keyspace, table));
 			}
 		} else {
-			final var table1 = ksx.newSeaStarTable(table);
-
 			final var rawColumns = FieldBindings.CREATE_TABLE_RAW_COLUMNS.require(raw);
 			final var partitionKeyColumns = FieldBindings.CREATE_TABLE_PARTITION_KEY_COLUMNS.require(
 				raw);
@@ -86,6 +88,11 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 				.sorted(Comparator.comparing(ColumnIdentifier::toString))
 				.forEach(ordered::add);
 
+			// Every column is resolved and checked before the table exists, so a statement Cassandra
+			// would refuse outright leaves no half-built table behind.
+			final Map<ColumnIdentifier, DataType> types = new LinkedHashMap<>();
+			var counters = 0;
+			var others = 0;
 			for (final var key : ordered) {
 				final var value = rawColumns.get(key);
 				final var rawType = FieldBindings.COLUMN_RAW_TYPE.require(value);
@@ -95,9 +102,29 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 					throw new InvalidQueryException(executionInfo.getCoordinator(),
 						"Unknown type for column '%s'".formatted(key));
 				}
-				final var name = CqlIdentifier.fromInternal(key.toString());
-				table1.addColumn(name, dataType.get(), staticColumns.contains(key));
+				types.put(key, dataType.get());
+				final var isKey = partitionKeyColumns.contains(key) || clusteringColumns.contains(key);
+				// A counter is a delta rather than a value, so it can be neither part of a key nor
+				// stored beside an ordinary column: Cassandra replicates the two differently.
+				if (DataTypes.COUNTER.equals(dataType.get())) {
+					if (isKey) {
+						throw new InvalidQueryException(executionInfo.getCoordinator(),
+							"counter type is not supported for PRIMARY KEY column '%s'".formatted(key));
+					}
+					counters++;
+				} else if (!isKey) {
+					others++;
+				}
+				if (counters > 0 && others > 0) {
+					throw new InvalidQueryException(executionInfo.getCoordinator(),
+						"Cannot mix counter and non counter columns in the same table %s".formatted(
+							table));
+				}
 			}
+
+			final var table1 = ksx.newSeaStarTable(table);
+			types.forEach((key, dataType) -> table1.addColumn(
+				CqlIdentifier.fromInternal(key.toString()), dataType, staticColumns.contains(key)));
 
 			partitionKeyColumns.forEach(key ->
 				table1.markPartitionKey(CqlIdentifier.fromInternal(key.toString())));
