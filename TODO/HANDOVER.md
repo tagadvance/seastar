@@ -27,22 +27,12 @@ Last verified: 168 tests green locally, 95 green on the container.
 | f_plan | F8 (deps half) | gson + jakarta.annotation removed, jspecify declared, jcip -> compileOnly |
 | c_plan | C2 C3 C4 | `FieldBindings` binding table + `FieldBindingsTest` version guard; translation layer |
 | f_plan | F4 | shared `Targets` resolver |
-| a_plan | A1 A3 A5 A6 A7 A8 A10 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence) |
+| a_plan | A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence) |
 | d_plan | D2 D8 | collection/tuple/cast/NULL/function literals; bound values type-checked |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 
 ### Not done
 
-- **a_plan A2** - `executeAsync` still throws instead of returning a failed stage.
-  `SeaStarCqlRequestHandler#dispatch` catches `RuntimeException`, attaches execution info and
-  rethrows. Needs one funnel: async path always returns a failed stage, only the sync processor
-  unwraps and throws.
-- **a_plan A4** - `prepare()` accepts statements a live cluster rejects.
-  `SeaStarPreparedStatement#resolveDefinitions` swallows `RuntimeException` into empty definitions;
-  `BindMarkers.resolve` does the same. Must resolve eagerly in `SeaStarCqlPrepareHandler#handle` so
-  `prepare()` itself fails and the failure is not cached.
-- **a_plan A9** - `getResultMetadataId` returns an unflipped `ByteBuffer` (position == limit == 4, so
-  readers see empty) and never populates its cache field. Needs `flip()`, caching, read-only view.
 - **a_plan A11**, **d_plan D1 D3 D4 D5 D6 D7 D9**, **e_plan all**, **b_plan all**,
   **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
   **j_plan J3 J7 J8**.
@@ -67,6 +57,10 @@ Last verified: 168 tests green locally, 95 green on the container.
   against. Choose `-Xlint:all,-classfile` or accept permanent noise.
 - Cassandra uses a third error wording (`Keyspace '%s' doesn't exist`) for CREATE INDEX/CREATE TABLE
   specifically. F4 unified everything on the `ClientState` pair instead. Revisit deliberately.
+- `getResultMetadataId()` now returns the SAME buffer instance on every call, because that is what
+  the real driver does - a caller that consumes it drains it for the next one. Handing out a
+  duplicate would be friendlier but would let code pass here and fail against a cluster. The
+  container proved the driver's behavior; a defensive copy was the original guess and was wrong.
 
 ## Traps that have already cost time
 
