@@ -1,15 +1,18 @@
 package com.tagadvance.seastar;
 
+import com.datastax.oss.driver.api.core.DriverException;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.BatchStatement;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
+import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
@@ -75,22 +78,35 @@ public class SeaStarCqlRequestHandler {
 					statement.getClass().getSimpleName()));
 		}
 
+		final var node = context.getNode();
+		final var executionInfo = new SeaStarExecutionInfo(node, statement);
+
 		final CQLStatement.Raw raw;
 		try {
 			raw = QueryProcessor.parseStatement(query);
 		} catch (final Exception e) {
+			attach(executionInfo, e);
+
 			return CompletableFuture.failedStage(e);
 		}
 
-		final var node = context.getNode();
-		final var executionInfo = new SeaStarExecutionInfo(node, statement);
-
 		if (requireModification && !(raw instanceof ModificationStatement.Parsed)) {
-			return CompletableFuture.failedStage(new InvalidQueryException(node,
-				"Only INSERT, UPDATE and DELETE statements are allowed in batches"));
+			final var error = new InvalidQueryException(node,
+				"Only INSERT, UPDATE and DELETE statements are allowed in batches");
+			attach(executionInfo, error);
+
+			return CompletableFuture.failedStage(error);
 		}
 
-		return registry.processorFor(raw).processCql(context, executionInfo, raw, values);
+		try {
+			return registry.processorFor(raw)
+				.processCql(context, executionInfo, raw, values)
+				.whenComplete((result, error) -> attach(executionInfo, error));
+		} catch (final RuntimeException e) {
+			attach(executionInfo, e);
+
+			throw e;
+		}
 	}
 
 	private Object[] decode(final BoundStatement statement, final ColumnDefinitions variables) {
@@ -104,6 +120,17 @@ public class SeaStarCqlRequestHandler {
 		}
 
 		return values;
+	}
+
+	/**
+	 * Populates {@link DriverException#getExecutionInfo()} the way {@link CqlRequestHandler} does, so
+	 * that a failure rethrown to the caller carries the same context it would on a live cluster.
+	 */
+	private static void attach(final ExecutionInfo executionInfo, final Throwable error) {
+		final var unwrapped = error instanceof CompletionException ? error.getCause() : error;
+		if (unwrapped instanceof DriverException driverException) {
+			driverException.setExecutionInfo(executionInfo);
+		}
 	}
 
 }
