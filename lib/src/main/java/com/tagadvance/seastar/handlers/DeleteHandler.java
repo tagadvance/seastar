@@ -10,11 +10,8 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
@@ -47,7 +44,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		try {
 			delete = Modifications.delete(context, getKeyspace, raw, coordinator, bindings);
 			validateDeletedColumns(delete, coordinator);
-			predicate = resolveWhere(delete, coordinator);
+			predicate = RestrictionRules.forDelete(delete, coordinator);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -63,7 +60,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns);
+				applyDelete(table, matched, deletedColumns, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -76,12 +73,12 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns);
+				applyDelete(table, matched, deletedColumns, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
-			applyDelete(table, matched, deletedColumns);
+			applyDelete(table, matched, deletedColumns, coordinator);
 
 			return newAsyncResultSet(executionInfo);
 		});
@@ -94,13 +91,14 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	 * leaves the row in place.
 	 */
 	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
-		final List<Assignment> deletedColumns) {
+		final List<Assignment> deletedColumns, final Node coordinator) {
 		if (deletedColumns.isEmpty()) {
 			table.removeRowIf(matched::contains);
 		} else {
 			for (final var row : matched) {
 				for (final var deleted : deletedColumns) {
-					row.set(deleted.columnIndex(), deleted.value());
+					final var index = deleted.columnIndex();
+					row.set(index, deleted.apply(row.getObject(index), coordinator));
 				}
 			}
 		}
@@ -115,31 +113,6 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 						deleted.column().asInternal()));
 			}
 		}
-	}
-
-	private static Predicate<SeaStarRow> resolveWhere(final Modification delete,
-		final Node coordinator) {
-		final var primaryKey = delete.target().primaryKeyNames();
-		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
-		final Set<CqlIdentifier> restricted = new HashSet<>();
-		for (final var restriction : delete.restrictions()) {
-			if (!primaryKey.contains(restriction.column())) {
-				throw new InvalidQueryException(coordinator,
-					"Non PRIMARY KEY column %s found in where clause".formatted(
-						restriction.column().asInternal()));
-			}
-			restricted.add(restriction.column());
-			predicates.add(restriction.toPredicate());
-		}
-
-		if (!restricted.containsAll(primaryKey)) {
-			throw new InvalidQueryException(coordinator,
-				"Some partition key parts are missing from the WHERE clause");
-		}
-
-		return predicates.stream().reduce(Predicate::and)
-			.orElseThrow(() -> new IllegalStateException(
-				"a WHERE clause with relations must yield at least one predicate"));
 	}
 
 }

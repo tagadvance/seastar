@@ -11,12 +11,9 @@ import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
@@ -45,11 +42,13 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var coordinator = executionInfo.getCoordinator();
 
 		final Modification update;
-		final Where where;
+		final Predicate<SeaStarRow> predicate;
+		final Map<Integer, Object> upsertKey;
 		try {
 			update = Modifications.update(context, getKeyspace, raw, coordinator, bindings);
 			validateAssignments(update, coordinator);
-			where = resolveWhere(update, coordinator);
+			predicate = RestrictionRules.forUpdate(update, coordinator);
+			upsertKey = RestrictionRules.upsertKey(update);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -59,13 +58,13 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var conditions = update.conditions();
 
 		final AsyncResultSet result = table.writeLockUnchecked(() -> {
-			final var matched = table.rows().filter(where.predicate()).toList();
+			final var matched = table.rows().filter(predicate).toList();
 
 			if (update.ifExists()) {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				apply(matched, assignments);
+				apply(matched, assignments, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -78,18 +77,18 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				apply(matched, assignments);
+				apply(matched, assignments, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
 			if (!matched.isEmpty()) {
-				apply(matched, assignments);
-			} else if (where.upsertKey() != null) {
+				apply(matched, assignments, coordinator);
+			} else if (upsertKey != null) {
 				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
-				where.upsertKey().forEach(values::set);
-				assignments.forEach(
-					assignment -> values.set(assignment.columnIndex(), assignment.value()));
+				upsertKey.forEach(values::set);
+				assignments.forEach(assignment -> values.set(assignment.columnIndex(),
+					assignment.apply(null, coordinator)));
 				table.addRow(values);
 			}
 
@@ -99,10 +98,12 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		return CompletableFuture.completedStage(result);
 	}
 
-	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments) {
+	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments,
+		final Node coordinator) {
 		for (final var row : matched) {
 			for (final var assignment : assignments) {
-				row.set(assignment.columnIndex(), assignment.value());
+				final var index = assignment.columnIndex();
+				row.set(index, assignment.apply(row.getObject(index), coordinator));
 			}
 		}
 	}
@@ -116,48 +117,6 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 						assignment.column().asInternal()));
 			}
 		}
-	}
-
-	/**
-	 * The rows an UPDATE writes to, plus the primary key of the row it would insert if none match.
-	 *
-	 * @param upsertKey the value of each primary key column by position, or null when the WHERE
-	 *                  clause does not pin the whole primary key to a single row
-	 */
-	private record Where(Predicate<SeaStarRow> predicate, Map<Integer, Object> upsertKey) {
-
-	}
-
-	private static Where resolveWhere(final Modification update, final Node coordinator) {
-		final var primaryKey = update.target().primaryKeyNames();
-		final List<Predicate<SeaStarRow>> predicates = new ArrayList<>();
-		final Set<CqlIdentifier> restricted = new HashSet<>();
-		final Map<Integer, Object> upsertKey = new LinkedHashMap<>();
-		for (final var restriction : update.restrictions()) {
-			if (!primaryKey.contains(restriction.column())) {
-				throw new InvalidQueryException(coordinator,
-					"Non PRIMARY KEY column %s found in where clause".formatted(
-						restriction.column().asInternal()));
-			}
-			restricted.add(restriction.column());
-			if (restriction.operator() == CqlOperator.EQ) {
-				upsertKey.put(restriction.columnIndex(), restriction.value());
-			}
-			predicates.add(restriction.toPredicate());
-		}
-
-		if (!restricted.containsAll(primaryKey)) {
-			throw new InvalidQueryException(coordinator,
-				"Some primary key parts are missing from the WHERE clause");
-		}
-
-		final Predicate<SeaStarRow> predicate = predicates.stream().reduce(Predicate::and)
-			.orElseThrow(() -> new IllegalStateException(
-				"a WHERE clause with relations must yield at least one predicate"));
-		// Only equality on every primary key part can synthesize a row for an upsert.
-		final var canUpsert = upsertKey.size() == primaryKey.size();
-
-		return new Where(predicate, canUpsert ? upsertKey : null);
 	}
 
 }

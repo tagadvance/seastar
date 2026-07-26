@@ -98,6 +98,13 @@ class TranslationTest {
 		return CqlIdentifier.fromInternal(name);
 	}
 
+	private static Restriction.Column column(final SeaStarTable table, final String name) {
+		final var identifier = id(name);
+		final var index = table.firstIndexOf(identifier);
+
+		return new Restriction.Column(index, identifier, table.get(index).getType());
+	}
+
 	@Nested
 	@DisplayName("Targets")
 	class TargetsTest {
@@ -186,8 +193,8 @@ class TranslationTest {
 		void equality() {
 			final var restrictions = restrictionsOf("SELECT * FROM ks.people WHERE id = 1");
 
-			assertEquals(List.of(new Restriction(0, id("id"), CqlOperator.EQ, List.of(1))),
-				restrictions);
+			assertEquals(List.of(new Restriction(List.of(column(people, "id")), CqlOperator.EQ,
+				List.of(List.of(1)))), restrictions);
 		}
 
 		@Test
@@ -195,8 +202,20 @@ class TranslationTest {
 		void in() {
 			final var restrictions = restrictionsOf("SELECT * FROM ks.people WHERE id IN (2, 1)");
 
-			assertEquals(List.of(new Restriction(0, id("id"), CqlOperator.IN, List.of(2, 1))),
-				restrictions);
+			assertEquals(List.of(new Restriction(List.of(column(people, "id")), CqlOperator.IN,
+				List.of(List.of(2), List.of(1)))), restrictions);
+		}
+
+		@Test
+		@DisplayName("a multi-column relation carries every column and one value each")
+		void multiColumn() {
+			final var raw = (RawStatement) parse(
+				"SELECT * FROM ks.events WHERE pk = 1 AND (ck, note) > (2, 'x')");
+			final var restrictions = Restrictions.translate(events, raw.whereClause,
+				context.getCodecRegistry(), node);
+
+			assertEquals(new Restriction(List.of(column(events, "ck"), column(events, "note")),
+				CqlOperator.GT, List.of(List.of(2, "x"))), restrictions.get(1));
 		}
 
 		@Test
@@ -204,7 +223,7 @@ class TranslationTest {
 		void marker() {
 			final var restrictions = restrictionsOf("SELECT * FROM ks.people WHERE id = ?", 7);
 
-			assertEquals(List.of(7), restrictions.get(0).values());
+			assertEquals(List.of(List.of(7)), restrictions.get(0).values());
 		}
 
 		@Test
@@ -223,15 +242,15 @@ class TranslationTest {
 		}
 
 		@Test
-		@DisplayName("an operator SeaStar cannot evaluate is translated, then rejected as a predicate")
+		@DisplayName("an operator no statement accepts is translated, then rejected as a predicate")
 		void unsupportedOperator() {
 			final var restrictions = restrictionsOf(
-				"SELECT * FROM ks.people WHERE age > 1 ALLOW FILTERING");
+				"SELECT * FROM ks.people WHERE name LIKE 'A%' ALLOW FILTERING");
 
-			assertEquals(CqlOperator.GT, restrictions.get(0).operator());
+			assertEquals(CqlOperator.LIKE, restrictions.get(0).operator());
 			final var error = assertThrows(UnsupportedOperationException.class,
 				() -> restrictions.get(0).toPredicate());
-			assertEquals("Unsupported operator > in WHERE", error.getMessage());
+			assertEquals("Unsupported operator LIKE in WHERE", error.getMessage());
 		}
 
 		@Test
@@ -257,9 +276,71 @@ class TranslationTest {
 			assertEquals(List.of("Ann", "Cid"), names(predicate));
 		}
 
+		static Stream<Arguments> ranges() {
+			return Stream.of(arguments("age > 30", List.of("Cid")),
+				arguments("age >= 30", List.of("Bob", "Cid")),
+				arguments("age < 30", List.of("Ann")),
+				arguments("age <= 30", List.of("Ann", "Bob")));
+		}
+
+		@ParameterizedTest(name = "{0} matches {1}")
+		@MethodSource("ranges")
+		@DisplayName("A range predicate matches the rows inside the bound it names")
+		void rangePredicate(final String relation, final List<String> expected) {
+			addPerson(1, "Ann", 20);
+			addPerson(2, "Bob", 30);
+			addPerson(3, "Cid", 40);
+			final var predicate = restrictionsOf(
+				"SELECT * FROM ks.people WHERE %s ALLOW FILTERING".formatted(relation)).get(0)
+				.toPredicate();
+
+			assertEquals(expected, names(predicate));
+		}
+
+		@Test
+		@DisplayName("a range predicate never matches a row whose column is null")
+		void rangePredicateSkipsNulls() {
+			people.addRow(Arrays.asList(1, "Ann", null, null));
+			final var predicate = restrictionsOf(
+				"SELECT * FROM ks.people WHERE age > 0 ALLOW FILTERING").get(0).toPredicate();
+
+			assertEquals(List.of(), names(predicate));
+		}
+
+		@Test
+		@DisplayName("a multi-column range predicate compares the columns lexicographically")
+		void multiColumnRangePredicate() {
+			events.addRow(Arrays.asList(1, 1, "a"));
+			events.addRow(Arrays.asList(1, 2, "b"));
+			events.addRow(Arrays.asList(2, 1, "c"));
+			final var raw = (RawStatement) parse(
+				"SELECT * FROM ks.events WHERE (pk, ck) > (1, 1)");
+			final var predicate = Restrictions.translate(events, raw.whereClause,
+				context.getCodecRegistry(), node).get(0).toPredicate();
+
+			assertEquals(List.of("b", "c"),
+				events.rows().filter(predicate).map(row -> row.getString(2)).toList());
+		}
+
+		@Test
+		@DisplayName("CONTAINS matches a collection holding the value, CONTAINS KEY a map's key")
+		void containsPredicate() {
+			people.addRow(Arrays.asList(1, "Ann", 30, List.of("x", "y")));
+			people.addRow(Arrays.asList(2, "Bob", 30, List.of("z")));
+			final var predicate = restrictionsOf(
+				"SELECT * FROM ks.people WHERE tags CONTAINS 'x' ALLOW FILTERING").get(0)
+				.toPredicate();
+
+			assertEquals(List.of("Ann"), names(predicate));
+		}
+
 		private void addPerson(final int id, final String name) {
+			addPerson(id, name, 30);
+		}
+
+		private void addPerson(final int id, final String name, final Integer age) {
 			// The tags column is left unset, which List.of cannot hold.
-			people.addRow(Arrays.asList(id, name, 30, null));
+			people.addRow(Arrays.asList(id, name, age, null));
 		}
 
 		private List<String> names(final Predicate<SeaStarRow> predicate) {
@@ -283,7 +364,8 @@ class TranslationTest {
 
 			final var insert = Modifications.insert(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(0, id("id"), 1), new Assignment(1, id("name"), "Ann")),
+			assertEquals(
+				List.of(Assignment.set(0, id("id"), 1), Assignment.set(1, id("name"), "Ann")),
 				insert.assignments());
 			assertEquals(List.of(), insert.restrictions());
 			assertTrue(insert.ifNotExists());
@@ -310,9 +392,9 @@ class TranslationTest {
 
 			final var update = Modifications.update(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(1, id("name"), "Ann")), update.assignments());
-			assertEquals(List.of(new Restriction(0, id("id"), CqlOperator.EQ, List.of(1))),
-				update.restrictions());
+			assertEquals(List.of(Assignment.set(1, id("name"), "Ann")), update.assignments());
+			assertEquals(List.of(new Restriction(List.of(column(people, "id")), CqlOperator.EQ,
+				List.of(List.of(1)))), update.restrictions());
 			assertEquals(List.of(new Condition(2, id("age"), CqlOperator.EQ, 30)),
 				update.conditions());
 		}
@@ -330,13 +412,27 @@ class TranslationTest {
 		}
 
 		@Test
-		@DisplayName("an UPDATE that does not simply set a column is rejected")
-		void updateUnsupportedAssignment() {
+		@DisplayName("an UPDATE that adds to a collection carries the operator and the added value")
+		void updateAppend() {
 			final var raw = (ParsedUpdate) parse(
 				"UPDATE ks.people SET tags = tags + ['x'] WHERE id = 1");
 
-			assertThrows(UnsupportedOperationException.class,
+			final var update = Modifications.update(context, NO_SESSION_KEYSPACE, raw, node);
+
+			assertEquals(List.of(new Assignment(3, id("tags"), Assignment.Operator.APPEND, null,
+				List.of("x"))), update.assignments());
+		}
+
+		@Test
+		@DisplayName("an UPDATE that adds to a non-collection, non-counter column is rejected")
+		void updateAppendToScalar() {
+			final var raw = (ParsedUpdate) parse(
+				"UPDATE ks.people SET age = age + 1 WHERE id = 1");
+
+			final var error = assertThrows(InvalidQueryException.class,
 				() -> Modifications.update(context, NO_SESSION_KEYSPACE, raw, node));
+
+			assertTrue(error.getMessage().contains("age"), error.getMessage());
 		}
 
 		@Test
@@ -347,7 +443,19 @@ class TranslationTest {
 
 			final var delete = Modifications.delete(context, NO_SESSION_KEYSPACE, raw, node);
 
-			assertEquals(List.of(new Assignment(1, id("name"), null)), delete.assignments());
+			assertEquals(List.of(Assignment.set(1, id("name"), null)), delete.assignments());
+		}
+
+		@Test
+		@DisplayName("DELETE of one collection element clears that element, not the column")
+		void deleteElement() {
+			final var raw = (DeleteStatement.Parsed) parse(
+				"DELETE tags[0] FROM ks.people WHERE id = 1");
+
+			final var delete = Modifications.delete(context, NO_SESSION_KEYSPACE, raw, node);
+
+			assertEquals(List.of(new Assignment(3, id("tags"),
+				Assignment.Operator.DELETE_LIST_ELEMENT, 0, null)), delete.assignments());
 		}
 
 		@Test
@@ -358,8 +466,8 @@ class TranslationTest {
 			final var delete = Modifications.delete(context, NO_SESSION_KEYSPACE, raw, node);
 
 			assertEquals(List.of(), delete.assignments());
-			assertEquals(List.of(new Restriction(0, id("id"), CqlOperator.EQ, List.of(1))),
-				delete.restrictions());
+			assertEquals(List.of(new Restriction(List.of(column(people, "id")), CqlOperator.EQ,
+				List.of(List.of(1)))), delete.restrictions());
 		}
 
 		@Test

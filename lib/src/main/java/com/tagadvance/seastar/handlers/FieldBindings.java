@@ -107,6 +107,28 @@ final class FieldBindings {
 		"bindIndex", Integer.class);
 	static final FieldBinding<Term.Raw> SET_VALUE = FieldBinding.of(Operation.SetValue.class, "value",
 		Term.Raw.class);
+	static final FieldBinding<Term.Raw> ADDITION_VALUE = FieldBinding.of(Operation.Addition.class,
+		"value", Term.Raw.class);
+	/**
+	 * cassandra-all spells the class {@code Substraction}; the misspelling is the field's owner, so
+	 * it is as load-bearing here as any field name.
+	 */
+	static final FieldBinding<Term.Raw> SUBTRACTION_VALUE = FieldBinding.of(
+		Operation.Substraction.class, "value", Term.Raw.class);
+	static final FieldBinding<Term.Raw> PREPEND_VALUE = FieldBinding.of(Operation.Prepend.class,
+		"value", Term.Raw.class);
+	static final FieldBinding<Term.Raw> SET_ELEMENT_SELECTOR = FieldBinding.of(
+		Operation.SetElement.class, "selector", Term.Raw.class);
+	static final FieldBinding<Term.Raw> SET_ELEMENT_VALUE = FieldBinding.of(
+		Operation.SetElement.class, "value", Term.Raw.class);
+	static final FieldBinding<FieldIdentifier> SET_FIELD_FIELD = FieldBinding.of(
+		Operation.SetField.class, "field", FieldIdentifier.class);
+	static final FieldBinding<Term.Raw> SET_FIELD_VALUE = FieldBinding.of(Operation.SetField.class,
+		"value", Term.Raw.class);
+	static final FieldBinding<Term.Raw> ELEMENT_DELETION_ELEMENT = FieldBinding.of(
+		Operation.ElementDeletion.class, "element", Term.Raw.class);
+	static final FieldBinding<FieldIdentifier> FIELD_DELETION_FIELD = FieldBinding.of(
+		Operation.FieldDeletion.class, "field", FieldIdentifier.class);
 	/**
 	 * {@code [1, 2]} parses as an {@code ArrayLiteral} rather than a {@code Lists.Literal}: since
 	 * vectors were added the receiving type decides which of the two a bracket literal means.
