@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,6 +17,7 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
+import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
@@ -1479,6 +1482,92 @@ abstract class AbstractCqlSessionTest {
 			() -> session.execute("DELETE FROM no_such_keyspace.people WHERE id = 1"));
 		assertThrows(InvalidQueryException.class,
 			() -> session.execute("TRUNCATE no_such_keyspace.people"));
+	}
+
+	@Test
+	@Order(84)
+	@DisplayName("ExecutionInfo answers its routine getters instead of throwing")
+	void testExecutionInfoRoutineGetters() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.exec_info (id int PRIMARY KEY)");
+
+		final var executionInfo = session.execute("SELECT * FROM foo.exec_info")
+			.getExecutionInfo();
+
+		assertNull(executionInfo.getPagingState());
+		assertNull(executionInfo.getSafePagingState());
+		assertTrue(executionInfo.getIncomingPayload().isEmpty());
+		assertNull(executionInfo.getTracingId());
+
+		final var error = assertThrows(IllegalStateException.class, executionInfo::getQueryTrace);
+		assertEquals("Tracing was disabled for this request", error.getMessage());
+
+		final var stage = executionInfo.getQueryTraceAsync().toCompletableFuture();
+		final var asyncError = assertThrows(CompletionException.class, stage::join);
+		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
+	}
+
+	@Test
+	@Order(85)
+	@DisplayName("getMetrics is empty because metrics are disabled")
+	void testGetMetricsIsEmpty() {
+		assertTrue(session.getMetrics().isEmpty());
+	}
+
+	@Test
+	@Order(86)
+	@DisplayName("Keyspace metadata reports the replication and durable writes it was created with")
+	void testKeyspaceReplicationMetadata() {
+		session.execute("CREATE KEYSPACE IF NOT EXISTS repl_default WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		session.execute("CREATE KEYSPACE IF NOT EXISTS repl_durable_off WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 2 } AND durable_writes = false");
+
+		final var defaults = keyspaceMetadata("repl_default");
+		assertEquals(
+			Map.of("class", "org.apache.cassandra.locator.SimpleStrategy", "replication_factor",
+				"1"), defaults.getReplication());
+		assertTrue(defaults.isDurableWrites());
+
+		final var durableOff = keyspaceMetadata("repl_durable_off");
+		assertEquals("2", durableOff.getReplication().get("replication_factor"));
+		assertFalse(durableOff.isDurableWrites());
+	}
+
+	private KeyspaceMetadata keyspaceMetadata(final String name) {
+		return session.getMetadata()
+			.getKeyspace(name)
+			.orElseThrow(() -> new IllegalStateException(
+				"keyspace %s is required to read its metadata".formatted(name)));
+	}
+
+	@Test
+	@Order(87)
+	@DisplayName("A closed session rejects further requests and completes its close future")
+	void testClosedSessionRejectsRequests() {
+		final var doomed = createInstance();
+		doomed.execute("CREATE KEYSPACE IF NOT EXISTS closing WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		doomed.execute("CREATE TABLE IF NOT EXISTS closing.t (id int PRIMARY KEY)");
+
+		assertFalse(doomed.closeFuture().toCompletableFuture().isDone());
+
+		doomed.close();
+
+		assertTrue(doomed.closeFuture().toCompletableFuture().isDone());
+		assertDoesNotThrow(doomed::close);
+
+		final var syncError = assertThrows(IllegalStateException.class,
+			() -> doomed.execute("SELECT * FROM closing.t"));
+		assertEquals("Session is closed", syncError.getMessage());
+
+		final var prepareError = assertThrows(IllegalStateException.class,
+			() -> doomed.prepare("SELECT * FROM closing.t WHERE id = ?"));
+		assertEquals("Session is closed", prepareError.getMessage());
+
+		final var stage = doomed.executeAsync("SELECT * FROM closing.t").toCompletableFuture();
+		final var asyncError = assertThrows(CompletionException.class, stage::join);
+		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
+		assertEquals("Session is closed", asyncError.getCause().getMessage());
 	}
 
 	@AfterAll

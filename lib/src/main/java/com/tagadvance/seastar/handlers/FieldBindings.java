@@ -18,6 +18,7 @@ import org.apache.cassandra.cql3.functions.masking.ColumnMask;
 import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
+import org.apache.cassandra.cql3.statements.PropertyDefinitions;
 import org.apache.cassandra.cql3.statements.UpdateStatement;
 import org.apache.cassandra.cql3.statements.schema.AlterTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateIndexStatement;
@@ -27,6 +28,7 @@ import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.DropKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.DropTableStatement;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
+import org.apache.cassandra.cql3.statements.schema.KeyspaceAttributes;
 import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.utils.Pair;
 
@@ -128,6 +130,15 @@ final class FieldBindings {
 	// Schema statements.
 	static final FieldBinding<Boolean> CREATE_KEYSPACE_IF_NOT_EXISTS = FieldBinding.of(
 		CreateKeyspaceStatement.Raw.class, "ifNotExists", Boolean.class);
+	static final FieldBinding<KeyspaceAttributes> CREATE_KEYSPACE_ATTRIBUTES = FieldBinding.of(
+		CreateKeyspaceStatement.Raw.class, "attrs", KeyspaceAttributes.class);
+	/**
+	 * {@code PropertyDefinitions#properties} is {@code protected} and its only public readers are
+	 * typed accessors ({@code getBoolean}, {@code getInt}); the replication map is reachable only
+	 * through the private {@code getAllReplicationOptions}, so the raw map is read directly.
+	 */
+	static final FieldBinding<Map<String, Object>> PROPERTY_DEFINITIONS_PROPERTIES =
+		FieldBinding.ofMap(PropertyDefinitions.class, "properties");
 	static final FieldBinding<String> DROP_KEYSPACE_NAME = FieldBinding.of(
 		DropKeyspaceStatement.Raw.class, "keyspaceName", String.class);
 	static final FieldBinding<Boolean> DROP_KEYSPACE_IF_EXISTS = FieldBinding.of(
