@@ -142,7 +142,7 @@ class TranslationTest {
 			final var error = assertThrows(InvalidQueryException.class,
 				() -> Targets.require(context, SESSION_KEYSPACE, raw, node));
 
-			assertEquals("Keyspace 'nope' does not exist", error.getMessage());
+			assertEquals("keyspace nope does not exist", error.getMessage());
 		}
 
 		@Test

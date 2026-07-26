@@ -16,9 +16,12 @@ import org.jspecify.annotations.Nullable;
  * the session keyspace, then the keyspace and the table it holds.
  *
  * <p>Every handler that addresses a table goes through here, so the three failures - no keyspace at
- * all, an unknown keyspace, an unknown table - are reported identically wherever they happen. The
- * wording is Cassandra's own: {@code ClientState#getKeyspaceMetadata} for the keyspace,
- * {@code Schema#validateTable} for the table.
+ * all, an unknown keyspace, an unknown table - are reported identically wherever they happen.
+ *
+ * <p>The wording is {@code Schema}'s, verified against a live cluster: a statement that names a
+ * keyspace is validated there, so it reports {@code keyspace x does not exist}. {@code ClientState}
+ * carries a differently worded {@code Keyspace 'x' does not exist} for the keyspace a session is
+ * switched to, which is why {@code UseKeyspaceHandler} keeps that form.
  */
 final class Targets {
 
@@ -69,7 +72,7 @@ final class Targets {
 
 		return context.getSeaStarKeyspace(name)
 			.orElseThrow(() -> new InvalidQueryException(coordinator,
-				"Keyspace '%s' does not exist".formatted(name.asInternal())));
+				"keyspace %s does not exist".formatted(name.asInternal())));
 	}
 
 	/**
