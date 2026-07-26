@@ -47,6 +47,27 @@ java {
     }
 }
 
+tasks.withType<JavaCompile>().configureEach {
+    // Explicit here as well as in the toolchain so the bytecode target is visible in this file.
+    options.release = 17
+    options.compilerArgs.add("-Xlint:all")
+}
+
+tasks.withType<Javadoc>().configureEach {
+    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")
+}
+
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
+tasks.named<Jar>("jar") {
+    manifest {
+        attributes("Automatic-Module-Name" to "com.tagadvance.seastar")
+    }
+}
+
 tasks.named<Test>("test") {
     useJUnitPlatform()
 }
