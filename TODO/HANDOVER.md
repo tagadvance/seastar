@@ -39,6 +39,13 @@ Last verified: 168 tests green locally, 95 green on the container.
 
 ### Decisions already made - do not relitigate
 
+- **Exception messages need not match Cassandra's byte for byte.** The bar is: the same exception
+  type, semantically the same failure, and the same information conveyed (name the keyspace, table
+  or column at fault). Matching wording exactly is welcome where it is free, but it is not worth
+  contorting code or chasing across Cassandra's three different spellings of "keyspace does not
+  exist". Assert on type and on the offending name being present; do not pin whole strings in tests
+  unless the wording itself is the thing under test.
+
 - **Locking**: one lock per keyspace (`context.read -> keyspace.write`), NOT the four-level
   hierarchy in b_plan B2. Drop the row lock entirely; that deletes the B1 deadlock rather than
   fixing it. This is l_plan L1's middle path.
