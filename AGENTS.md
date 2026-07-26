@@ -27,6 +27,25 @@ So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest
 
 Everything lives in the single `lib` subproject. Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and build caching are enabled in `gradle.properties`.
 
+### Benchmarks
+
+Goal 2 — "minimize startup time to act as a viable alternative to TestContainers" — is measured, not asserted. The numbers, the hardware they were taken on, and the versions they pin to live in [benchmarks.md](benchmarks.md); it is the baseline against which the locking and query-engine changes are compared, so re-run these and update it when either lands.
+
+Benchmarks live in their own source sets (`lib/src/jmh`, `lib/src/containerBench`). They are **not** on the default build and their classes are **not** in the published jar. All benchmark tasks are serialized against each other by a Gradle shared service, so listing several in one invocation is safe despite `org.gradle.parallel=true`.
+
+```bash
+./gradlew :lib:jmh                       # per-statement and scaling benchmarks (JMH), ~3 min
+./gradlew :lib:jmh -PjmhIncludes='com.tagadvance.seastar.bench.StatementBenchmark.selectPoint'
+./gradlew :lib:startupBenchmark          # cold/warm startup + the in-situ parser split, ~1 min
+./gradlew :lib:startupSchemaBenchmark    # startup seeded with a 75-statement fixture schema
+./gradlew :lib:parserCostBenchmark       # attributes the one-time cassandra-all parser cost
+./gradlew :lib:parserEquivalenceCheck    # proves both parser entry points agree
+./gradlew :lib:containerWarmBenchmark    # TestContainers baseline, cached image; needs Docker
+./gradlew :lib:containerColdBenchmark    # same, but removes and re-pulls the image first
+```
+
+JMH is only used for the warm per-statement work. Startup, the parser breakdown and the container comparison fork a fresh JVM per sample instead (`ColdJvmBenchmark`): class loading is most of what they measure, so JMH's warmup would erase the very thing under test.
+
 ## Architecture
 
 ### Two dependencies that must not be confused
