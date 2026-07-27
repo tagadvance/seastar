@@ -86,6 +86,7 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 			if (ifNotExists) {
 				return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 			}
+
 			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
 				"Index '%s' already exists".formatted(indexName.asInternal())));
 		}

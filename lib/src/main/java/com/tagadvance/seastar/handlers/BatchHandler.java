@@ -23,8 +23,10 @@ import org.apache.cassandra.cql3.statements.BatchStatement.Parsed;
  * rejects the whole batch before applying anything, so an invalid statement leaves the store
  * untouched. Here each child is validated and applied as it is dispatched, so a child that fails
  * partway through (for example an undefined column) leaves the earlier children already applied
- * rather than rolling the batch back. Batches are also not isolated. This can be revisited if it
- * ever matters; see TODO/e_batch_statements.txt for the snapshot-and-restore approach considered.
+ * rather than rolling the batch back. Batches are also not isolated - see
+ * {@code docs/support-matrix.md}. Each child takes and releases its own table lock rather than
+ * holding all of them for the batch, which is also why a two-table batch cannot deadlock; making
+ * a batch atomic would mean locking every child's table up front, sorted by a stable key.
  */
 @ThreadSafe
 public class BatchHandler implements CqlHandler<Parsed> {

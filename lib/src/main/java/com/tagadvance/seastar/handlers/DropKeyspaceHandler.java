@@ -46,6 +46,7 @@ public class DropKeyspaceHandler implements CqlHandler<Raw> {
 			if (ifExists) {
 				return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 			}
+
 			return CompletableFuture.failedStage(
 				new InvalidQueryException(coordinator, "Keyspace '%s' doesn't exist".formatted(name)));
 		}

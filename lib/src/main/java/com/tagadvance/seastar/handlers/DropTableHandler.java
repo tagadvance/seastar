@@ -54,6 +54,7 @@ public class DropTableHandler implements CqlHandler<Raw> {
 			if (ifExists) {
 				return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
 			}
+
 			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
 				"Table '%s.%s' doesn't exist".formatted(keyspace, table)));
 		}
