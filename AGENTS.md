@@ -8,8 +8,6 @@ This is an early prototype. Many code paths are stubbed with `TODO`/`FIXME`, thr
 
 Requires JDK 17 (configured via Gradle toolchain; foojay resolver auto-downloads it).
 
-All tests should be annotated with a short human-readable `@DisplayName`.
-
 ### Testing strategy
 
 `AbstractCqlSessionTest` is how the fidelity goal is measured: one suite, run twice against the same `CqlSession` API, once on a real Cassandra (`ContainerCqlSessionTest`, TestContainers) and once on SeaStar (`SeaStarCqlSessionTest`). Any behavioral divergence surfaces as a failure in one subclass but not the other.
@@ -192,10 +190,8 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 6. Update [docs/support-matrix.md](docs/support-matrix.md), and remove the statement from `UnsupportedStatements` if it was being rejected.
 
 ## Code Style
-- Do not allow Optional as a field or parameter
-- Exit statements like return or throw should have a newline before them unless the preceding character is an opening brace
-- Favor functional code over procedural, e.g. Stream over loops, Optional over @Nullable
-- Only/always use static wildcard imports for `org.junit.jupiter.api.Assertions.*`, `org.mockito.Mockito.*`, and `org.mockito.ArgumentMatchers.*`
+
+Java style lives in `~/git/.agents/java.md` — read it before writing code. Nothing in this project overrides it.
 
 [Minimize token use](https://raw.githubusercontent.com/drona23/claude-token-efficient/refs/heads/main/profiles/CLAUDE.coding.md):
 
