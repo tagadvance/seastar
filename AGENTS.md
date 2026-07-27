@@ -2,7 +2,7 @@
 
 SeaStar is a lightweight, in-memory implementation of the DataStax Java driver's `CqlSession` — essentially a mock/fake for Cassandra intended as a fast alternative to TestContainers for tests. The overriding design goal is **fidelity**: a query that fails against real Cassandra should fail in a similar fashion (same exception types) in SeaStar. Correctness of that mirroring takes precedence over performance, and startup time is the second priority.
 
-This is an early prototype. Many code paths are stubbed with `TODO`/`FIXME`, throw `UnsupportedOperationException`, or are half-implemented (e.g. `CreateTableHandler` parses columns but does not yet persist them — note the stray `System.gc()` and commented-out `addColumn`). Do not assume a feature works just because a class for it exists; check for `UnsupportedOperationException` and unfinished handler bodies.
+This is a pre-1.0 library, and plenty of CQL is deliberately unimplemented rather than half-built - `UnsupportedOperationException` and `InvalidQueryException` naming the missing feature are expected outcomes, not bugs. Do not assume a feature works just because a class for it exists; [docs/support-matrix.md](docs/support-matrix.md) is the authoritative list of what is handled, what is rejected by name, and what is a deliberate fidelity trade-off (single page of results, no tombstones, batches not atomic, and the like).
 
 ## Build & test
 
@@ -21,6 +21,10 @@ So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest
 ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'          # single class
 ./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.testSimpleSelect'  # single method
 ./gradlew :lib:publishToMavenLocal   # publish artifact locally
+./gradlew :lib:inspectRaw -Pquery="CREATE KEYSPACE foo WITH replication = {...}"
+    # parses the CQL string with cassandra-all's own parser and prints its CQLStatement.Raw
+    # class plus a reflective dump of its package-private fields - the first thing to run when
+    # writing a handler for a new statement type, or investigating a FieldBindings failure
 ```
 
 Everything lives in the single `lib` subproject. Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and build caching are enabled in `gradle.properties`.
@@ -59,6 +63,8 @@ Each SeaStar class is deliberately **analogous to** a driver-internal class (the
 4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `AlterTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`, …) has the statement translated (see below), then mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
 
 There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are built once in `SeaStarCqlSession#buildHandlerRegistry` and shared across requests.
+
+**The async contract**: every request is answered entirely on the calling thread. SeaStar never spawns a thread, so by the time `executeAsync` (or a handler's `CompletionStage<AsyncResultSet>`) returns, the work is already done — `whenComplete` and friends run inline rather than on a callback thread, and there is no interleaving to reason about between one session's requests. This is also why the sync processors can block on `CompletableFutures.getUninterruptibly` for free: the future is already complete when they call it.
 
 A statement no handler claims does **not** fall through as an internal error. `UnsupportedStatements` turns it into an `InvalidQueryException` that names the feature and quotes the query, and it holds the table of statement families SeaStar rejects on purpose — materialized views, UDFs and aggregates, triggers, roles and permissions, `DESCRIBE`. Adding a handler for one of those means deleting its row. [docs/support-matrix.md](docs/support-matrix.md) is the published version of that table and should be updated alongside it.
 
