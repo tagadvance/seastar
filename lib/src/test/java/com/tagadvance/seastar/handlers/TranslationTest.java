@@ -43,6 +43,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
@@ -672,6 +673,93 @@ class TranslationTest {
 				() -> translate("SELECT * FROM ks.people LIMIT 0"));
 
 			assertEquals("LIMIT must be strictly positive", error.getMessage());
+		}
+
+	}
+
+	/**
+	 * The JSON reader is hand-rolled, and the two-backend suite only drives it through the shape an
+	 * {@code INSERT ... JSON} normally carries. These are the cases it does not reach: escapes, the
+	 * whitespace a formatter leaves behind, and the documents that have to be refused.
+	 */
+	@Nested
+	@DisplayName("Jsons")
+	class JsonsTest {
+
+		private Map<CqlIdentifier, Object> decode(final String document) {
+			return Jsons.decode(document,
+				Map.of(CqlIdentifier.fromInternal("v"), DataTypes.TEXT,
+					CqlIdentifier.fromInternal("n"), DataTypes.INT,
+					CqlIdentifier.fromInternal("l"), DataTypes.listOf(DataTypes.INT)),
+				context.getCodecRegistry(), node);
+		}
+
+		@Test
+		@DisplayName("a document is read whatever whitespace it carries")
+		void whitespace() {
+			assertEquals(Map.of(CqlIdentifier.fromInternal("n"), 1),
+				decode("  {\n  \"n\" :\t1\n}  "));
+			assertEquals(Map.of(), decode("{}"));
+			assertEquals(Map.of(CqlIdentifier.fromInternal("l"), List.of()), decode("{\"l\": []}"));
+		}
+
+		@Test
+		@DisplayName("a string keeps the characters its escapes stand for")
+		void escapes() {
+			assertEquals("a\"b\\c\nd\teé",
+				decode("{\"v\": \"a\\\"b\\\\c\\nd\\te\\u00e9\"}")
+					.get(CqlIdentifier.fromInternal("v")));
+		}
+
+		@Test
+		@DisplayName("a null value reads as null rather than as a missing column")
+		void nulls() {
+			final var decoded = decode("{\"v\": null}");
+
+			assertTrue(decoded.containsKey(CqlIdentifier.fromInternal("v")));
+			assertNull(decoded.get(CqlIdentifier.fromInternal("v")));
+		}
+
+		@ParameterizedTest
+		@DisplayName("a malformed document is refused as an invalid query")
+		@ValueSource(strings = {"", "{", "{\"n\"}", "{\"n\": }", "{\"n\": 1,}", "{\"n\": 1} trailing",
+			"[1, 2]", "{\"n\": tru}", "{\"v\": \"unterminated}"})
+		void malformed(final String document) {
+			assertThrows(InvalidQueryException.class, () -> decode(document), document);
+		}
+
+		@Test
+		@DisplayName("a value the column's type cannot take names the column")
+		void wrongType() {
+			final var error = assertThrows(InvalidQueryException.class,
+				() -> decode("{\"n\": \"not a number\"}"));
+
+			assertTrue(error.getMessage().contains("n"), error.getMessage());
+		}
+
+		@Test
+		@DisplayName("a column the table does not have is named")
+		void unknownColumn() {
+			final var error = assertThrows(InvalidQueryException.class,
+				() -> decode("{\"nosuch\": 1}"));
+
+			assertTrue(error.getMessage().contains("nosuch"), error.getMessage());
+		}
+
+		@Test
+		@DisplayName("a row is written as the JSON shape each CQL type defines")
+		void encode() {
+			assertEquals("{\"n\": 1, \"v\": \"a\", \"l\": [1, 2]}",
+				Jsons.encode(List.of(CqlIdentifier.fromInternal("n"), CqlIdentifier.fromInternal("v"),
+						CqlIdentifier.fromInternal("l")),
+					List.of(DataTypes.INT, DataTypes.TEXT, DataTypes.listOf(DataTypes.INT)),
+					Arrays.asList(1, "a", List.of(1, 2))));
+			assertEquals("{\"v\": null}",
+				Jsons.encode(List.of(CqlIdentifier.fromInternal("v")), List.of(DataTypes.TEXT),
+					Arrays.asList((Object) null)));
+			assertEquals("{\"v\": \"say \\\"hi\\\"\"}",
+				Jsons.encode(List.of(CqlIdentifier.fromInternal("v")), List.of(DataTypes.TEXT),
+					Arrays.asList((Object) "say \"hi\"")));
 		}
 
 	}
