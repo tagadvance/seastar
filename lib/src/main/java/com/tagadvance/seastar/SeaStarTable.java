@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
@@ -79,6 +80,25 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 		addRow(row);
 
 		return row;
+	}
+
+	/**
+	 * Adds a row whose cells carry the write time a statement asked for rather than the clock's, so
+	 * that {@code INSERT ... USING TIMESTAMP} is what {@code writetime()} reports back.
+	 */
+	default SeaStarRow addRow(final List<Object> values, final long writeTime) {
+		final var row = new VolatileRow(context(), this, values, writeTime);
+		addRow(row);
+
+		return row;
+	}
+
+	/**
+	 * Whether the table declares any static column, and so whether a partition holds cells of its own
+	 * beside its rows.
+	 */
+	default boolean hasStaticColumns() {
+		return getColumns().values().stream().anyMatch(ColumnMetadata::isStatic);
 	}
 
 	void addRow(final SeaStarRow row);
