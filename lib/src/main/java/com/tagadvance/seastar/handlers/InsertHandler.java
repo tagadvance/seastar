@@ -11,6 +11,7 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -83,15 +84,8 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 
 		final var primaryKey = target.primaryKeyNames();
 		final var pkIndices = primaryKey.stream().mapToInt(table::firstIndexOf).toArray();
-		final Predicate<SeaStarRow> samePrimaryKey = existing -> {
-			for (final var index : pkIndices) {
-				if (!Objects.equals(existing.getObject(index), values.get(index))) {
-					return false;
-				}
-			}
-
-			return true;
-		};
+		final Predicate<SeaStarRow> samePrimaryKey = existing -> Arrays.stream(pkIndices)
+			.allMatch(index -> Objects.equals(existing.getObject(index), values.get(index)));
 		// The statement names the whole partition key, so the row it would replace can only be in one
 		// partition. Without this an insert walks every row in the table and a bulk load is O(n^2).
 		final var partition = partitionKey(target, values);
