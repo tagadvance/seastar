@@ -92,8 +92,15 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 
 			return true;
 		};
+		// The statement names the whole partition key, so the row it would replace can only be in one
+		// partition. Without this an insert walks every row in the table and a bulk load is O(n^2).
+		final var partition = partitionKey(target, values);
+
 		final AsyncResultSet result = table.mutate(() -> {
-			final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
+			final var existing = table.partition(partition)
+				.filter(samePrimaryKey)
+				.findFirst()
+				.orElse(null);
 			if (insert.ifNotExists()) {
 				if (existing == null) {
 					create(table, target, values, assignments, writes);
@@ -178,9 +185,22 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 			return;
 		}
 
-		final var partition = partitionValues(target, added);
-		table.removeRowIf(row -> row != added && isStaticRow(table, row)
-			&& partitionValues(target, row).equals(partition));
+		table.removeRowIf(partitionValues(target, added),
+			row -> row != added && isStaticRow(table, row));
+	}
+
+	/**
+	 * The partition the values a statement writes belong to: its partition key column values, in key
+	 * order.
+	 */
+	private static List<Object> partitionKey(final Target target, final List<Object> values) {
+		final var table = target.table();
+
+		return target.partitionKeyNames()
+			.stream()
+			.mapToInt(table::firstIndexOf)
+			.mapToObj(values::get)
+			.collect(Collectors.toCollection(ArrayList::new));
 	}
 
 	private static boolean isStaticRow(final SeaStarTable table, final SeaStarRow row) {

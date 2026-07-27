@@ -135,6 +135,15 @@ public class VolatileRow implements SeaStarRow {
 	}
 
 	/**
+	 * The values this row stores, for {@link VolatileTable} to key it by its partition without
+	 * round-tripping every value through its codec. Callers hold the table's lock.
+	 */
+	@GuardedBy("table.lock()")
+	List<Object> storedValues() {
+		return cells.values();
+	}
+
+	/**
 	 * The cells a column at {@code i} lives in: the partition's, for a static column, and this row's
 	 * for every other.
 	 */

@@ -142,6 +142,15 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	void removeRowIf(Predicate<SeaStarRow> predicate);
 
 	/**
+	 * Removes the matching rows of one partition, leaving the rest of the table untouched. A DELETE
+	 * that pins the partition key knows which partition it is writing to, so it need not walk the
+	 * table to find out.
+	 *
+	 * @param partitionKeyValues one value per partition key column, in key order
+	 */
+	void removeRowIf(List<Object> partitionKeyValues, Predicate<SeaStarRow> predicate);
+
+	/**
 	 * Records a secondary index on this table, keyed by its name. Exposed through
 	 * {@link #getIndexes()}.
 	 */
@@ -156,6 +165,15 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 * Every row of the table, as a snapshot rather than a live view.
 	 */
 	Stream<SeaStarRow> rows();
+
+	/**
+	 * The rows of one partition, as a snapshot. A statement whose WHERE clause pins every partition
+	 * key column can answer itself from here rather than from {@link #rows()}, which is the
+	 * difference between a walk of one partition and a scan of the table.
+	 *
+	 * @param partitionKeyValues one value per partition key column, in key order
+	 */
+	Stream<SeaStarRow> partition(List<Object> partitionKeyValues);
 
 	void drop();
 

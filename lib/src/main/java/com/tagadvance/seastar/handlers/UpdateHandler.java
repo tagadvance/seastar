@@ -46,11 +46,13 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final Modification update;
 		final Predicate<SeaStarRow> predicate;
 		final Map<Integer, Object> upsertKey;
+		final List<List<Object>> partitions;
 		try {
 			update = Modifications.update(context, getKeyspace, raw, coordinator, bindings);
 			validateAssignments(update, coordinator);
 			predicate = RestrictionRules.forUpdate(update, coordinator);
 			upsertKey = RestrictionRules.upsertKey(update);
+			partitions = RestrictionRules.partitions(update.target(), update.restrictions());
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -61,7 +63,10 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var writes = Writes.of(context, update);
 
 		final AsyncResultSet result = table.mutate(() -> {
-			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
+			final var matched = RestrictionRules.rows(table, partitions)
+				.filter(SeaStarRow::isLive)
+				.filter(predicate)
+				.toList();
 
 			if (update.ifExists()) {
 				if (matched.isEmpty()) {
