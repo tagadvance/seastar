@@ -13,8 +13,6 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.Ordering;
 import org.apache.cassandra.cql3.Term;
-import org.apache.cassandra.cql3.selection.RawSelector;
-import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.SelectStatement.RawStatement;
 import org.jspecify.annotations.Nullable;
 
@@ -36,14 +34,26 @@ final class Queries {
 		final var table = target.table();
 		final var codecRegistry = context.getCodecRegistry();
 
-		final var projection = projection(table, raw.selectClause, coordinator);
+		// GROUP BY folds a result set into one row per group, and PER PARTITION LIMIT truncates each
+		// partition before the overall LIMIT. Neither is implemented, and both change which rows come
+		// back, so both are refused rather than dropped on the floor.
+		if (!raw.parameters.groups.isEmpty()) {
+			throw new InvalidQueryException(coordinator, "SeaStar does not support GROUP BY");
+		}
+		if (raw.perPartitionLimit != null) {
+			throw new InvalidQueryException(coordinator,
+				"SeaStar does not support PER PARTITION LIMIT");
+		}
+
+		final var selectors = Selectors.translate(table, raw.selectClause, codecRegistry,
+			context.getProtocolVersion(), coordinator);
 		final var restrictions = Restrictions.translate(table, raw.whereClause, codecRegistry,
 			coordinator, bindings);
 		final var orderBy = orderBy(table, raw, coordinator);
 		final var limit = limit(raw.limit, codecRegistry, coordinator, bindings);
 
-		return new Query(target, projection, raw.parameters.isDistinct, raw.parameters.allowFiltering,
-			restrictions, orderBy, limit);
+		return new Query(target, selectors, raw.parameters.isJson, raw.parameters.isDistinct,
+			raw.parameters.allowFiltering, restrictions, orderBy, limit);
 	}
 
 	/**
@@ -73,30 +83,6 @@ final class Queries {
 		}
 
 		return List.copyOf(orderBy);
-	}
-
-	/**
-	 * The positions of the selected columns, or an empty list for {@code SELECT *}, which selects
-	 * the table as it stands rather than a fixed set of columns.
-	 */
-	private static List<Integer> projection(final SeaStarTable table,
-		final List<RawSelector> selectClause, final Node coordinator) {
-		final List<Integer> indices = new ArrayList<>(selectClause.size());
-		for (final var selector : selectClause) {
-			if (!(selector.selectable instanceof Selectable.RawIdentifier identifier)) {
-				throw new UnsupportedOperationException(
-					"Unsupported select item %s".formatted(selector.selectable));
-			}
-			final var name = Selectables.toIdentifier(identifier);
-			final var index = table.firstIndexOf(name);
-			if (index < 0) {
-				throw new InvalidQueryException(coordinator,
-					"Undefined column name %s".formatted(name.asInternal()));
-			}
-			indices.add(index);
-		}
-
-		return List.copyOf(indices);
 	}
 
 	/**
