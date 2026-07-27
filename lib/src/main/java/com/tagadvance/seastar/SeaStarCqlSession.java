@@ -8,7 +8,6 @@ import com.datastax.oss.driver.api.core.metadata.Metadata;
 import com.datastax.oss.driver.api.core.metrics.Metrics;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
-import com.google.errorprone.annotations.ThreadSafe;
 import com.tagadvance.seastar.handlers.AlterKeyspaceHandler;
 import com.tagadvance.seastar.handlers.AlterTableHandler;
 import com.tagadvance.seastar.handlers.AlterTypeHandler;
@@ -34,9 +33,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * Safe for concurrent use. A statement is answered entirely on the calling thread - SeaStar never
+ * spawns one of its own - so an async result is already complete by the time it is returned;
+ * {@code whenComplete} and friends run inline rather than on a callback thread.
+ */
 @ThreadSafe
 public class SeaStarCqlSession implements CqlSession {
 

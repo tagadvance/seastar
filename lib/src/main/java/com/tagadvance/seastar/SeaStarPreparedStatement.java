@@ -20,8 +20,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * Safe for concurrent use: {@code definitions}, {@code resultMetadataId} and
+ * {@code resultSetOverride} are {@code volatile}, resolved at most once under a
+ * double-checked-locking {@code synchronized}, and every value ever published to them is
+ * immutable once built.
+ */
+@ThreadSafe
 public class SeaStarPreparedStatement implements PreparedStatement {
 
 	private final SeaStarDriverContext context;

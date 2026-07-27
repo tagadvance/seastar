@@ -5,11 +5,13 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import java.util.Arrays;
 import java.util.Objects;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@ThreadSafe
 public class CqlHandlerRegistry {
 
 	private static final Logger LOG = LoggerFactory.getLogger(CqlHandlerRegistry.class);

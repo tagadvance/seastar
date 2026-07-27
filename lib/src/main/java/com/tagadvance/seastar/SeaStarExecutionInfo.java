@@ -14,9 +14,11 @@ import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import net.jcip.annotations.Immutable;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+@Immutable
 public class SeaStarExecutionInfo implements ExecutionInfo {
 
 	private final Node coordinator;

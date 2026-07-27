@@ -11,6 +11,7 @@ import com.datastax.oss.driver.internal.core.util.CountingIterator;
 import java.util.Collections;
 import java.util.Queue;
 import java.util.concurrent.CompletionStage;
+import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
 /**
@@ -31,7 +32,11 @@ import org.jspecify.annotations.NonNull;
  * is code that asserts on the page boundary itself - the number of pages, a page size being
  * respected, or {@code fetchNextPage()} returning something. {@code AbstractCqlSessionTest} pins the
  * idioms on both backends.
+ *
+ * <p>Not safe for concurrent use: {@link #currentPage()} and {@code rs.iterator()} share one
+ * underlying {@link CountingIterator}, the same as any standard {@link java.util.Iterator} would.
  */
+@NotThreadSafe
 public class SeaStarAsyncResultSet implements AsyncResultSet {
 
 	private final ColumnDefinitions definitions;
