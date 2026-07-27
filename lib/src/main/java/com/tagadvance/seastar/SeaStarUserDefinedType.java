@@ -6,6 +6,11 @@ import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.Map;
 
+/**
+ * A user-defined type: its field names and types, in declaration order. Describes the shape a
+ * {@link SeaStarUdtValue} of this type must have; guarded by its keyspace's lock, the same one its
+ * tables are - see the lock hierarchy in {@code AGENTS.md}.
+ */
 public interface SeaStarUserDefinedType extends SeaStarReadWriteLock, UserDefinedType {
 
 	SeaStarDriverContext context();
