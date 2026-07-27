@@ -4,8 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.datastax.oss.driver.api.core.auth.ProgrammaticPlainTextAuthProvider;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -69,6 +72,37 @@ class SeaStarCqlSessionBuilderTest {
 		final var builder = SeaStarCqlSession.builder().withSchemaResource("does-not-exist.cql");
 		final var e = assertThrows(IllegalStateException.class, builder::build);
 		assertTrue(e.getMessage().contains("Failed to read schema"), e.getMessage());
+	}
+
+	/**
+	 * f_plan_api_contract.txt F6: transport settings a caller might set on a builder shared with a
+	 * real session are accepted and ignored rather than rejected.
+	 */
+	@Test
+	@DisplayName("Transport settings on the builder are accepted rather than rejected")
+	void testTransportSettingsAccepted() {
+		try (final var session = SeaStarCqlSession.builder()
+			.withAuthProvider(new ProgrammaticPlainTextAuthProvider("user", "pass"))
+			.withAuthCredentials("user", "pass")
+			.withLocalDatacenter("dc1")
+			.withMetricRegistry(new Object())
+			.build()) {
+			assertTrue(session.getMetadata().getKeyspaces().isEmpty());
+		}
+	}
+
+	/**
+	 * f_plan_api_contract.txt F6: a contact point names a real address to connect to, which SeaStar
+	 * has none of, so accepting one silently would misrepresent what got configured.
+	 */
+	@Test
+	@DisplayName("A contact point is rejected: SeaStar has no address to connect to")
+	void testContactPointRejected() {
+		final var builder = SeaStarCqlSession.builder();
+		assertThrows(UnsupportedOperationException.class,
+			() -> builder.addContactPoint(new InetSocketAddress("localhost", 9042)));
+		assertThrows(UnsupportedOperationException.class,
+			() -> builder.addContactPoints(List.of(new InetSocketAddress("localhost", 9042))));
 	}
 
 }
