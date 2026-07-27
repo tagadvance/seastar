@@ -38,6 +38,9 @@ import org.jspecify.annotations.Nullable;
  * <p>Holds no lock of its own: {@link #lock()} hands back the keyspace's, so the column list, the
  * key definition and every row are guarded by one lock rather than by a level each. Every field
  * below is annotated with that guard or documented as immutable.
+ *
+ * <p>Rows are stored by partition. That is how a live node stores them, and it is what turns a point
+ * lookup and a partition-wide delete from a scan of the table into a walk of one partition.
  */
 @ThreadSafe
 public class VolatileTable implements SeaStarTable {
@@ -67,8 +70,12 @@ public class VolatileTable implements SeaStarTable {
 	private final Map<CqlIdentifier, ClusteringOrder> clusteringColumns;
 	@GuardedBy("keyspace.lock()")
 	private final Map<CqlIdentifier, IndexMetadata> indexes;
+	/**
+	 * Every row, grouped by its partition key values and in insertion order within each partition -
+	 * the partitions themselves in the order they were first written.
+	 */
 	@GuardedBy("keyspace.lock()")
-	private final List<SeaStarRow> rows;
+	private final Map<List<Object>, List<SeaStarRow>> rowsByPartition;
 	/**
 	 * The static cells of each partition, keyed by that partition's key values. A static column
 	 * belongs to the partition rather than to any row in it, so it is stored once here and every row
@@ -92,7 +99,7 @@ public class VolatileTable implements SeaStarTable {
 		this.partitionKey = new ArrayList<>();
 		this.clusteringColumns = new LinkedHashMap<>();
 		this.indexes = new LinkedHashMap<>();
-		this.rows = new ArrayList<>();
+		this.rowsByPartition = new LinkedHashMap<>();
 		this.staticsByPartition = new ConcurrentHashMap<>();
 		this.attachmentPoint = context;
 	}
@@ -120,6 +127,7 @@ public class VolatileTable implements SeaStarTable {
 
 	/**
 	 * The partition a row of these values belongs to: its partition key column values, in key order.
+	 * The key of both {@link #rowsByPartition} and {@link #staticsByPartition}.
 	 *
 	 * <p>An unmodifiable {@link ArrayList} rather than a {@code List.of}, because a partition key
 	 * column that has not been written yet is null and {@code List.of} refuses one.
@@ -133,6 +141,36 @@ public class VolatileTable implements SeaStarTable {
 		}
 
 		return Collections.unmodifiableList(key);
+	}
+
+	/**
+	 * The partition a row belongs to, read from what it stores rather than through
+	 * {@link SeaStarRow#getObject(int)}, which round-trips every value through its codec.
+	 */
+	@GuardedBy("keyspace.lock()")
+	private List<Object> partitionKeyOf(final SeaStarRow row) {
+		if (row instanceof VolatileRow volatileRow) {
+			return partitionKeyOf(volatileRow.storedValues());
+		}
+		final List<Object> key = new ArrayList<>(partitionKey.size());
+		for (final var column : partitionKey) {
+			final var index = indexOf(column);
+			key.add(index < 0 ? null : row.getObject(index));
+		}
+
+		return Collections.unmodifiableList(key);
+	}
+
+	/**
+	 * Rebuilds the index from the rows it already holds, for the changes that move a partition key
+	 * column rather than a row. Every caller is already walking every row, so this costs no order.
+	 */
+	@GuardedBy("keyspace.lock()")
+	private void reindex() {
+		final var existing = rowsByPartition.values().stream().flatMap(List::stream).toList();
+		rowsByPartition.clear();
+		existing.forEach(row -> rowsByPartition.computeIfAbsent(partitionKeyOf(row),
+			ignored -> new ArrayList<>()).add(row));
 	}
 
 	/**
@@ -184,7 +222,13 @@ public class VolatileTable implements SeaStarTable {
 	public void markPartitionKey(final CqlIdentifier name) {
 		requireNonNull(name, "name must not be null");
 
-		writeLock(() -> partitionKey.add(name));
+		writeLock(() -> {
+			partitionKey.add(name);
+			// The key definition changed, so every row belongs somewhere else now. A table normally
+			// has no rows when this is called - CREATE TABLE builds the key first - but a test that
+			// populates the model by hand may have.
+			reindex();
+		});
 	}
 
 	@Override
@@ -206,8 +250,11 @@ public class VolatileTable implements SeaStarTable {
 		return writeLockUnchecked(() -> {
 			final var index = insertionIndexOf(name);
 			columns.add(index, column);
-			rows.forEach(row -> row.insertValue(index, null));
+			allRows().forEach(row -> row.insertValue(index, null));
 			staticsByPartition.values().forEach(cells -> cells.insert(index, null, 0L));
+			// A new column lands after the key columns, so no partition key value moves - but the
+			// index is keyed by position, so it is rebuilt rather than reasoned about.
+			reindex();
 
 			return column;
 		});
@@ -224,8 +271,9 @@ public class VolatileTable implements SeaStarTable {
 			}
 
 			columns.remove(index);
-			rows.forEach(row -> row.removeValue(index));
+			allRows().forEach(row -> row.removeValue(index));
 			staticsByPartition.values().forEach(cells -> cells.remove(index));
+			reindex();
 		});
 	}
 
@@ -287,12 +335,34 @@ public class VolatileTable implements SeaStarTable {
 	public void addRow(final SeaStarRow row) {
 		requireNonNull(row, "row must not be null");
 
-		writeLock(() -> rows.add(row));
+		writeLock(() -> rowsByPartition.computeIfAbsent(partitionKeyOf(row),
+			ignored -> new ArrayList<>()).add(row));
 	}
 
 	@Override
 	public void removeRowIf(final Predicate<SeaStarRow> predicate) {
-		writeLock(() -> rows.removeIf(predicate));
+		writeLock(() -> {
+			rowsByPartition.values().forEach(partition -> partition.removeIf(predicate));
+			rowsByPartition.values().removeIf(List::isEmpty);
+		});
+	}
+
+	@Override
+	public void removeRowIf(final List<Object> partitionKeyValues,
+		final Predicate<SeaStarRow> predicate) {
+		requireNonNull(partitionKeyValues, "partitionKeyValues must not be null");
+
+		writeLock(() -> {
+			final var partition = rowsByPartition.get(
+				Collections.unmodifiableList(new ArrayList<>(partitionKeyValues)));
+			if (partition == null) {
+				return;
+			}
+			partition.removeIf(predicate);
+			if (partition.isEmpty()) {
+				rowsByPartition.values().removeIf(List::isEmpty);
+			}
+		});
 	}
 
 	/**
@@ -302,7 +372,23 @@ public class VolatileTable implements SeaStarTable {
 	 */
 	@Override
 	public Stream<SeaStarRow> rows() {
-		return readLockUnchecked(() -> List.copyOf(rows)).stream();
+		return readLockUnchecked(() -> allRows().toList()).stream();
+	}
+
+	@Override
+	public Stream<SeaStarRow> partition(final List<Object> partitionKeyValues) {
+		requireNonNull(partitionKeyValues, "partitionKeyValues must not be null");
+
+		return readLockUnchecked(() -> List.copyOf(rowsByPartition.getOrDefault(
+			Collections.unmodifiableList(new ArrayList<>(partitionKeyValues)), List.of()))).stream();
+	}
+
+	/**
+	 * Every row, lazily, for the callers that already hold the lock.
+	 */
+	@GuardedBy("keyspace.lock()")
+	private Stream<SeaStarRow> allRows() {
+		return rowsByPartition.values().stream().flatMap(List::stream);
 	}
 
 	@Override
@@ -434,7 +520,7 @@ public class VolatileTable implements SeaStarTable {
 	@Override
 	public void truncate() {
 		writeLock(() -> {
-			rows.clear();
+			rowsByPartition.clear();
 			staticsByPartition.clear();
 		});
 	}

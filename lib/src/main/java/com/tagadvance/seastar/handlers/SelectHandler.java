@@ -59,6 +59,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final Predicate<SeaStarRow> predicate;
 		final int[] distinctKey;
 		final RowOrdering ordering;
+		final List<List<Object>> partitions;
 		try {
 			query = Queries.translate(context, getKeyspace, raw, coordinator, bindings);
 			if (query.distinct()) {
@@ -67,6 +68,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			predicate = RestrictionRules.forSelect(query, coordinator);
 			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
 			ordering = RowOrdering.of(query.target().table(), reversed(query, coordinator));
+			partitions = RestrictionRules.partitions(query.target(), query.restrictions());
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -77,7 +79,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		return table.query(() -> {
 			// A row whose marker and every cell have expired is gone, as it is on a cluster; expiry is
 			// evaluated here rather than reaped on a timer, so nothing depends on wall-clock progress.
-			var rows = table.rows().filter(SeaStarRow::isLive);
+			var rows = RestrictionRules.rows(table, partitions).filter(SeaStarRow::isLive);
 			if (predicate != null) {
 				rows = rows.filter(predicate);
 			}

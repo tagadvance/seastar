@@ -5,6 +5,8 @@ import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -13,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -138,6 +141,67 @@ final class RestrictionRules {
 		update.restrictions().forEach(restriction -> pinned.putAll(restriction.equalityValues()));
 
 		return pinned.size() == update.target().primaryKeyNames().size() ? pinned : null;
+	}
+
+	/**
+	 * How many partitions an {@code IN} on the partition key may be expanded to before scanning the
+	 * table is the cheaper answer. Well beyond any WHERE clause a test writes.
+	 */
+	private static final int MAX_PARTITIONS = 1_024;
+
+	/**
+	 * The partitions a WHERE clause reaches, or null when it does not pin every partition key column
+	 * and so has to be answered by a scan.
+	 *
+	 * <p>Each element is one partition's key values, in key order - the key {@link SeaStarTable} is
+	 * indexed by. {@code IN} pins a column to several values at once, so the answer is the product of
+	 * the alternatives rather than a single key.
+	 */
+	static @Nullable List<List<Object>> partitions(final Target target,
+		final List<Restriction> restrictions) {
+		final var partitionKey = target.partitionKeyNames();
+		final Map<CqlIdentifier, List<Object>> pinned = new LinkedHashMap<>();
+		for (final var restriction : restrictions) {
+			// A multi-column relation names clustering columns only, so it never pins a partition.
+			if (!restriction.operator().isEquality() || restriction.isMultiColumn()
+				|| !partitionKey.contains(restriction.column().name())) {
+				continue;
+			}
+			pinned.put(restriction.column().name(),
+				restriction.values().stream().map(tuple -> tuple.get(0)).toList());
+		}
+		if (!pinned.keySet().containsAll(partitionKey)) {
+			return null;
+		}
+
+		List<List<Object>> keys = List.of(List.of());
+		for (final var column : partitionKey) {
+			final var alternatives = pinned.get(column);
+			if (keys.size() * (long) alternatives.size() > MAX_PARTITIONS) {
+				return null;
+			}
+			keys = keys.stream()
+				.flatMap(prefix -> alternatives.stream().map(value -> {
+					// Not List.copyOf: a bound marker left unset resolves to null, and a partition key
+					// column pinned to null matches nothing rather than throwing.
+					final List<Object> key = new ArrayList<>(prefix);
+					key.add(value);
+
+					return Collections.unmodifiableList(key);
+				}))
+				.toList();
+		}
+
+		return keys;
+	}
+
+	/**
+	 * The rows a statement has to look at: the partitions its WHERE clause reaches, or the whole
+	 * table when it reaches none in particular.
+	 */
+	static Stream<SeaStarRow> rows(final SeaStarTable table,
+		final @Nullable List<List<Object>> partitions) {
+		return partitions == null ? table.rows() : partitions.stream().flatMap(table::partition);
 	}
 
 	private static boolean isConditional(final Modification modification) {

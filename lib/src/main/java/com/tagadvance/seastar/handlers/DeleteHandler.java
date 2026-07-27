@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.DeleteStatement.Parsed;
+import org.jspecify.annotations.Nullable;
 
 @ThreadSafe
 public class DeleteHandler implements CqlHandler<Parsed> {
@@ -47,10 +48,12 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 
 		final Modification delete;
 		final Predicate<SeaStarRow> predicate;
+		final List<List<Object>> partitions;
 		try {
 			delete = Modifications.delete(context, getKeyspace, raw, coordinator, bindings);
 			validateDeletedColumns(delete, coordinator);
 			predicate = RestrictionRules.forDelete(delete, coordinator);
+			partitions = RestrictionRules.partitions(delete.target(), delete.restrictions());
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
@@ -65,13 +68,16 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var stamped = delete.timestamp() != null;
 
 		final AsyncResultSet result = table.mutate(() -> {
-			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
+			final var matched = RestrictionRules.rows(table, partitions)
+				.filter(SeaStarRow::isLive)
+				.filter(predicate)
+				.toList();
 
 			if (delete.ifExists()) {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped,
+				applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
 					coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
@@ -85,13 +91,14 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped,
+				applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
 					coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
-			applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
+			applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
+				coordinator);
 
 			return newAsyncResultSet(executionInfo);
 		});
@@ -103,7 +110,8 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	 * A DELETE that names no column removes the whole row; one that names columns clears them and
 	 * leaves the row in place.
 	 */
-	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
+	private static void applyDelete(final SeaStarTable table,
+		final @Nullable List<List<Object>> partitions, final List<SeaStarRow> matched,
 		final List<Assignment> deletedColumns, final boolean partitionWide, final Writes writes,
 		final boolean stamped, final Node coordinator) {
 		if (!deletedColumns.isEmpty()) {
@@ -128,8 +136,13 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		// holding a value written after it survives; an unstamped one is the newest write there is.
 		// The set is identity-based, because a row is only ever equal to itself.
 		final Set<SeaStarRow> removed = new HashSet<>(matched);
-		table.removeRowIf(stamped ? row -> removed.contains(row) && !row.isLive()
-			: removed::contains);
+		final Predicate<SeaStarRow> doomed = stamped
+			? row -> removed.contains(row) && !row.isLive() : removed::contains;
+		if (partitions == null) {
+			table.removeRowIf(doomed);
+		} else {
+			partitions.forEach(partition -> table.removeRowIf(partition, doomed));
+		}
 	}
 
 	private static List<Integer> nonKeyIndices(final SeaStarTable table) {
