@@ -25,11 +25,7 @@ public interface SeaStarKeyspace extends SeaStarReadWriteLock, KeyspaceMetadata 
 
 	Optional<SeaStarUserDefinedType> getSeaStarUserDefinedType(CqlIdentifier id);
 
-	default void putSeaStarUserDefinedType(final String name, final SeaStarUserDefinedType Object) {
-		putSeaStarUserDefinedType(CqlIdentifier.fromInternal(name), Object);
-	}
-
-	void putSeaStarUserDefinedType(CqlIdentifier id, SeaStarUserDefinedType Object);
+	void putSeaStarUserDefinedType(SeaStarUserDefinedType userDefinedType);
 
 	default void removeSeaStarUserDefinedType(final String name) {
 		removeSeaStarUserDefinedType(CqlIdentifier.fromInternal(name));

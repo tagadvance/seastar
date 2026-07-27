@@ -5,7 +5,6 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
-import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableList;
 import com.google.errorprone.annotations.ThreadSafe;
 import java.util.Arrays;
 import java.util.Objects;
@@ -60,13 +59,6 @@ public class SeaStarRequestProcessorRegistry {
 		throw new IllegalArgumentException(
 			"No request processor found for a %s asked for as %s".formatted(
 				request.getClass().getSimpleName(), resultType));
-	}
-
-	/**
-	 * This creates a defensive copy on every call, do not overuse.
-	 */
-	public Iterable<SeaStarRequestProcessor<?, ?>> getProcessors() {
-		return ImmutableList.copyOf(processors);
 	}
 
 }

@@ -50,12 +50,12 @@ public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContex
 	default SeaStarKeyspace newSeaStarKeyspace(final CqlIdentifier id,
 		final Map<String, String> replication, final boolean durableWrites) {
 		final var keyspace = new VolatileKeyspace(this, id, replication, durableWrites);
-		putSeaStarKeyspace(id, keyspace);
+		putSeaStarKeyspace(keyspace);
 
 		return keyspace;
 	}
 
-	void putSeaStarKeyspace(CqlIdentifier id, SeaStarKeyspace keyspace);
+	void putSeaStarKeyspace(SeaStarKeyspace keyspace);
 
 	void removeSeaStarKeyspace(CqlIdentifier id);
 

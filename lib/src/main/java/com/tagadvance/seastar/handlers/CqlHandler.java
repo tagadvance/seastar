@@ -13,12 +13,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.jspecify.annotations.NonNull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public interface CqlHandler<T extends CQLStatement.Raw> {
-
-	Logger LOG = LoggerFactory.getLogger(CqlHandler.class);
 
 	boolean canProcess(final CQLStatement.Raw raw);
 
