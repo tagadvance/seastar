@@ -10,4 +10,7 @@
  * {@code SeaStarCqlSessionBuilder}, {@code SeaStarDriverContext} and the {@code SeaStar*} model
  * interfaces in {@code com.tagadvance.seastar} instead.
  */
+@NullMarked
 package com.tagadvance.seastar.handlers;
+
+import org.jspecify.annotations.NullMarked;
