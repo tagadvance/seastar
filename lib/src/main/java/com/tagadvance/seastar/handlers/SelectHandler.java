@@ -3,24 +3,22 @@ package com.tagadvance.seastar.handlers;
 import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
-import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.cql.Row;
-import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
-import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
+import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
 import com.tagadvance.seastar.SeaStarAsyncResultSet;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
-import java.nio.ByteBuffer;
+import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -37,7 +35,6 @@ import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement.RawStatement;
-import org.jspecify.annotations.NonNull;
 
 @ThreadSafe
 public class SelectHandler implements CqlHandler<RawStatement> {
@@ -59,15 +56,13 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final var coordinator = executionInfo.getCoordinator();
 
 		final Query query;
-		final Projection projection;
 		final Predicate<SeaStarRow> predicate;
 		final int[] distinctKey;
 		final RowOrdering ordering;
 		try {
 			query = Queries.translate(context, getKeyspace, raw, coordinator, bindings);
-			projection = projection(query);
 			if (query.distinct()) {
-				validateDistinct(query, projection, coordinator);
+				validateDistinct(query, coordinator);
 			}
 			predicate = RestrictionRules.forSelect(query, coordinator);
 			distinctKey = query.distinct() ? partitionKeyIndices(query.target()) : null;
@@ -80,7 +75,9 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final var limit = query.limit();
 
 		return table.readLockUnchecked(() -> {
-			var rows = table.rows();
+			// A row whose marker and every cell have expired is gone, as it is on a cluster; expiry is
+			// evaluated here rather than reaped on a timer, so nothing depends on wall-clock progress.
+			var rows = table.rows().filter(SeaStarRow::isLive);
 			if (predicate != null) {
 				rows = rows.filter(predicate);
 			}
@@ -93,57 +90,179 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			// Ordering comes before the limit: LIMIT takes the first n rows of the result Cassandra
 			// would return, not the first n rows that happen to have been inserted.
 			rows = ordering.sort(rows);
-			if (limit != null) {
+			if (limit != null && !query.isAggregate()) {
 				rows = rows.limit(limit);
 			}
-			final Stream<Row> snapshots = rows.map(SeaStarRow::snapshot);
-			final Stream<Row> projected = projection == null ? snapshots
-				: snapshots.map(row -> project(row, projection));
-			final var data = projected.collect(Collectors.toCollection(LinkedList::new));
-			final var definitions = projection == null ? table.snapshot() : projection.definitions();
+
+			final var result = query.isAggregate() ? aggregate(context, query, rows)
+				: project(context, query, rows);
 
 			return CompletableFuture.<AsyncResultSet>completedStage(
-				new SeaStarAsyncResultSet(definitions, executionInfo, data));
+				new SeaStarAsyncResultSet(result.definitions(), executionInfo, result.rows()));
 		});
 	}
 
-	private record Projection(ColumnDefinitions definitions, int[] indices) {
+	/**
+	 * The result of a query: the columns it reports and the rows it answers with.
+	 */
+	private record Result(ColumnDefinitions definitions, LinkedList<Row> rows) {
 
 	}
 
 	/**
-	 * The definitions and column positions a projection reads, or null for {@code SELECT *}, which
-	 * returns the table's own definitions.
+	 * The definitions a query reports, which for {@code SELECT *} are the table's own and otherwise
+	 * the selectors themselves - a selector <em>is</em> a column definition, which is what carries an
+	 * alias through to the result.
 	 */
-	private static Projection projection(final Query query) {
-		final var indices = query.projection();
-		if (indices.isEmpty()) {
-			return null;
+	private static ColumnDefinitions definitions(final Query query) {
+		final var table = query.target().table();
+		if (query.json()) {
+			return DefaultColumnDefinitions.valueOf(
+				List.of(new Selector(table.getKeyspace(), table.getName(), Jsons.COLUMN,
+					DataTypes.TEXT, null, null, row -> null)));
+		}
+		if (query.isWildcard()) {
+			return table.snapshot();
 		}
 
-		final var table = query.target().table();
-		final List<ColumnDefinition> columns = indices.stream().map(table::get).toList();
-
-		return new Projection(DefaultColumnDefinitions.valueOf(columns),
-			indices.stream().mapToInt(Integer::intValue).toArray());
+		return DefaultColumnDefinitions.valueOf(
+			query.selectors().stream().map(ColumnDefinition.class::cast).toList());
 	}
 
-	private static void validateDistinct(final Query query, final Projection projection,
-		final Node coordinator) {
+	/**
+	 * A row-wise query: every matched row produces one result row.
+	 */
+	private static Result project(final SeaStarDriverContext context, final Query query,
+		final Stream<SeaStarRow> rows) {
+		final var definitions = definitions(query);
+		if (query.isWildcard() && !query.json()) {
+			return new Result(definitions,
+				rows.map(SeaStarRow::snapshot).collect(Collectors.toCollection(LinkedList::new)));
+		}
+
+		final var names = names(query);
+		final var types = types(query);
+		final var readers = readers(query);
+		final var data = rows.map(row -> {
+			final List<Object> values = new ArrayList<>(readers.size());
+			readers.forEach(reader -> values.add(reader.read(row)));
+
+			return row(context, query, definitions, names, types, values);
+		}).collect(Collectors.toCollection(LinkedList::new));
+
+		return new Result(definitions, data);
+	}
+
+	/**
+	 * An aggregating query: however many rows matched, the answer is exactly one row - including when
+	 * none did, which is why {@code SELECT count(*)} on an empty table answers zero rather than
+	 * nothing.
+	 */
+	private static Result aggregate(final SeaStarDriverContext context, final Query query,
+		final Stream<SeaStarRow> rows) {
+		final var definitions = definitions(query);
+		final var codecRegistry = context.getCodecRegistry();
+		final var version = context.getProtocolVersion();
+		final var selectors = query.selectors();
+		final List<Aggregation> aggregations = selectors.stream()
+			.map(selector -> selector.isAggregate()
+				? new Aggregation(selector, codecRegistry, version) : null)
+			.toList();
+		// A plain column alongside an aggregate reports the first matched row's value, which is what a
+		// cluster answers for SELECT count(*), v.
+		final List<Object> first = new ArrayList<>(java.util.Collections.nCopies(selectors.size(),
+			null));
+		final var seen = new boolean[]{false};
+
+		rows.forEach(row -> {
+			for (int i = 0; i < selectors.size(); i++) {
+				final var aggregation = aggregations.get(i);
+				if (aggregation != null) {
+					aggregation.accumulate(row);
+				} else if (!seen[0]) {
+					first.set(i, selectors.get(i).reader().read(row));
+				}
+			}
+			seen[0] = true;
+		});
+
+		final List<Object> values = new ArrayList<>(selectors.size());
+		for (int i = 0; i < selectors.size(); i++) {
+			final var aggregation = aggregations.get(i);
+			values.add(aggregation == null ? first.get(i) : aggregation.result());
+		}
+
+		final var data = new LinkedList<Row>();
+		data.add(row(context, query, definitions, names(query), types(query), values));
+
+		return new Result(definitions, data);
+	}
+
+	/**
+	 * One result row, wrapped into the single {@code [json]} column when {@code SELECT JSON} asked
+	 * for it.
+	 */
+	private static Row row(final SeaStarDriverContext context, final Query query,
+		final ColumnDefinitions definitions, final List<CqlIdentifier> names,
+		final List<DataType> types, final List<Object> values) {
+		final var row = query.json()
+			? List.<Object>of(Jsons.encode(names, types, values)) : values;
+
+		return new ValueRow(definitions, row, context.getCodecRegistry(),
+			context.getProtocolVersion());
+	}
+
+	private static List<Selector.Reader> readers(final Query query) {
+		if (query.isWildcard()) {
+			final var table = query.target().table();
+
+			return wildcardIndices(table).stream()
+				.<Selector.Reader>map(index -> row -> row.getObject(index))
+				.toList();
+		}
+
+		return query.selectors().stream().map(Selector::reader).toList();
+	}
+
+	private static List<CqlIdentifier> names(final Query query) {
+		if (query.isWildcard()) {
+			final var table = query.target().table();
+
+			return wildcardIndices(table).stream().map(index -> table.get(index).getName()).toList();
+		}
+
+		return query.selectors().stream().map(Selector::name).toList();
+	}
+
+	private static List<DataType> types(final Query query) {
+		if (query.isWildcard()) {
+			final var table = query.target().table();
+
+			return wildcardIndices(table).stream().map(index -> table.get(index).getType()).toList();
+		}
+
+		return query.selectors().stream().map(Selector::type).toList();
+	}
+
+	private static List<Integer> wildcardIndices(final SeaStarTable table) {
+		return java.util.stream.IntStream.range(0, table.size()).boxed().toList();
+	}
+
+	private static void validateDistinct(final Query query, final Node coordinator) {
 		final var table = query.target().table();
 		final var partitionKey = query.target().partitionKeyNames();
-		// A null projection means SELECT *, which requests every column; validate them all.
-		final var size = table.size();
-		final var selected = projection == null ? null : projection.indices();
-		final var count = selected == null ? size : selected.length;
-		for (int i = 0; i < count; i++) {
-			final var index = selected == null ? i : selected[i];
-			final var column = table.get(index);
+		final List<Integer> selected = query.isWildcard() ? wildcardIndices(table)
+			: query.selectors().stream().map(Selector::columnIndex).toList();
+		for (int i = 0; i < selected.size(); i++) {
+			final var index = selected.get(i);
+			final var name = index == null ? query.selectors().get(i).name()
+				: table.get(index).getName();
+			final var column = index == null ? null : table.get(index);
 			final var isStatic = column instanceof ColumnMetadata metadata && metadata.isStatic();
-			if (!partitionKey.contains(column.getName()) && !isStatic) {
+			if (index == null || !partitionKey.contains(name) && !isStatic) {
 				throw new InvalidQueryException(coordinator,
 					("SELECT DISTINCT queries must only request partition key columns and/or static "
-						+ "columns (not %s)").formatted(column.getName().asInternal()));
+						+ "columns (not %s)").formatted(name.asInternal()));
 			}
 		}
 	}
@@ -255,81 +374,6 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 			.stream()
 			.anyMatch(restriction -> restriction.column().name().equals(column)
 				&& restriction.operator() == CqlOperator.EQ);
-	}
-
-	private static Row project(final Row source, final Projection projection) {
-		final var definitions = projection.definitions();
-		final var indices = projection.indices();
-
-		return new Row() {
-
-			@Override
-			public boolean isDetached() {
-				return source.isDetached();
-			}
-
-			@Override
-			public void attach(final @NonNull AttachmentPoint attachmentPoint) {
-				throw new UnsupportedOperationException();
-			}
-
-			@Override
-			@NonNull
-			public CodecRegistry codecRegistry() {
-				return source.codecRegistry();
-			}
-
-			@Override
-			@NonNull
-			public ProtocolVersion protocolVersion() {
-				return source.protocolVersion();
-			}
-
-			@Override
-			public int size() {
-				return definitions.size();
-			}
-
-			@Override
-			@NonNull
-			public DataType getType(final int i) {
-				return definitions.get(i).getType();
-			}
-
-			@Override
-			public ByteBuffer getBytesUnsafe(final int i) {
-				return source.getBytesUnsafe(indices[i]);
-			}
-
-			@Override
-			public int firstIndexOf(final @NonNull String name) {
-				return definitions.firstIndexOf(name);
-			}
-
-			@Override
-			@NonNull
-			public DataType getType(final @NonNull String name) {
-				return definitions.get(name).getType();
-			}
-
-			@Override
-			public int firstIndexOf(final @NonNull CqlIdentifier id) {
-				return definitions.firstIndexOf(id);
-			}
-
-			@Override
-			@NonNull
-			public DataType getType(final @NonNull CqlIdentifier id) {
-				return definitions.get(id).getType();
-			}
-
-			@Override
-			@NonNull
-			public ColumnDefinitions getColumnDefinitions() {
-				return definitions;
-			}
-
-		};
 	}
 
 }

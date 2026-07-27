@@ -622,13 +622,16 @@ class TranslationTest {
 		@Test
 		@DisplayName("a select list translates to the positions of the selected columns")
 		void projection() {
-			assertEquals(List.of(2, 1), translate("SELECT age, name FROM ks.people").projection());
+			assertEquals(List.of(2, 1), translate("SELECT age, name FROM ks.people").selectors()
+				.stream()
+				.map(Selector::columnIndex)
+				.toList());
 		}
 
 		@Test
 		@DisplayName("SELECT * projects nothing, leaving the table's own columns")
 		void selectAll() {
-			assertEquals(List.of(), translate("SELECT * FROM ks.people").projection());
+			assertTrue(translate("SELECT * FROM ks.people").isWildcard());
 		}
 
 		@Test
@@ -637,7 +640,7 @@ class TranslationTest {
 			final var error = assertThrows(InvalidQueryException.class,
 				() -> translate("SELECT nope FROM ks.people"));
 
-			assertEquals("Undefined column name nope", error.getMessage());
+			assertEquals("Undefined column name nope in table ks.people", error.getMessage());
 		}
 
 		@Test
