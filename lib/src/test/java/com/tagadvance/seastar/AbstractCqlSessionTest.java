@@ -2062,6 +2062,40 @@ abstract class AbstractCqlSessionTest {
 		assertDoesNotThrow(() -> session.execute("DROP INDEX IF EXISTS nope.nope_idx"));
 	}
 
+	@Test
+	@Order(145)
+	@DisplayName("DROP TYPE refuses a type a table or another type still uses")
+	void testDropType() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_addr (street text)");
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_holder (home frozen<drop_addr>)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.drop_type_users "
+			+ "(id int PRIMARY KEY, homes list<frozen<drop_addr>>)");
+
+		// A nested reference counts: the type is inside another type and inside a list column.
+		assertMentions("drop_holder", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_addr")));
+		session.execute("DROP TYPE foo.drop_holder");
+		assertMentions("drop_type_users", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_addr")));
+
+		// A type nothing names is dropped and gone from the metadata.
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_unused (v text)");
+		session.execute("DROP TYPE foo.drop_unused");
+		assertFalse(session.getMetadata()
+			.getKeyspace("foo")
+			.orElseThrow()
+			.getUserDefinedType("drop_unused")
+			.isPresent());
+
+		// A type that is not there is named in the failure, and forgiven by IF EXISTS.
+		assertMentions("drop_unused", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_unused")));
+		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS foo.drop_unused"));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE nope.drop_addr")));
+		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS nope.drop_addr"));
+	}
+
 	private Set<String> indexNames(final String table) {
 		return session.getMetadata()
 			.getKeyspace("foo")
