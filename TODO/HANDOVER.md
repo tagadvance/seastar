@@ -32,6 +32,7 @@ Last verified: 213 tests green locally, 112 green on the container.
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 | j_plan | J7 | CI on JDK 17/21/25; container suite nightly and on demand |
 | e_plan | E0 E1 E2 E3 E4 E5 | ALTER TABLE/KEYSPACE, DROP INDEX/TYPE; everything else rejected by name; `docs/support-matrix.md` |
+| d_plan | D5 D6 D7 D9 | select clause (aggregates, token, writetime/ttl, cast, aliases, JSON both ways); static columns per partition; per-cell write time and TTL against an injectable clock; paging documented as a deliberate single page |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -40,8 +41,8 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **d_plan D5 D6 D7 D9**, **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**,
-  **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J8**.
+- **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**,
+  **k_plan all**, **j_plan J3 J8**.
 
 ### Decisions already made - do not relitigate
 
@@ -71,7 +72,15 @@ a JDK bump is the most likely thing to break them. Run it with
   failure. Only the message changed. e_plan E0 asked for a driver exception there; that was the
   wrong call and the reasoning is in the method's javadoc.
 - **API surface**: f_plan F1 in full - handlers, processors, registries and `Volatile*` all become
-  internal or package-private.
+  internal or package-private. D7 added four things to it deliberately and they should survive that
+  pass in some form: `SeaStarClock`, `SeaStarCqlSessionBuilder#withClock(java.time.Clock)`,
+  `SeaStarDriverContext#getClock()` and a three-argument `VolatileDriverContext` constructor. The
+  clock is how a test observes a TTL without sleeping, so it is user-facing however the rest is
+  narrowed.
+- **A tombstone is not stored.** D7 resolves two writes to a cell by their timestamps, which is what
+  makes `USING TIMESTAMP` real, but a delete leaves nothing behind. A write stamped older than a
+  delete that already happened is therefore applied rather than suppressed. Recorded in the support
+  matrix; the fix is a tombstone per cell and it was judged not worth the storage for a fake.
 - **c_plan C1** (`Raw#prepare(ClientState)`) is rejected with evidence, recorded in AGENTS.md.
 
 ### Open questions for Tag
@@ -110,6 +119,30 @@ a JDK bump is the most likely thing to break them. Run it with
    cores and silently corrupts comparative runs; a Gradle shared service now enforces this.
 6. **TestContainers drags in the 3.x DataStax driver**, whose Guava 19 and slf4j 1.7 shadow the
    pinned versions inside a JMH uber jar. The container probe needs its own source set.
+
+## What the locking rework needs to know
+
+D6 and D7 changed the storage, and l_plan L1 is about to change how it is locked. Three things
+matter:
+
+1. **`VolatileTable#statics(...)` takes no lock, on purpose.** A row resolves its partition's static
+   cells while reading, under the table's *read* lock, and a `ReentrantReadWriteLock` read lock
+   cannot be upgraded - taking a write lock there deadlocks, and it did. The map is a
+   `ConcurrentHashMap` and `computeIfAbsent` is what makes creation atomic. If the row lock goes and
+   the keyspace lock arrives, keep that property: whatever lock protects the column list must already
+   be held by the caller, and the map must stay concurrent or the lookup must move outside the read
+   path.
+2. **A row's values are a `Cells`, not a `List<Object>`.** Values, write times and expiries move
+   together through `insert`/`remove`, which is what keeps ALTER TABLE ADD/DROP in step. A partition's
+   static cells are a `Cells` of the same width, so the same shift applies to them - see
+   `VolatileTable#insertColumn`/`removeColumn`/`truncate`.
+3. **Reads are no longer pure.** `VolatileRow#cellsOf` resolves and caches the partition's statics on
+   first use, so the read path mutates two fields (`statics`, `staticsResolved`). It is idempotent
+   and guarded by the row's own lock today; with the row lock gone it needs the keyspace lock or a
+   volatile/final rework.
+
+A partition-key index would help here too: `InsertHandler` now also scans the partition to drop a
+static row when the first clustered row arrives, and `DeleteHandler` scans it to clear static cells.
 
 ## Known performance debt
 
