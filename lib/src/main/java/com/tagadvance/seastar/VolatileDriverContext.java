@@ -24,7 +24,6 @@ import com.datastax.oss.driver.internal.core.context.DefaultDriverContext;
 import com.datastax.oss.driver.internal.core.metadata.NoopNodeStateListener;
 import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
 import com.datastax.oss.driver.internal.core.session.throttling.PassThroughRequestThrottler;
-import com.google.errorprone.annotations.ThreadSafe;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.time.Clock;
 import java.util.Collections;
@@ -37,6 +36,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import net.jcip.annotations.GuardedBy;
+import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
 /**

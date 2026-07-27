@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement.Raw;
@@ -14,6 +15,7 @@ import org.apache.cassandra.schema.KeyspaceParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@ThreadSafe
 public class CreateKeyspaceHandler implements CqlHandler<CreateKeyspaceStatement.Raw> {
 
 	private static final Logger LOG = LoggerFactory.getLogger(CreateKeyspaceHandler.class);

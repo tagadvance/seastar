@@ -21,8 +21,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
+import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * Not safe for concurrent use, unlike the driver's own {@code BoundStatement}: the real driver's
+ * setters return a new immutable copy, while these mutate {@code this} in place through plain
+ * fields with no lock. Bind a statement on one thread and hand it to another rather than sharing it
+ * across threads that both mutate it.
+ */
+@NotThreadSafe
 public class SeaStarBoundStatement implements BoundStatement {
 
 	private final SeaStarDriverContext context;

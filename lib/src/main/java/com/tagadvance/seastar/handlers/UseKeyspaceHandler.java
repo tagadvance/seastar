@@ -10,9 +10,11 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.UseStatement;
 
+@ThreadSafe
 public class UseKeyspaceHandler implements CqlHandler<UseStatement> {
 
 	private final Consumer<CqlIdentifier> setKeyspace;

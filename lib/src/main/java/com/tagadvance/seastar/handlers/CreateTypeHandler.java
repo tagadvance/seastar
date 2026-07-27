@@ -15,11 +15,13 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement.Raw;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@ThreadSafe
 public class CreateTypeHandler implements CqlHandler<Raw> {
 
 	private static final Logger LOG = LoggerFactory.getLogger(CreateTypeHandler.class);
