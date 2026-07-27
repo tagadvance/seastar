@@ -11,8 +11,15 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.jcip.annotations.Immutable;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * The single node SeaStar reports. Every field is immutable and nothing about a node ever changes,
+ * so it takes part in no lock: it is outside the hierarchy in {@code AGENTS.md} rather than at the
+ * bottom of it.
+ */
+@Immutable
 public class VolatileNode implements Node {
 
 	private static final String DATACENTER = "datacenter1";
