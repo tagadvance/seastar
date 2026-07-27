@@ -2123,6 +2123,17 @@ abstract class AbstractCqlSessionTest {
 			"ALTER KEYSPACE IF EXISTS nope WITH durable_writes = false"));
 	}
 
+	@Test
+	@Order(147)
+	@DisplayName("USE on a keyspace that does not exist names it and leaves the session where it was")
+	void testUseMissingKeyspace() {
+		session.execute("USE foo");
+
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("USE nope")));
+		assertEquals(CqlIdentifier.fromInternal("foo"), session.getKeyspace().orElseThrow());
+	}
+
 	private KeyspaceMetadata keyspace(final String name) {
 		return session.getMetadata().getKeyspace(name).orElseThrow();
 	}
