@@ -9,15 +9,42 @@ import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A table, its column list and its rows.
+ *
+ * <p>A table carries no lock of its own; {@link #lock()} is its keyspace's, and it guards the column
+ * list, the key definition, the indexes and every row. See the lock hierarchy in {@code AGENTS.md}.
+ */
 public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, ColumnDefinitions {
 
 	SeaStarDriverContext context();
 
 	SeaStarKeyspace keyspace();
+
+	/**
+	 * Runs a statement's mutation under the whole hierarchy: a read lock on the context, so the
+	 * keyspace cannot be dropped underneath it, and the keyspace's write lock, which is the only lock
+	 * anything inside the keyspace has. This is the order every mutation takes, and taking it in one
+	 * place is what keeps handlers from inventing another.
+	 */
+	default <V> V mutate(final Callable<V> callable) {
+		return context().readLockUnchecked(() -> writeLockUnchecked(callable));
+	}
+
+	/**
+	 * Runs a statement's read under the whole hierarchy: a read lock on the context and one on the
+	 * keyspace.
+	 *
+	 * @see #mutate(Callable)
+	 */
+	default <V> V query(final Callable<V> callable) {
+		return context().readLockUnchecked(() -> readLockUnchecked(callable));
+	}
 
 	default SeaStarColumn addColumn(final @NonNull String name, final @NonNull DataType type) {
 		return addColumn(CqlIdentifier.fromInternal(name), type);
@@ -75,11 +102,18 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 		return addRow(List.of(values));
 	}
 
+	/**
+	 * Validating the values against the column list and adding the row are one locked region: a
+	 * schema change in between would leave a row validated against a column list that no longer
+	 * exists.
+	 */
 	default SeaStarRow addRow(final List<Object> values) {
-		final var row = new VolatileRow(context(), this, values);
-		addRow(row);
+		return writeLockUnchecked(() -> {
+			final var row = new VolatileRow(context(), this, values);
+			addRow(row);
 
-		return row;
+			return row;
+		});
 	}
 
 	/**
@@ -87,10 +121,12 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 * that {@code INSERT ... USING TIMESTAMP} is what {@code writetime()} reports back.
 	 */
 	default SeaStarRow addRow(final List<Object> values, final long writeTime) {
-		final var row = new VolatileRow(context(), this, values, writeTime);
-		addRow(row);
+		return writeLockUnchecked(() -> {
+			final var row = new VolatileRow(context(), this, values, writeTime);
+			addRow(row);
 
-		return row;
+			return row;
+		});
 	}
 
 	/**
@@ -116,6 +152,9 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 */
 	void removeIndex(CqlIdentifier name);
 
+	/**
+	 * Every row of the table, as a snapshot rather than a live view.
+	 */
 	Stream<SeaStarRow> rows();
 
 	void drop();

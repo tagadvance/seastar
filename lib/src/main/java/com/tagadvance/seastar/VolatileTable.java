@@ -21,38 +21,66 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * A table and its rows.
+ *
+ * <p>Holds no lock of its own: {@link #lock()} hands back the keyspace's, so the column list, the
+ * key definition and every row are guarded by one lock rather than by a level each. Every field
+ * below is annotated with that guard or documented as immutable.
+ */
 @ThreadSafe
 public class VolatileTable implements SeaStarTable {
 
-	private final ReadWriteLock lock = new ReentrantReadWriteLock();
-
+	/**
+	 * Immutable.
+	 */
 	private final UUID uuid = UUID.randomUUID();
 
+	/**
+	 * Immutable.
+	 */
 	private final SeaStarDriverContext context;
+	/**
+	 * Immutable, and the owner of the lock every field below is guarded by.
+	 */
 	private final SeaStarKeyspace keyspace;
+	/**
+	 * Immutable.
+	 */
 	private final CqlIdentifier name;
+	@GuardedBy("keyspace.lock()")
 	private final List<SeaStarColumn> columns;
+	@GuardedBy("keyspace.lock()")
 	private final List<CqlIdentifier> partitionKey;
+	@GuardedBy("keyspace.lock()")
 	private final Map<CqlIdentifier, ClusteringOrder> clusteringColumns;
+	@GuardedBy("keyspace.lock()")
 	private final Map<CqlIdentifier, IndexMetadata> indexes;
+	@GuardedBy("keyspace.lock()")
 	private final List<SeaStarRow> rows;
 	/**
 	 * The static cells of each partition, keyed by that partition's key values. A static column
 	 * belongs to the partition rather than to any row in it, so it is stored once here and every row
 	 * of the partition reads and writes the same cell.
+	 *
+	 * <p>Guarded by the keyspace lock like everything else, except that {@link #statics(List)} adds
+	 * to it while holding only the <em>read</em> lock - see that method. The map is concurrent so
+	 * that two readers doing so at once is safe.
 	 */
+	@GuardedBy("keyspace.lock() for removal and iteration; concurrent for insertion")
 	private final Map<List<Object>, Cells> staticsByPartition;
+	@GuardedBy("keyspace.lock()")
 	private AttachmentPoint attachmentPoint;
 
 	public VolatileTable(final SeaStarDriverContext context, final SeaStarKeyspace keyspace,
@@ -74,22 +102,37 @@ public class VolatileTable implements SeaStarTable {
 	 * first time that partition is written, or null when the table declares no static column and so
 	 * has nothing to share.
 	 *
-	 * <p>Takes no lock of its own. A row resolves its partition while reading, under the table's read
-	 * lock, and a read lock cannot be upgraded; the map is concurrent instead, and every caller
-	 * already holds at least a read lock over the column list this reads.
+	 * <p>Takes no lock of its own, and adds to {@link #staticsByPartition} while its caller may hold
+	 * only the read lock. A row resolves its partition while reading, and a read lock cannot be
+	 * upgraded - taking the write lock here would deadlock, and did. The map is a
+	 * {@link ConcurrentHashMap} instead, so {@code computeIfAbsent} is what makes creation atomic;
+	 * every caller already holds at least the read lock over the column list this reads.
 	 */
 	@Nullable
 	Cells statics(final List<Object> values) {
 		if (columns.stream().noneMatch(SeaStarColumn::isStatic)) {
 			return null;
 		}
-		final List<Object> key = partitionKey.stream()
-			.map(this::indexOf)
-			.map(index -> index < 0 ? null : values.get(index))
-			.collect(Collectors.toCollection(ArrayList::new));
 
-		return staticsByPartition.computeIfAbsent(Collections.unmodifiableList(key),
+		return staticsByPartition.computeIfAbsent(partitionKeyOf(values),
 			ignored -> new Cells(Collections.nCopies(columns.size(), null), 0L));
+	}
+
+	/**
+	 * The partition a row of these values belongs to: its partition key column values, in key order.
+	 *
+	 * <p>An unmodifiable {@link ArrayList} rather than a {@code List.of}, because a partition key
+	 * column that has not been written yet is null and {@code List.of} refuses one.
+	 */
+	@GuardedBy("keyspace.lock()")
+	private List<Object> partitionKeyOf(final List<Object> values) {
+		final List<Object> key = new ArrayList<>(partitionKey.size());
+		for (final var column : partitionKey) {
+			final var index = indexOf(column);
+			key.add(index < 0 || index >= values.size() ? null : values.get(index));
+		}
+
+		return Collections.unmodifiableList(key);
 	}
 
 	/**
@@ -110,9 +153,14 @@ public class VolatileTable implements SeaStarTable {
 		return partitionKey.contains(name) || clusteringColumns.containsKey(name);
 	}
 
+	/**
+	 * The keyspace's lock. A table has none of its own: a row is only ever mutated alongside the
+	 * column list it is positionally tied to, so one lock over both is what keeps them consistent,
+	 * and it leaves no pair of locks to take in the wrong order.
+	 */
 	@Override
 	public ReadWriteLock lock() {
-		return lock;
+		return keyspace.lock();
 	}
 
 	@Override
@@ -247,9 +295,14 @@ public class VolatileTable implements SeaStarTable {
 		writeLock(() -> rows.removeIf(predicate));
 	}
 
+	/**
+	 * A snapshot of every row, taken under the read lock. The stream is consumed wherever the caller
+	 * pleases, so handing out a lazy view over the live storage would be handing out a
+	 * {@link java.util.ConcurrentModificationException}.
+	 */
 	@Override
 	public Stream<SeaStarRow> rows() {
-		return rows.stream();
+		return readLockUnchecked(() -> List.copyOf(rows)).stream();
 	}
 
 	@Override

@@ -9,26 +9,48 @@ import com.datastax.oss.driver.api.core.metadata.schema.FunctionSignature;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.ViewMetadata;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
-import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
+import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A keyspace, and the one lock everything inside it is guarded by.
+ *
+ * <p>There is no table lock and no row lock: {@link VolatileTable}, {@link VolatileColumn},
+ * {@link VolatileRow} and {@link VolatileUserDefinedType} all hand back <em>this</em> lock, so a
+ * statement that mutates a table holds one lock for the whole of it and a concurrent DDL statement
+ * against the same keyspace cannot interleave. Two keyspaces do not contend at all. See the lock
+ * hierarchy in {@code AGENTS.md}.
+ */
 @ThreadSafe
 public class VolatileKeyspace implements SeaStarKeyspace {
 
+	/**
+	 * Immutable, and shared with everything this keyspace holds.
+	 */
 	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
+	/**
+	 * Immutable.
+	 */
 	private final SeaStarDriverContext context;
+	/**
+	 * Immutable.
+	 */
 	private final CqlIdentifier name;
-	private volatile Map<String, String> replication;
-	private volatile boolean durableWrites;
+	@GuardedBy("lock")
+	private Map<String, String> replication;
+	@GuardedBy("lock")
+	private boolean durableWrites;
+	@GuardedBy("lock")
 	private final Map<CqlIdentifier, SeaStarUserDefinedType> userDefinedTypes;
+	@GuardedBy("lock")
 	private final Map<CqlIdentifier, SeaStarTable> tables;
 
 	public VolatileKeyspace(final SeaStarDriverContext context, final CqlIdentifier name,
@@ -38,8 +60,8 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 		this.replication = Map.copyOf(
 			requireNonNull(replication, "replication must not be null"));
 		this.durableWrites = durableWrites;
-		this.userDefinedTypes = new ConcurrentHashMap<>();
-		this.tables = new ConcurrentHashMap<>();
+		this.userDefinedTypes = new LinkedHashMap<>();
+		this.tables = new LinkedHashMap<>();
 	}
 
 	@Override
@@ -69,43 +91,52 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	@Override
 	public Optional<SeaStarUserDefinedType> getSeaStarUserDefinedType(final CqlIdentifier id) {
-		return Optional.of(id).map(userDefinedTypes::get);
+		return readLockUnchecked(() -> Optional.of(id).map(userDefinedTypes::get));
 	}
 
 	@Override
 	public void putSeaStarUserDefinedType(final CqlIdentifier id,
 		final SeaStarUserDefinedType object) {
-		userDefinedTypes.put(id, object);
+		writeLock(() -> userDefinedTypes.put(id, object));
 	}
 
 	@Override
 	public void removeSeaStarUserDefinedType(final CqlIdentifier id) {
-		userDefinedTypes.remove(id);
+		writeLock(() -> userDefinedTypes.remove(id));
 	}
 
+	/**
+	 * A snapshot, taken under the read lock: a live view would keep mutating under a caller that is
+	 * still walking it.
+	 */
 	@Override
 	public Map<CqlIdentifier, SeaStarUserDefinedType> getSeaStarUserDefinedTypes() {
-		return Collections.unmodifiableMap(userDefinedTypes);
+		return readLockUnchecked(() -> Map.copyOf(userDefinedTypes));
 	}
 
 	@Override
 	public Optional<SeaStarTable> getSeaStarTable(final CqlIdentifier id) {
-		return Optional.of(id).map(tables::get);
+		return readLockUnchecked(() -> Optional.of(id).map(tables::get));
 	}
 
 	@Override
 	public void putSeaStarTable(final SeaStarTable table) {
-		tables.put(table.getName(), table);
+		writeLock(() -> tables.put(table.getName(), table));
 	}
 
 	@Override
 	public void removeSeaStarTable(final CqlIdentifier id) {
-		tables.remove(id);
+		writeLock(() -> tables.remove(id));
 	}
 
+	/**
+	 * A snapshot, taken under the read lock.
+	 *
+	 * @see #getSeaStarUserDefinedTypes()
+	 */
 	@Override
 	public Map<CqlIdentifier, SeaStarTable> getSeaStarTables() {
-		return Collections.unmodifiableMap(tables);
+		return readLockUnchecked(() -> Map.copyOf(tables));
 	}
 
 	@Override
@@ -116,7 +147,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	@Override
 	public boolean isDurableWrites() {
-		return durableWrites;
+		return readLockUnchecked(() -> durableWrites);
 	}
 
 	@Override
@@ -132,7 +163,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	@Override
 	@NonNull
 	public Map<String, String> getReplication() {
-		return replication;
+		return readLockUnchecked(() -> replication);
 	}
 
 	@Override
@@ -157,7 +188,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, UserDefinedType> getUserDefinedTypes() {
-		return userDefinedTypes.entrySet()
+		return getSeaStarUserDefinedTypes().entrySet()
 			.stream()
 			.collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 	}

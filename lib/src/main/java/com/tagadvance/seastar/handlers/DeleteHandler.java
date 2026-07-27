@@ -11,8 +11,10 @@ import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
@@ -62,14 +64,15 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var partitionWide = deletedColumns.isEmpty() && !restrictsClustering(delete);
 		final var stamped = delete.timestamp() != null;
 
-		final AsyncResultSet result = table.writeLockUnchecked(() -> {
+		final AsyncResultSet result = table.mutate(() -> {
 			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
 
 			if (delete.ifExists()) {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped,
+					coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -82,7 +85,8 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped,
+					coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -122,8 +126,10 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		matched.forEach(row -> row.clearMarker(writes.timestamp()));
 		// A delete stamped with a timestamp of its own removes only what it is newer than, so a row
 		// holding a value written after it survives; an unstamped one is the newest write there is.
-		table.removeRowIf(stamped ? row -> matched.contains(row) && !row.isLive()
-			: matched::contains);
+		// The set is identity-based, because a row is only ever equal to itself.
+		final Set<SeaStarRow> removed = new HashSet<>(matched);
+		table.removeRowIf(stamped ? row -> removed.contains(row) && !row.isLive()
+			: removed::contains);
 	}
 
 	private static List<Integer> nonKeyIndices(final SeaStarTable table) {

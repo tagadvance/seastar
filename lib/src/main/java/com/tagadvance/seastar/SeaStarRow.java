@@ -4,31 +4,34 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.Row;
-import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.io.Serializable;
 import org.jspecify.annotations.Nullable;
 
-public interface SeaStarRow extends SeaStarReadWriteLock, Row, Serializable {
+/**
+ * A row of a table.
+ *
+ * <p>A row carries no lock of its own; it is guarded by the lock of the table it belongs to, which
+ * is the lock of that table's keyspace. See the lock hierarchy in {@code AGENTS.md}.
+ */
+public interface SeaStarRow extends Row, Serializable {
 
 	SeaStarDriverContext context();
 
 	SeaStarTable table();
 
+	/**
+	 * Resolving the column and writing it are one locked region, so the column cannot be dropped in
+	 * between and turn the index into someone else's column.
+	 */
 	default void set(final String name, final Object value) {
-		writeLock(() -> {
-			final var index = table().firstIndexOf(name);
-
-			set(index, value);
-		});
-
+		table().writeLock(() -> set(table().firstIndexOf(name), value));
 	}
 
-	default void set(final CqlIdentifier id, Object value) {
-		writeLock(() -> {
-			final var index = table().firstIndexOf(id);
-
-			set(index, value);
-		});
+	/**
+	 * @see #set(String, Object)
+	 */
+	default void set(final CqlIdentifier id, final Object value) {
+		table().writeLock(() -> set(table().firstIndexOf(id), value));
 	}
 
 	void set(int i, Object value);

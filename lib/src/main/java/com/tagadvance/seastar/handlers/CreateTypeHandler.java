@@ -75,7 +75,7 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 				definitions.add(new UserDefinedTypeDefinition(fieldName, dataType.get()));
 			}
 			// Frozen is a property of the referencing column, not the stored type.
-			final var udt = new VolatileUserDefinedType(context, ksx.name(),
+			final var udt = new VolatileUserDefinedType(context, ksx,
 				CqlIdentifier.fromInternal(udtName), false, definitions);
 			ksx.putSeaStarUserDefinedType(udtName, udt);
 		}

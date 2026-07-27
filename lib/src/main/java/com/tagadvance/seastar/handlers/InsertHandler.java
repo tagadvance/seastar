@@ -92,8 +92,7 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 
 			return true;
 		};
-
-		final AsyncResultSet result = table.writeLockUnchecked(() -> {
+		final AsyncResultSet result = table.mutate(() -> {
 			final var existing = table.rows().filter(samePrimaryKey).findFirst().orElse(null);
 			if (insert.ifNotExists()) {
 				if (existing == null) {
