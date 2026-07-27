@@ -40,7 +40,7 @@ here beyond what CI does) - run it before trusting cross-backend fidelity claims
 | b_plan | B1-B7 | one lock per keyspace (l_plan L1's middle path, not B2's hierarchy); row lock and table lock gone; every `Volatile*` field `@GuardedBy` or immutable; `ConcurrencyTest` |
 | l_plan | L1 | decided and implemented as above |
 | f_plan | F1 F2 F3 F4b F5 F6 F7 F8 | see "f_plan closed out this update" below |
-| g_plan | G2, G4 (partial) | comments/spacing fixed; `package-info.java` + `@NullMarked` for 4 packages - redundant `@NonNull` sweep NOT done, see below |
+| g_plan | G2, G3 (partial), G4 (partial) | comments/spacing fixed; all 12 public types have class javadoc (G3 priority 1 only); `package-info.java` + `@NullMarked` for 4 packages - redundant `@NonNull` sweep NOT done, see below |
 | k_plan | K1, K2, K3, K4 (partial) | AGENTS.md staleness fixed + gaps filled; README rewritten (example, install coords, benchmark table, known-limitations, reconciled TODO list); `CHANGELOG.md` started - CONTRIBUTING deliberately skipped, k_plan itself calls it overkill for now |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
@@ -50,8 +50,11 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **g_plan G3** (the ~450-method javadoc pass; not started - big and worth its own focused
-  session, not a tack-on), **g_plan G4's @NonNull sweep** (see below), **h_plan H1 H3 H4 H5 H6**,
+- **g_plan G3** (the ~450-method javadoc pass; priority 1 only - every public type has a class
+  javadoc now, all twelve of them. Priorities 2-5, the actual bulk of it, are untouched: every
+  deviation from a driver contract documented, the SeaStar* interfaces' own methods, thread-safety/
+  locking notes. Worth its own focused session, not a tack-on), **g_plan G4's @NonNull sweep**
+  (see below), **h_plan H1 H3 H4 H5 H6**,
   **j_plan J3** (deferred, needs you - see Open questions), **j_plan J8**, **l_plan L2-L7**.
   (f_plan is fully closed out; k_plan is down to just CONTRIBUTING, skipped deliberately.)
 
