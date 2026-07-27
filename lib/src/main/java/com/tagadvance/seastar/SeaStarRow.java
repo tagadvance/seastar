@@ -4,7 +4,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.Row;
-import java.io.Serializable;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -13,7 +12,7 @@ import org.jspecify.annotations.Nullable;
  * <p>A row carries no lock of its own; it is guarded by the lock of the table it belongs to, which
  * is the lock of that table's keyspace. See the lock hierarchy in {@code AGENTS.md}.
  */
-public interface SeaStarRow extends Row, Serializable {
+public interface SeaStarRow extends Row {
 
 	SeaStarDriverContext context();
 
