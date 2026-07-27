@@ -13,6 +13,25 @@ import java.util.Queue;
 import java.util.concurrent.CompletionStage;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A result set that is always a single page.
+ *
+ * <p><strong>SeaStar does not page, deliberately.</strong> A cluster pages because a result set may
+ * not fit in memory and because the rows are on another machine; SeaStar's rows are already in this
+ * process, on this thread, so a page boundary would be an invention with nothing behind it.
+ * {@link #hasMorePages()} is therefore always {@code false}, {@link #fetchNextPage()} always throws
+ * {@link IllegalStateException} - which is what the driver's own contract says an implementation
+ * does when there is no next page - and {@code setPageSize} on a statement is accepted and has no
+ * effect.
+ *
+ * <p>The idioms client code is written in keep working, because every one of them terminates on the
+ * first page: {@code while (rs.hasMorePages())} runs zero times, {@code rs.all()},
+ * {@code rs.iterator()} and {@code rs.currentPage()} return every row, and
+ * {@code ResultSet#getAvailableWithoutFetching()} equals the total. What is <em>not</em> reproduced
+ * is code that asserts on the page boundary itself - the number of pages, a page size being
+ * respected, or {@code fetchNextPage()} returning something. {@code AbstractCqlSessionTest} pins the
+ * idioms on both backends.
+ */
 public class SeaStarAsyncResultSet implements AsyncResultSet {
 
 	private final ColumnDefinitions definitions;
@@ -61,9 +80,11 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 		return iterator.remaining();
 	}
 
+	/**
+	 * @return {@code false}, always; every row is on the first page
+	 */
 	@Override
 	public boolean hasMorePages() {
-		// keep it simple by returning all data on the first page
 		return false;
 	}
 
