@@ -5,9 +5,11 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.ArrayLiteral;
+import org.apache.cassandra.cql3.Attributes;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.FieldIdentifier;
+import org.apache.cassandra.cql3.Json;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.Ordering;
@@ -22,6 +24,7 @@ import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.cql3.functions.FunctionCall;
 import org.apache.cassandra.cql3.functions.FunctionName;
 import org.apache.cassandra.cql3.functions.masking.ColumnMask;
+import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.BatchStatement;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
@@ -38,6 +41,7 @@ import org.apache.cassandra.cql3.statements.schema.DropIndexStatement;
 import org.apache.cassandra.cql3.statements.schema.DropKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.DropTableStatement;
 import org.apache.cassandra.cql3.statements.schema.DropTypeStatement;
+import org.apache.cassandra.cql3.statements.schema.IndexAttributes;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.cql3.statements.schema.KeyspaceAttributes;
 import org.apache.cassandra.db.marshal.CollectionType;
@@ -183,7 +187,41 @@ final class FieldBindings {
 	static final FieldBinding<AbstractMarker.INRaw> CONDITION_IN_MARKER = FieldBinding.of(
 		ColumnCondition.Raw.class, "inMarker", AbstractMarker.INRaw.class);
 
+	/**
+	 * SELECT clause items other than a plain column. {@code Selectable.Raw}'s implementations keep
+	 * everything private and expose only {@code prepare(TableMetadata)}, which resolves against a
+	 * Cassandra {@code TableMetadata} SeaStar does not have.
+	 */
+	static final FieldBinding<FunctionName> SELECTABLE_FUNCTION_NAME = FieldBinding.of(
+		Selectable.WithFunction.Raw.class, "functionName", FunctionName.class);
+	static final FieldBinding<List<Selectable.Raw>> SELECTABLE_FUNCTION_ARGS = FieldBinding.ofList(
+		Selectable.WithFunction.Raw.class, "args");
+	static final FieldBinding<Selectable.RawIdentifier> WRITETIME_COLUMN = FieldBinding.of(
+		Selectable.WritetimeOrTTL.Raw.class, "column", Selectable.RawIdentifier.class);
+	static final FieldBinding<Selectable.WritetimeOrTTL.Kind> WRITETIME_KIND = FieldBinding.of(
+		Selectable.WritetimeOrTTL.Raw.class, "kind", Selectable.WritetimeOrTTL.Kind.class);
+	static final FieldBinding<CQL3Type> CAST_TYPE = FieldBinding.of(Selectable.WithCast.Raw.class,
+		"type", CQL3Type.class);
+	static final FieldBinding<Selectable.Raw> CAST_ARG = FieldBinding.of(
+		Selectable.WithCast.Raw.class, "arg", Selectable.Raw.class);
+
 	// INSERT / UPDATE / DELETE.
+	/**
+	 * {@code USING TTL} and {@code USING TIMESTAMP}. The {@code Attributes.Raw} it holds publishes
+	 * its two terms; the field that holds it does not.
+	 */
+	static final FieldBinding<Attributes.Raw> MODIFICATION_ATTRIBUTES = FieldBinding.of(
+		ModificationStatement.Parsed.class, "attrs", Attributes.Raw.class);
+	static final FieldBinding<Attributes.Raw> BATCH_ATTRIBUTES = FieldBinding.of(
+		BatchStatement.Parsed.class, "attrs", Attributes.Raw.class);
+	static final FieldBinding<Json.Raw> INSERT_JSON_VALUE = FieldBinding.of(
+		UpdateStatement.ParsedInsertJson.class, "jsonValue", Json.Raw.class);
+	static final FieldBinding<Boolean> INSERT_JSON_DEFAULT_UNSET = FieldBinding.of(
+		UpdateStatement.ParsedInsertJson.class, "defaultUnset", Boolean.class);
+	static final FieldBinding<String> JSON_LITERAL_TEXT = FieldBinding.of(Json.Literal.class, "text",
+		String.class);
+	static final FieldBinding<Integer> JSON_MARKER_BIND_INDEX = FieldBinding.of(Json.Marker.class,
+		"bindIndex", Integer.class);
 	static final FieldBinding<Boolean> MODIFICATION_IF_NOT_EXISTS = FieldBinding.of(
 		ModificationStatement.Parsed.class, "ifNotExists", Boolean.class);
 	static final FieldBinding<Boolean> MODIFICATION_IF_EXISTS = FieldBinding.of(
@@ -304,6 +342,15 @@ final class FieldBindings {
 		CreateIndexStatement.Raw.class, "ifNotExists", Boolean.class);
 	static final FieldBinding<ColumnIdentifier> INDEX_TARGET_COLUMN = FieldBinding.of(
 		IndexTarget.Raw.class, "column", ColumnIdentifier.class);
+	/**
+	 * Which part of a collection an index covers - {@code KEYS(m)}, {@code VALUES(m)},
+	 * {@code ENTRIES(m)}, {@code FULL(m)} - and whether the index is a custom one. SeaStar indexes
+	 * whole columns only, so both are read in order to reject what it cannot honour.
+	 */
+	static final FieldBinding<IndexTarget.Type> INDEX_TARGET_TYPE = FieldBinding.of(
+		IndexTarget.Raw.class, "type", IndexTarget.Type.class);
+	static final FieldBinding<IndexAttributes> CREATE_INDEX_ATTRIBUTES = FieldBinding.of(
+		CreateIndexStatement.Raw.class, "attrs", IndexAttributes.class);
 	static final FieldBinding<QualifiedName> DROP_INDEX_NAME = FieldBinding.of(
 		DropIndexStatement.Raw.class, "name", QualifiedName.class);
 	static final FieldBinding<Boolean> DROP_INDEX_IF_EXISTS = FieldBinding.of(
