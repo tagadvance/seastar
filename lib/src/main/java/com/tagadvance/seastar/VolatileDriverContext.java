@@ -220,11 +220,11 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 
 	@Override
 	public Optional<SeaStarKeyspace> getSeaStarKeyspace(final CqlIdentifier id) {
-		return readLockUnchecked(() -> Optional.of(id).map(keyspaceById::get));
+		return readLockUnchecked(() -> Optional.ofNullable(keyspaceById.get(id)));
 	}
 
-	public void putSeaStarKeyspace(final CqlIdentifier id, final SeaStarKeyspace keyspace) {
-		writeLockUnchecked(() -> keyspaceById.put(id, keyspace));
+	public void putSeaStarKeyspace(final SeaStarKeyspace keyspace) {
+		writeLockUnchecked(() -> keyspaceById.put(keyspace.name(), keyspace));
 	}
 
 	public void removeSeaStarKeyspace(final CqlIdentifier id) {
@@ -242,7 +242,6 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 
 	@Override
 	@NonNull
-	@SuppressWarnings("all")
 	public Map<UUID, Node> getNodes() {
 		return Map.of(node.getHostId(), node);
 	}

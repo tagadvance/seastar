@@ -91,13 +91,12 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	@Override
 	public Optional<SeaStarUserDefinedType> getSeaStarUserDefinedType(final CqlIdentifier id) {
-		return readLockUnchecked(() -> Optional.of(id).map(userDefinedTypes::get));
+		return readLockUnchecked(() -> Optional.ofNullable(userDefinedTypes.get(id)));
 	}
 
 	@Override
-	public void putSeaStarUserDefinedType(final CqlIdentifier id,
-		final SeaStarUserDefinedType object) {
-		writeLock(() -> userDefinedTypes.put(id, object));
+	public void putSeaStarUserDefinedType(final SeaStarUserDefinedType userDefinedType) {
+		writeLock(() -> userDefinedTypes.put(userDefinedType.getName(), userDefinedType));
 	}
 
 	@Override
@@ -116,7 +115,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	@Override
 	public Optional<SeaStarTable> getSeaStarTable(final CqlIdentifier id) {
-		return readLockUnchecked(() -> Optional.of(id).map(tables::get));
+		return readLockUnchecked(() -> Optional.ofNullable(tables.get(id)));
 	}
 
 	@Override

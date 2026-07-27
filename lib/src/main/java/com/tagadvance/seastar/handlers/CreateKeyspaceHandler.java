@@ -11,8 +11,12 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement.Raw;
 import org.apache.cassandra.schema.KeyspaceParams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CreateKeyspaceHandler implements CqlHandler<CreateKeyspaceStatement.Raw> {
+
+	private static final Logger LOG = LoggerFactory.getLogger(CreateKeyspaceHandler.class);
 
 	@Override
 	public boolean canProcess(final CQLStatement.Raw raw) {

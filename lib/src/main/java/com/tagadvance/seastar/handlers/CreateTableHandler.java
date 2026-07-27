@@ -24,8 +24,12 @@ import java.util.function.Supplier;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement.Raw;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CreateTableHandler implements CqlHandler<Raw> {
+
+	private static final Logger LOG = LoggerFactory.getLogger(CreateTableHandler.class);
 
 	private final Supplier<Optional<CqlIdentifier>> getKeyspace;
 
@@ -49,15 +53,15 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 			throw new UnsupportedOperationException("COMPACT STORAGE is not supported");
 		}
 
-		final SeaStarKeyspace ksx;
+		final SeaStarKeyspace seaStarKeyspace;
 		try {
-			ksx = Targets.requireKeyspace(context, getKeyspace, raw.keyspace(),
+			seaStarKeyspace = Targets.requireKeyspace(context, getKeyspace, raw.keyspace(),
 				executionInfo.getCoordinator());
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
-		final var keyspace = ksx.name().asInternal();
-		final var optionalTable = ksx.getSeaStarTable(table);
+		final var keyspace = seaStarKeyspace.name().asInternal();
+		final var optionalTable = seaStarKeyspace.getSeaStarTable(table);
 		if (optionalTable.isPresent()) {
 			if (ifNotExists) {
 				LOG.debug("Table {} in keyspace {} already exists, skipping creation", table,
@@ -96,7 +100,7 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 			for (final var key : ordered) {
 				final var value = rawColumns.get(key);
 				final var rawType = FieldBindings.COLUMN_RAW_TYPE.require(value);
-				final var dataType = new SeaStarRawType(rawType).toDataType(ksx,
+				final var dataType = new SeaStarRawType(rawType).toDataType(seaStarKeyspace,
 					executionInfo.getCoordinator());
 				if (dataType.isEmpty()) {
 					throw new InvalidQueryException(executionInfo.getCoordinator(),
@@ -122,15 +126,15 @@ public class CreateTableHandler implements CqlHandler<Raw> {
 				}
 			}
 
-			final var table1 = ksx.newSeaStarTable(table);
-			types.forEach((key, dataType) -> table1.addColumn(
+			final var seaStarTable = seaStarKeyspace.newSeaStarTable(table);
+			types.forEach((key, dataType) -> seaStarTable.addColumn(
 				CqlIdentifier.fromInternal(key.toString()), dataType, staticColumns.contains(key)));
 
 			partitionKeyColumns.forEach(key ->
-				table1.markPartitionKey(CqlIdentifier.fromInternal(key.toString())));
+				seaStarTable.markPartitionKey(CqlIdentifier.fromInternal(key.toString())));
 			clusteringColumns.forEach(key -> {
 				final boolean ascending = clusteringOrder.getOrDefault(key, Boolean.TRUE);
-				table1.markClustering(CqlIdentifier.fromInternal(key.toString()),
+				seaStarTable.markClustering(CqlIdentifier.fromInternal(key.toString()),
 					ascending ? ClusteringOrder.ASC : ClusteringOrder.DESC);
 			});
 		}

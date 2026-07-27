@@ -17,8 +17,12 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement.Raw;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CreateTypeHandler implements CqlHandler<Raw> {
+
+	private static final Logger LOG = LoggerFactory.getLogger(CreateTypeHandler.class);
 
 	private final Supplier<Optional<CqlIdentifier>> getKeyspace;
 
@@ -77,7 +81,7 @@ public class CreateTypeHandler implements CqlHandler<Raw> {
 			// Frozen is a property of the referencing column, not the stored type.
 			final var udt = new VolatileUserDefinedType(context, ksx,
 				CqlIdentifier.fromInternal(udtName), false, definitions);
-			ksx.putSeaStarUserDefinedType(udtName, udt);
+			ksx.putSeaStarUserDefinedType(udt);
 		}
 
 		return CompletableFuture.completedStage(newAsyncResultSet(executionInfo));
