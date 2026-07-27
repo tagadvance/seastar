@@ -32,6 +32,18 @@ public class SeaStarRequestProcessorRegistry {
 		Arrays.stream(processors).forEach(Objects::requireNonNull);
 	}
 
+	/**
+	 * The processor for a request and the result type it was asked for.
+	 *
+	 * <p>Deliberately {@link IllegalArgumentException} rather than a driver exception, because that is
+	 * what {@link RequestProcessorRegistry#processorFor} itself throws: reaching this point means a
+	 * caller asked for a result type no processor was registered for, which is a programming error on
+	 * the client side rather than a query the server rejected. The message names the request's type
+	 * and the result type instead of printing the request, whose {@code toString} is an identity
+	 * hash.
+	 *
+	 * @throws IllegalArgumentException if no processor handles the pair
+	 */
 	@SuppressWarnings("unchecked")
 	public <RequestT extends Request, ResultT> SeaStarRequestProcessor<RequestT, ResultT> processorFor(
 		RequestT request, GenericType<ResultT> resultType) {
@@ -45,7 +57,9 @@ public class SeaStarRequestProcessorRegistry {
 			}
 		}
 
-		throw new IllegalArgumentException("No request processor found for " + request);
+		throw new IllegalArgumentException(
+			"No request processor found for a %s asked for as %s".formatted(
+				request.getClass().getSimpleName(), resultType));
 	}
 
 	/**
