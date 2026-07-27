@@ -47,8 +47,18 @@ public interface SeaStarRow extends SeaStarReadWriteLock, Row, Serializable {
 	 * Sets when this row's primary key stops being live, in seconds since the epoch. That is
 	 * Cassandra's row marker: {@code INSERT ... USING TTL} expires the row itself, so the row goes
 	 * when its columns do rather than lingering as a key with nothing in it.
+	 *
+	 * @param writeTime the microsecond timestamp the marker is written at, which is what a later
+	 *                  {@code DELETE ... USING TIMESTAMP} is resolved against
 	 */
-	void markLive(long expiresAt);
+	void markLive(long writeTime, long expiresAt);
+
+	/**
+	 * Ends the row's marker if the given timestamp is at or after the one it was written at, which is
+	 * how a {@code DELETE ... USING TIMESTAMP} older than the INSERT it would remove leaves the row
+	 * standing.
+	 */
+	void clearMarker(long timestamp);
 
 	/**
 	 * Whether this row is still readable: its marker has not expired, or some column outside the
