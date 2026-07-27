@@ -4,6 +4,7 @@ import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
+import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -42,6 +43,17 @@ public class BatchHandler implements CqlHandler<Parsed> {
 	@Override
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Parsed raw, final Object... bindings) {
+		// A batch-level USING applies its timestamp or TTL to every child that does not carry one of
+		// its own. Nothing here reads it, so it is refused rather than dropped: a child written with
+		// no USING would otherwise be stamped with the clock and read back with a writetime the batch
+		// said it should not have.
+		final var attributes = FieldBindings.BATCH_ATTRIBUTES.require(raw);
+		if (attributes.timestamp != null || attributes.timeToLive != null) {
+			return CompletableFuture.failedStage(
+				new InvalidQueryException(executionInfo.getCoordinator(),
+					"SeaStar does not support USING on a BATCH; write it on each statement instead"));
+		}
+
 		final var children = FieldBindings.BATCH_STATEMENTS.require(raw);
 
 		final var registry = this.registry.get();

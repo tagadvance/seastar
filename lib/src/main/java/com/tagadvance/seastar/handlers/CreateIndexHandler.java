@@ -18,6 +18,7 @@ import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QualifiedName;
 import org.apache.cassandra.cql3.statements.schema.CreateIndexStatement.Raw;
+import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 
 @ThreadSafe
 public class CreateIndexHandler implements CqlHandler<Raw> {
@@ -55,6 +56,24 @@ public class CreateIndexHandler implements CqlHandler<Raw> {
 			return CompletableFuture.failedStage(
 				new InvalidQueryException(coordinator, "Only CREATE INDEX on a single column is supported"));
 		}
+		// A custom index loads a class inside the server, and a collection target indexes one part of
+		// a column - the keys of a map, the entries of one. SeaStar's index is metadata over a whole
+		// column, so both are refused rather than silently indexed as the whole column.
+		final var attributes = FieldBindings.CREATE_INDEX_ATTRIBUTES.require(raw);
+		if (attributes.isCustom || attributes.customClass != null) {
+			return CompletableFuture.failedStage(
+				new InvalidQueryException(coordinator, "SeaStar does not support custom indexes"));
+		}
+		if (!FieldBindings.PROPERTY_DEFINITIONS_PROPERTIES.require(attributes).isEmpty()) {
+			return CompletableFuture.failedStage(
+				new InvalidQueryException(coordinator, "SeaStar does not support index options"));
+		}
+		final var targetType = FieldBindings.INDEX_TARGET_TYPE.require(targets.get(0));
+		if (targetType != IndexTarget.Type.SIMPLE) {
+			return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
+				"SeaStar does not support a %s index target".formatted(targetType)));
+		}
+
 		final var columnId = FieldBindings.INDEX_TARGET_COLUMN.require(targets.get(0));
 		final var column = CqlIdentifier.fromInternal(columnId.toString());
 		if (seaStarTable.firstIndexOf(column) < 0) {
