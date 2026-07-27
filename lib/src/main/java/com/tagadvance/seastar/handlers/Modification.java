@@ -1,6 +1,7 @@
 package com.tagadvance.seastar.handlers;
 
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An INSERT, UPDATE or DELETE translated against the table it writes to. What the statement says,
@@ -14,8 +15,12 @@ import java.util.List;
  *                     none
  * @param ifExists     whether {@code IF EXISTS} was written
  * @param ifNotExists  whether {@code IF NOT EXISTS} was written
+ * @param timestamp    the {@code USING TIMESTAMP} in microseconds, or null when the statement did
+ *                     not name one and the write is stamped with the session clock
+ * @param ttl          the {@code USING TTL} in seconds, or null when the statement did not name one
  */
 record Modification(Target target, List<Assignment> assignments, List<Restriction> restrictions,
-					List<Condition> conditions, boolean ifExists, boolean ifNotExists) {
+					List<Condition> conditions, boolean ifExists, boolean ifNotExists,
+					@Nullable Long timestamp, @Nullable Integer ttl) {
 
 }

@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.Node;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
@@ -52,15 +53,19 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var table = delete.target().table();
 		final var deletedColumns = delete.assignments();
 		final var conditions = delete.conditions();
+		final var writes = Writes.of(context, delete);
+		// A DELETE that names no clustering column removes the partition, and a partition's static
+		// columns go with it; one that reaches a single row leaves them alone.
+		final var partitionWide = deletedColumns.isEmpty() && !restrictsClustering(delete);
 
 		final AsyncResultSet result = table.writeLockUnchecked(() -> {
-			final var matched = table.rows().filter(predicate).toList();
+			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
 
 			if (delete.ifExists()) {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -73,12 +78,12 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
-			applyDelete(table, matched, deletedColumns, coordinator);
+			applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
 
 			return newAsyncResultSet(executionInfo);
 		});
@@ -91,17 +96,50 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	 * leaves the row in place.
 	 */
 	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
-		final List<Assignment> deletedColumns, final Node coordinator) {
-		if (deletedColumns.isEmpty()) {
-			table.removeRowIf(matched::contains);
-		} else {
+		final List<Assignment> deletedColumns, final boolean partitionWide, final Writes writes,
+		final Node coordinator) {
+		if (!deletedColumns.isEmpty()) {
 			for (final var row : matched) {
 				for (final var deleted : deletedColumns) {
 					final var index = deleted.columnIndex();
-					row.set(index, deleted.apply(row.getObject(index), coordinator));
+					row.set(index, deleted.apply(row.getObject(index), coordinator),
+						writes.timestamp(), Writes.NEVER);
 				}
 			}
+
+			return;
 		}
+
+		if (partitionWide && table.hasStaticColumns()) {
+			// Static cells live with the partition rather than with any row, so removing the rows
+			// would leave them behind for the next write to the same partition to read back.
+			final var statics = staticIndices(table);
+			matched.forEach(row -> statics.forEach(
+				index -> row.set(index, null, writes.timestamp(), Writes.NEVER)));
+		}
+		table.removeRowIf(matched::contains);
+	}
+
+	private static List<Integer> staticIndices(final SeaStarTable table) {
+		return java.util.stream.IntStream.range(0, table.size())
+			.filter(index -> table.get(index) instanceof ColumnMetadata column && column.isStatic())
+			.boxed()
+			.toList();
+	}
+
+	private static boolean restrictsClustering(final Modification delete) {
+		final var table = delete.target().table();
+		final var clustering = table.getClusteringColumns()
+			.keySet()
+			.stream()
+			.map(ColumnMetadata::getName)
+			.collect(java.util.stream.Collectors.toSet());
+
+		return delete.restrictions()
+			.stream()
+			.flatMap(restriction -> restriction.columns().stream())
+			.map(Restriction.Column::name)
+			.anyMatch(clustering::contains);
 	}
 
 	private static void validateDeletedColumns(final Modification delete, final Node coordinator) {
