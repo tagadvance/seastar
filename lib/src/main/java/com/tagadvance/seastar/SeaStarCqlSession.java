@@ -21,6 +21,7 @@ import com.tagadvance.seastar.handlers.DeleteHandler;
 import com.tagadvance.seastar.handlers.DropIndexHandler;
 import com.tagadvance.seastar.handlers.DropKeyspaceHandler;
 import com.tagadvance.seastar.handlers.DropTableHandler;
+import com.tagadvance.seastar.handlers.DropTypeHandler;
 import com.tagadvance.seastar.handlers.InsertHandler;
 import com.tagadvance.seastar.handlers.SelectHandler;
 import com.tagadvance.seastar.handlers.TruncateHandler;
@@ -63,6 +64,7 @@ public class SeaStarCqlSession implements CqlSession {
 			new UseKeyspaceHandler(this::setKeyspace),
 			new CreateTypeHandler(this::getKeyspace),
 			new AlterTypeHandler(this::getKeyspace),
+			new DropTypeHandler(this::getKeyspace),
 			new CreateTableHandler(this::getKeyspace),
 			new AlterTableHandler(this::getKeyspace),
 			new CreateIndexHandler(this::getKeyspace),
