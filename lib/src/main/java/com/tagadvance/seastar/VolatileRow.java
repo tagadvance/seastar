@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
  * made possible, because there is no second lock left to take in the wrong order.
  */
 @ThreadSafe
-public class VolatileRow implements SeaStarRow {
+class VolatileRow implements SeaStarRow {
 
 	private static final long serialVersionUID = 1L;
 

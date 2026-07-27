@@ -7,7 +7,7 @@ import java.util.List;
 /**
  * {@link SeaStarBuiltInRequestProcessors} is analogous to {@link BuiltInRequestProcessors}.
  */
-public class SeaStarBuiltInRequestProcessors {
+class SeaStarBuiltInRequestProcessors {
 
 	private SeaStarBuiltInRequestProcessors() {
 		// prevent instantiation

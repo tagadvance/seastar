@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
  * {@link SeaStarCqlPrepareHandler} is analogous to {@link CqlPrepareHandler}.
  */
 @ThreadSafe
-public class SeaStarCqlPrepareHandler {
+class SeaStarCqlPrepareHandler {
 
 	private static final Logger LOG = LoggerFactory.getLogger(SeaStarCqlPrepareHandler.class);
 

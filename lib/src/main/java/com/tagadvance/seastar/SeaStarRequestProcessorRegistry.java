@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * {@link SeaStarRequestProcessorRegistry} is analogous to {@link RequestProcessorRegistry}.
  */
 @ThreadSafe
-public class SeaStarRequestProcessorRegistry {
+class SeaStarRequestProcessorRegistry {
 
 	private static final Logger LOG = LoggerFactory.getLogger(
 		SeaStarRequestProcessorRegistry.class);

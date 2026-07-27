@@ -13,7 +13,7 @@ import net.jcip.annotations.ThreadSafe;
  * {@link SeaStarCqlRequestAsyncProcessor} is analogous to {@link CqlRequestAsyncProcessor}.
  */
 @ThreadSafe
-public class SeaStarCqlRequestAsyncProcessor implements
+class SeaStarCqlRequestAsyncProcessor implements
 	SeaStarRequestProcessor<Statement<?>, CompletionStage<AsyncResultSet>> {
 
 	@Override
