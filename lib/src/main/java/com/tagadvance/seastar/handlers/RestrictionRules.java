@@ -155,7 +155,8 @@ final class RestrictionRules {
 	 *
 	 * <p>Each element is one partition's key values, in key order - the key {@link SeaStarTable} is
 	 * indexed by. {@code IN} pins a column to several values at once, so the answer is the product of
-	 * the alternatives rather than a single key.
+	 * the alternatives rather than a single key, and it is distinct: {@code WHERE pk IN (1, 1)}
+	 * reaches one partition, and reading it twice would answer with each of its rows twice.
 	 */
 	static @Nullable List<List<Object>> partitions(final Target target,
 		final List<Restriction> restrictions) {
@@ -167,8 +168,11 @@ final class RestrictionRules {
 				|| !partitionKey.contains(restriction.column().name())) {
 				continue;
 			}
-			pinned.put(restriction.column().name(),
-				restriction.values().stream().map(tuple -> tuple.get(0)).toList());
+			pinned.put(restriction.column().name(), restriction.values()
+				.stream()
+				.map(tuple -> tuple.get(0))
+				.distinct()
+				.toList());
 		}
 		if (!pinned.keySet().containsAll(partitionKey)) {
 			return null;

@@ -171,6 +171,10 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 * key column can answer itself from here rather than from {@link #rows()}, which is the
 	 * difference between a walk of one partition and a scan of the table.
 	 *
+	 * <p>A row is filed under the partition it had when it was added. Cassandra forbids changing a
+	 * primary key column, and so does {@code UPDATE ... SET}; a caller writing into the model by hand
+	 * must not either, because nothing rebuilds the index underneath it.
+	 *
 	 * @param partitionKeyValues one value per partition key column, in key order
 	 */
 	Stream<SeaStarRow> partition(List<Object> partitionKeyValues);

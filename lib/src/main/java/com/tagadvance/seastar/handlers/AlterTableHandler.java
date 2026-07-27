@@ -109,7 +109,7 @@ public class AlterTableHandler implements CqlHandler<Raw> {
 		final var added = FieldBindings.ALTER_TABLE_ADDED_COLUMNS.require(raw);
 		final var table = target.table();
 
-		return table.writeLockUnchecked(() -> {
+		return table.mutate(() -> {
 			// Validated in full before anything is applied, so a rejected statement leaves the table
 			// as it was rather than half altered.
 			final List<Column> columns = new ArrayList<>();
@@ -156,7 +156,7 @@ public class AlterTableHandler implements CqlHandler<Raw> {
 		final var dropped = FieldBindings.ALTER_TABLE_DROPPED_COLUMNS.require(raw);
 		final var table = target.table();
 
-		return table.writeLockUnchecked(() -> {
+		return table.mutate(() -> {
 			final var primaryKey = target.primaryKeyNames();
 			final List<CqlIdentifier> columns = new ArrayList<>();
 			for (final var column : dropped) {
@@ -191,7 +191,7 @@ public class AlterTableHandler implements CqlHandler<Raw> {
 		final var renamed = FieldBindings.ALTER_TABLE_RENAMED_COLUMNS.require(raw);
 		final var table = target.table();
 
-		return table.writeLockUnchecked(() -> {
+		return table.mutate(() -> {
 			final var primaryKey = target.primaryKeyNames();
 			final var indexes = table.getIndexes().values();
 			final Map<CqlIdentifier, CqlIdentifier> renames = new LinkedHashMap<>();
