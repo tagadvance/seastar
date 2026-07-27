@@ -13,6 +13,7 @@ import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -188,35 +189,39 @@ final class Selectors {
 	}
 
 	/**
-	 * {@code token(pk)}, which names the whole partition key and answers the Murmur3 token the row
-	 * would live at on a cluster.
+	 * {@code token(...)}, which answers the Murmur3 token its arguments hash to.
+	 *
+	 * <p>Cassandra defines {@code token} over the <em>types</em> of the partition key rather than
+	 * over its columns, so {@code token(ck)} is legal on a table whose partition key is one int - it
+	 * answers the token that value would live at. What it refuses is a call whose arity or types do
+	 * not line up with the partition key.
 	 */
 	private static Selector token(final SeaStarTable table, final List<Selectable.Raw> args,
 		final CodecRegistry codecRegistry, final ProtocolVersion version, final Node coordinator) {
-		final List<CqlIdentifier> partitionKey = table.getPartitionKey()
+		final List<DataType> partitionKey = table.getPartitionKey()
 			.stream()
-			.map(ColumnMetadata::getName)
+			.map(ColumnMetadata::getType)
 			.toList();
-		final List<CqlIdentifier> named = args.stream()
-			.map(arg -> arg instanceof Selectable.RawIdentifier identifier
-				? Selectables.toIdentifier(identifier) : null)
+		final var arguments = args.stream()
+			.map(arg -> selector(table, arg, codecRegistry, version, coordinator))
 			.toList();
-		if (named.contains(null) || !named.equals(partitionKey)) {
+		final var types = arguments.stream().map(Selector::type).toList();
+		if (!types.equals(partitionKey)) {
 			throw new InvalidQueryException(coordinator,
-				"The token() function must be applied to the partition key components %s".formatted(
-					partitionKey.stream().map(CqlIdentifier::asInternal).toList()));
+				"Type error: the token() function takes the partition key types %s but got %s".formatted(
+					partitionKey.stream().map(type -> type.asCql(true, true)).toList(),
+					types.stream().map(type -> type.asCql(true, true)).toList()));
 		}
 
-		final var indices = partitionKey.stream().mapToInt(table::firstIndexOf).toArray();
 		final var label = CqlIdentifier.fromInternal("%s.token(%s)".formatted(SYSTEM,
-			String.join(", ", partitionKey.stream().map(CqlIdentifier::asInternal).toList())));
+			String.join(", ", arguments.stream().map(a -> a.name().asInternal()).toList())));
 
 		return new Selector(table.getKeyspace(), table.getName(), label, DataTypes.BIGINT, null, null,
 			row -> {
-				final List<java.nio.ByteBuffer> components = new ArrayList<>(indices.length);
-				for (final var index : indices) {
-					final TypeCodec<Object> codec = codecRegistry.codecFor(table.get(index).getType());
-					components.add(codec.encode(row.getObject(index), version));
+				final List<ByteBuffer> components = new ArrayList<>(arguments.size());
+				for (final var argument : arguments) {
+					final TypeCodec<Object> codec = codecRegistry.codecFor(argument.type());
+					components.add(codec.encode(argument.reader().read(row), version));
 				}
 
 				return Tokens.of(Tokens.encode(components));

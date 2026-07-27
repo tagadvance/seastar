@@ -54,12 +54,12 @@ final class Jsons {
 	static final CqlIdentifier COLUMN = CqlIdentifier.fromInternal("[json]");
 
 	/**
-	 * The types whose JSON form is a string and whose CQL literal form is quoted. A blob is the
-	 * exception in both directions: its JSON form is a string, but its CQL literal is bare hex.
+	 * The types whose JSON form is a string and whose CQL literal form is quoted. Several types have
+	 * a JSON string and a bare CQL literal - a blob is hex, a uuid and a duration are written as
+	 * themselves - so the two are not the same list.
 	 */
 	private static final Set<DataType> QUOTED = Set.of(DataTypes.ASCII, DataTypes.TEXT,
-		DataTypes.UUID, DataTypes.TIMEUUID, DataTypes.INET, DataTypes.DATE, DataTypes.TIME,
-		DataTypes.TIMESTAMP, DataTypes.DURATION);
+		DataTypes.INET, DataTypes.DATE, DataTypes.TIME, DataTypes.TIMESTAMP);
 
 	private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern(
 		"yyyy-MM-dd HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
@@ -302,7 +302,7 @@ final class Jsons {
 			return udtLiteral(json, udt);
 		}
 		if (json instanceof String text) {
-			return DataTypes.BLOB.equals(type) ? text : "'" + text.replace("'", "''") + "'";
+			return QUOTED.contains(type) ? "'" + text.replace("'", "''") + "'" : text;
 		}
 
 		return String.valueOf(json);
