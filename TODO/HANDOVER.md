@@ -1,6 +1,9 @@
 # Handover: the 1.0.0-alpha push
 
-Working branch: `final-push` (branched from `main` at `ad92e9d`). Never push; never commit to `main`.
+`final-push` no longer exists as a branch - its history is merged into `main` and pushed to
+`origin/main` already (confirmed identical SHAs as of this update). **`main` is now the
+integration branch.** The repo is pre-1.0.0 (`version = "1.0.0-alpha"`, no release tag), so per the
+working agreement committing straight to `main` is correct here; this update continued doing that.
 
 Read `TODO/*.txt` for the plans themselves. This file records what is DONE, what is NOT, and the
 traps that have already cost time. Update it as waves land.
@@ -10,12 +13,14 @@ traps that have already cost time. Update it as waves land.
 Verify before trusting this file:
 
 ```bash
-git log --oneline main..final-push
+git log --oneline -30      # everything below HEAD is what this update did
 ./gradlew build              # no Docker needed
 ./gradlew :lib:containerTest # needs Docker
 ```
 
-Last verified: 282 tests green locally, 150 green on the container.
+Last verified: 293 tests green locally (282 baseline + 11 new from this update), build clean on a
+full `./gradlew clean build`. Container suite not re-run this session (no Docker check performed
+here beyond what CI does) - run it before trusting cross-backend fidelity claims.
 
 ### Done
 
@@ -35,6 +40,7 @@ Last verified: 282 tests green locally, 150 green on the container.
 | d_plan | D5 D6 D7 D9 | select clause (aggregates, token, writetime/ttl, cast, aliases, JSON both ways); static columns per partition; per-cell write time and TTL against an injectable clock; paging documented as a deliberate single page |
 | b_plan | B1-B7 | one lock per keyspace (l_plan L1's middle path, not B2's hierarchy); row lock and table lock gone; every `Volatile*` field `@GuardedBy` or immutable; `ConcurrencyTest` |
 | l_plan | L1 | decided and implemented as above |
+| f_plan | F1 F2 F3 F4b F5 F6 F7 F8 | see "f_plan closed out this update" below |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -43,8 +49,45 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
-  **j_plan J3 J8**, **l_plan L2-L7**.
+- **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J8**,
+  **l_plan L2-L7**. (f_plan is fully closed out - see below.)
+
+### f_plan closed out this update
+
+All of F1-F8 landed in one sitting; commits `aa5f529`..`b4e261b`. Worth knowing before touching
+this area again:
+
+- **F1's package-private pass has two structural exceptions, not oversights.**
+  `SeaStarAsyncResultSet` and `VolatileUserDefinedType` stay public because
+  `com.tagadvance.seastar.handlers` constructs both directly (`CqlHandler#newAsyncResultSet`,
+  `AppliedResultSets`, `SelectHandler` for the former; `CreateTypeHandler` for the latter), and
+  Java has no way to let one package see a type while hiding it from everyone else. Fixing this for
+  real means adding factory methods in `handlers` (mirroring how `SeaStarKeyspace#newSeaStarTable`
+  already avoids callers needing `VolatileTable`) - not attempted here, flagged as the next step if
+  the surface needs to shrink further.
+- **The `handlers` package itself could not go package-private at all.**
+  `SeaStarCqlSession#buildHandlerRegistry` constructs every individual handler
+  (`InsertHandler`, `SelectHandler`, ...) and holds a `CqlHandlerRegistry` field, both from the
+  `com.tagadvance.seastar` package - a different package than `handlers`. True package-private
+  visibility would break that at the language level, not just as a style violation. Took f_plan
+  F1's own documented fallback instead: classes stay public, `handlers/package-info.java` now
+  states the package is internal and unstable. This was the plan's own escape hatch, not a
+  deviation from it.
+- **F4's "three copies of primaryKeyNames/resolveWhere" was already fixed** by earlier C4/D-plan
+  work before this update started - `Target#primaryKeyNames()` is the only implementation, WHERE
+  resolution goes solely through `RestrictionRules`. No changes needed.
+- **F6 drew the accept-vs-reject line exactly where the plan proposed**: every transport setting on
+  `SeaStarBoundStatement` and `SeaStarCqlSessionBuilder` (timeout, paging, consistency, tracing,
+  auth, TLS, local datacenter, metrics, node distance) is now stored and handed back instead of
+  throwing. Contact points and cloud secure-connect bundles still throw - accepting one would claim
+  a connection target exists when SeaStar has none.
+- **F8 uncovered a real bug while inlining Guava's `checkArgument`**: `SeaStarUdtValue`'s two call
+  sites used `%d` in the message template, which Guava's formatter never substitutes (it only
+  understands `%s`) - the literal text `%d` was going out in the exception message instead of the
+  value. `SeaStarRow`'s own comment had already flagged the general risk (it used `%s` correctly
+  and was never actually wrong); `VolatileRow` had no bug either, just switched from `%s` to `%d`
+  for precision now that plain `String#formatted` supports it. Fixed as part of the inline, not
+  filed separately.
 
 ### Decisions already made - do not relitigate
 
@@ -73,12 +116,12 @@ a JDK bump is the most likely thing to break them. Run it with
   asked for a result type nothing was registered for - a client-side programming error, not a query
   failure. Only the message changed. e_plan E0 asked for a driver exception there; that was the
   wrong call and the reasoning is in the method's javadoc.
-- **API surface**: f_plan F1 in full - handlers, processors, registries and `Volatile*` all become
-  internal or package-private. D7 added four things to it deliberately and they should survive that
-  pass in some form: `SeaStarClock`, `SeaStarCqlSessionBuilder#withClock(java.time.Clock)`,
-  `SeaStarDriverContext#getClock()` and a three-argument `VolatileDriverContext` constructor. The
-  clock is how a test observes a TTL without sleeping, so it is user-facing however the rest is
-  narrowed.
+- **API surface**: f_plan F1 landed - see "f_plan closed out this update" above for exactly what
+  stayed public and why. D7's four additions survive as promised: `SeaStarClock`,
+  `SeaStarCqlSessionBuilder#withClock(java.time.Clock)` and `SeaStarDriverContext#getClock()` are
+  all still public. The fourth, a three-argument `VolatileDriverContext` constructor, no longer
+  needs to be independently reachable - `VolatileDriverContext` itself is package-private now, and
+  `withClock` is the sanctioned way to get the same effect from outside the library.
 - **A tombstone is not stored.** D7 resolves two writes to a cell by their timestamps, which is what
   makes `USING TIMESTAMP` real, but a delete leaves nothing behind. A write stamped older than a
   delete that already happened is therefore applied rather than suppressed. Recorded in the support
@@ -87,6 +130,14 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Open questions for Tag
 
+- **DEFERRED, needs you: j_plan J3 (publishing repositories are dead).** Both configured
+  repositories point at `s01.oss.sonatype.org`, which Central Portal replaced after OSSRH's 30 June
+  2025 sunset - publishing to either URL will fail outright. Fixing this needs the current Central
+  Portal publishing path (Gradle plugin vs. publisher API) and, more importantly, namespace
+  verification for `com.tagadvance` under your account - that's an external, credentialed step I
+  cannot do from here. Flagging rather than guessing at a plugin choice you'd have to unwind.
+  j_plan calls this the long-pole item, not the code - worth starting the namespace verification
+  early even before the Gradle side is settled.
 - A6 drops the keyspace map on `close()`. A real cluster keeps metadata readable after close, so
   this is a deliberate fidelity trade, not a fix. Reversible if he prefers fidelity.
 - g_plan G1 asks for a zero warning count. Unreachable: 22 of 27 come from
