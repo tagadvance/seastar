@@ -29,6 +29,7 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 @ThreadSafe
 public class VolatileTable implements SeaStarTable {
@@ -45,6 +46,12 @@ public class VolatileTable implements SeaStarTable {
 	private final Map<CqlIdentifier, ClusteringOrder> clusteringColumns;
 	private final Map<CqlIdentifier, IndexMetadata> indexes;
 	private final List<SeaStarRow> rows;
+	/**
+	 * The static cells of each partition, keyed by that partition's key values. A static column
+	 * belongs to the partition rather than to any row in it, so it is stored once here and every row
+	 * of the partition reads and writes the same cell.
+	 */
+	private final Map<List<Object>, Cells> staticsByPartition;
 	private AttachmentPoint attachmentPoint;
 
 	public VolatileTable(final SeaStarDriverContext context, final SeaStarKeyspace keyspace,
@@ -57,7 +64,47 @@ public class VolatileTable implements SeaStarTable {
 		this.clusteringColumns = new LinkedHashMap<>();
 		this.indexes = new LinkedHashMap<>();
 		this.rows = new ArrayList<>();
+		this.staticsByPartition = new LinkedHashMap<>();
 		this.attachmentPoint = context;
+	}
+
+	/**
+	 * The static cells shared by the partition the given row values belong to, created empty the
+	 * first time that partition is written, or null when the table declares no static column and so
+	 * has nothing to share.
+	 */
+	@Nullable
+	Cells statics(final List<Object> values) {
+		return writeLockUnchecked(() -> {
+			if (columns.stream().noneMatch(SeaStarColumn::isStatic)) {
+				return null;
+			}
+			final List<Object> key = partitionKey.stream()
+				.map(this::indexOf)
+				.map(index -> index < 0 ? null : values.get(index))
+				.collect(Collectors.toCollection(ArrayList::new));
+
+			return staticsByPartition.computeIfAbsent(Collections.unmodifiableList(key),
+				ignored -> new Cells(Collections.nCopies(columns.size(), null), 0L));
+		});
+	}
+
+	/**
+	 * Whether the column at {@code i} is declared static, read without taking the lock for the
+	 * callers that already hold it.
+	 */
+	boolean isStatic(final int i) {
+		return columns.get(i).isStatic();
+	}
+
+	/**
+	 * Whether the column at {@code i} is part of the primary key. A key column is not a cell that can
+	 * expire, so it is what a row's liveness is judged apart from.
+	 */
+	boolean isKeyColumn(final int i) {
+		final var name = columns.get(i).getName();
+
+		return partitionKey.contains(name) || clusteringColumns.containsKey(name);
 	}
 
 	@Override
@@ -109,6 +156,7 @@ public class VolatileTable implements SeaStarTable {
 			final var index = insertionIndexOf(name);
 			columns.add(index, column);
 			rows.forEach(row -> row.insertValue(index, null));
+			staticsByPartition.values().forEach(cells -> cells.insert(index, null, 0L));
 
 			return column;
 		});
@@ -126,6 +174,7 @@ public class VolatileTable implements SeaStarTable {
 
 			columns.remove(index);
 			rows.forEach(row -> row.removeValue(index));
+			staticsByPartition.values().forEach(cells -> cells.remove(index));
 		});
 	}
 
@@ -328,7 +377,10 @@ public class VolatileTable implements SeaStarTable {
 
 	@Override
 	public void truncate() {
-		writeLock(rows::clear);
+		writeLock(() -> {
+			rows.clear();
+			staticsByPartition.clear();
+		});
 	}
 
 	@Override

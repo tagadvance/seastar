@@ -1,5 +1,7 @@
 package com.tagadvance.seastar;
 
+import static java.util.Objects.requireNonNull;
+
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.addresstranslation.AddressTranslator;
@@ -23,6 +25,7 @@ import com.datastax.oss.driver.internal.core.metadata.NoopNodeStateListener;
 import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
 import com.datastax.oss.driver.internal.core.session.throttling.PassThroughRequestThrottler;
 import com.google.errorprone.annotations.ThreadSafe;
+import java.time.Clock;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -45,10 +48,21 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 
 	private final String sessionName;
 	private final Map<CqlIdentifier, SeaStarKeyspace> keyspaceById;
+	private final Clock clock;
 
 	public VolatileDriverContext(final DriverConfigLoader configLoader,
 		final ProgrammaticArguments programmaticArguments) {
+		this(configLoader, programmaticArguments, Clock.systemUTC());
+	}
+
+	/**
+	 * @param clock the clock write times are stamped with and TTLs expire against; pass a
+	 *              {@link SeaStarClock} to move it by hand
+	 */
+	public VolatileDriverContext(final DriverConfigLoader configLoader,
+		final ProgrammaticArguments programmaticArguments, final Clock clock) {
 		super(configLoader, programmaticArguments);
+		this.clock = requireNonNull(clock, "clock must not be null");
 
 		final var defaultProfile = configLoader.getInitialConfig().getDefaultProfile();
 		if (defaultProfile.isDefined(DefaultDriverOption.SESSION_NAME)) {
@@ -175,6 +189,11 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 	@Override
 	public Node getNode() {
 		return node;
+	}
+
+	@Override
+	public Clock getClock() {
+		return clock;
 	}
 
 	@Override

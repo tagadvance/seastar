@@ -20,6 +20,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -37,6 +38,32 @@ import org.jspecify.annotations.NonNull;
 public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 
 	private final List<SchemaSource> schemaSources = new ArrayList<>();
+
+	private Clock clock = Clock.systemUTC();
+
+	/**
+	 * Sets the clock the built session stamps writes with and expires TTLs against. Defaults to
+	 * {@link Clock#systemUTC()}, which is what makes a TTL behave as it does on a cluster.
+	 *
+	 * <p>Pass a {@link SeaStarClock} to move time by hand, so that a test asserting on expiry does
+	 * not have to wait for it:
+	 *
+	 * <pre>{@code
+	 * final var clock = SeaStarClock.now();
+	 * final var session = SeaStarCqlSession.builder().withClock(clock).build();
+	 * ...
+	 * clock.advance(Duration.ofMinutes(2));
+	 * }</pre>
+	 *
+	 * @param clock the clock to read the current time from
+	 * @return this builder
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withClock(final @NonNull Clock clock) {
+		this.clock = Objects.requireNonNull(clock, "clock must not be null");
+
+		return this;
+	}
 
 	/**
 	 * Seeds the built session's schema from a CQL script. The script may contain multiple
@@ -255,7 +282,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	@Override
 	protected SeaStarDriverContext buildContext(final DriverConfigLoader configLoader,
 		final ProgrammaticArguments programmaticArguments) {
-		return new VolatileDriverContext(configLoader, programmaticArguments);
+		return new VolatileDriverContext(configLoader, programmaticArguments, clock);
 	}
 
 	private void applySchema(final SeaStarCqlSession session) {

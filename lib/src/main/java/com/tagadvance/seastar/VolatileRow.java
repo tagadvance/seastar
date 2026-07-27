@@ -26,17 +26,56 @@ public class VolatileRow implements SeaStarRow {
 
 	private final SeaStarDriverContext context;
 	private final SeaStarTable table;
-	private final List<Object> data;
+	/**
+	 * The table again, where it is the implementation this row is paired with, which is what knows
+	 * about static columns and which columns are part of the key.
+	 */
+	private final @Nullable VolatileTable volatileTable;
+	private final Cells cells;
+	/**
+	 * The cells this row's partition shares, or null for a table with no static columns. A static
+	 * column is one cell per partition rather than one per row, so reads and writes of one are
+	 * redirected here and every row of the partition sees the same value.
+	 *
+	 * <p>Resolved the first time a static column is touched rather than at construction, so that
+	 * {@code ALTER TABLE ... ADD ... STATIC} reaches the rows that were already there.
+	 */
+	private @Nullable Cells statics;
+	private boolean staticsResolved;
+	/**
+	 * When the row's primary key stops being live, in seconds since the epoch, or
+	 * {@link Cells#NEVER}. This is Cassandra's row marker: {@code INSERT ... USING TTL} expires the
+	 * row itself, so a row whose every cell has gone still disappears at the right moment, while an
+	 * ordinary INSERT leaves a row that outlives its columns.
+	 */
+	private long markerExpiresAt = Cells.NEVER;
 	private AttachmentPoint attachmentPoint;
 
 	protected VolatileRow(final @NonNull SeaStarDriverContext context,
 		final @NonNull SeaStarTable table, final @NonNull List<Object> data) {
+		this(context, table, data, Cells.microseconds(context.getClock()));
+	}
+
+	/**
+	 * @param writeTime the microsecond timestamp every cell of the new row carries, which is what
+	 *                  {@code writetime()} reports and what a later write is resolved against
+	 */
+	protected VolatileRow(final @NonNull SeaStarDriverContext context,
+		final @NonNull SeaStarTable table, final @NonNull List<Object> data, final long writeTime) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.table = requireNonNull(table, "table must not be null");
+		this.volatileTable = table instanceof VolatileTable paired ? paired : null;
 		// A copy, and a mutable one: ALTER TABLE ADD and DROP open and close a slot in every row, and
 		// the caller's list may be immutable (SeaStarTable#addRow(Object...) hands over a List.of).
-		this.data = new ArrayList<>(validate(data));
+		this.cells = new Cells(validate(data), writeTime);
 		this.attachmentPoint = context;
+		// A value written into a static slot belongs to the partition, not to this row. Nulls are
+		// left alone: a row that simply does not name a static column must not clear it.
+		for (int i = 0; i < data.size(); i++) {
+			if (data.get(i) != null && volatileTable != null && volatileTable.isStatic(i)) {
+				cellsOf(i).set(i, data.get(i), writeTime, Cells.NEVER);
+			}
+		}
 	}
 
 	private List<Object> validate(final @NonNull List<Object> values)
@@ -69,12 +108,74 @@ public class VolatileRow implements SeaStarRow {
 		return table;
 	}
 
+	/**
+	 * The cells a column at {@code i} lives in: the partition's, for a static column, and this row's
+	 * for every other.
+	 */
+	private Cells cellsOf(final int i) {
+		if (volatileTable == null || !volatileTable.isStatic(i)) {
+			return cells;
+		}
+		if (!staticsResolved) {
+			statics = volatileTable.statics(cells.values());
+			staticsResolved = true;
+		}
+
+		return statics == null ? cells : statics;
+	}
+
 	@Override
 	public void set(final int i, final Object value) {
-		// lock the table to precent concurrent schema changes
-		table.readLock(() -> writeLock(() -> {
-			data.set(i, value);
+		set(i, value, Cells.microseconds(context.getClock()), Cells.NEVER);
+	}
+
+	@Override
+	public boolean set(final int i, final @Nullable Object value, final long writeTime,
+		final long expiresAt) {
+		// lock the table to prevent concurrent schema changes
+		return table.readLockUnchecked(
+			() -> writeLockUnchecked(() -> cellsOf(i).set(i, value, writeTime, expiresAt)));
+	}
+
+	@Override
+	public void markLive(final long expiresAt) {
+		writeLock(() -> this.markerExpiresAt = expiresAt);
+	}
+
+	@Override
+	public boolean isLive() {
+		final var now = Cells.seconds(context.getClock());
+
+		return table.readLockUnchecked(() -> readLockUnchecked(() -> {
+			if (now < markerExpiresAt) {
+				return true;
+			}
+			for (int i = 0; i < table.size(); i++) {
+				if (!isKeyColumn(i) && cellsOf(i).isLive(i, now)) {
+					return true;
+				}
+			}
+
+			return false;
 		}));
+	}
+
+	private boolean isKeyColumn(final int i) {
+		return volatileTable != null && volatileTable.isKeyColumn(i);
+	}
+
+	@Override
+	public @Nullable Long writeTime(final int i) {
+		final var now = Cells.seconds(context.getClock());
+
+		return table.readLockUnchecked(() -> readLockUnchecked(() -> cellsOf(i).writeTime(i, now)));
+	}
+
+	@Override
+	public @Nullable Integer ttl(final int i) {
+		final var now = Cells.seconds(context.getClock());
+
+		return table.readLockUnchecked(() -> readLockUnchecked(() -> cellsOf(i).ttl(i, now)));
 	}
 
 	/**
@@ -85,21 +186,26 @@ public class VolatileRow implements SeaStarRow {
 	 */
 	@Override
 	public void insertValue(final int i, final @Nullable Object value) {
-		writeLock(() -> data.add(i, value));
+		writeLock(() -> cells.insert(i, value, Cells.microseconds(context.getClock())));
 	}
 
 	@Override
 	public void removeValue(final int i) {
-		writeLock(() -> data.remove(i));
+		writeLock(() -> cells.remove(i));
 	}
 
 	@Override
 	public Row snapshot() {
+		final var now = Cells.seconds(context.getClock());
+
 		return table.readLockUnchecked(() -> readLockUnchecked(() -> {
 			final var isDetached = isDetached();
 			final var size = size();
 			final var columnDefinitions = table.snapshot();
-			final var d = new ArrayList<>(data);
+			final List<Object> d = new ArrayList<>(size);
+			for (int i = 0; i < size; i++) {
+				d.add(cellsOf(i).value(i, now));
+			}
 
 			return new Row() {
 
@@ -285,8 +391,10 @@ public class VolatileRow implements SeaStarRow {
 	@Nullable
 	@Override
 	public ByteBuffer getBytesUnsafe(int i) {
-		return readLockUnchecked(
-			() -> codecRegistry().codecFor(getType(i)).encode(data.get(i), protocolVersion()));
+		final var now = Cells.seconds(context.getClock());
+
+		return readLockUnchecked(() -> codecRegistry().codecFor(getType(i))
+			.encode(cellsOf(i).value(i, now), protocolVersion()));
 	}
 
 }

@@ -34,6 +34,43 @@ public interface SeaStarRow extends SeaStarReadWriteLock, Row, Serializable {
 	void set(int i, Object value);
 
 	/**
+	 * Writes a column with the write time and expiry a statement asked for, and answers whether the
+	 * write took: Cassandra resolves two writes to one cell by their timestamps, so a write stamped
+	 * older than what is already stored is discarded.
+	 *
+	 * @param expiresAt when the value stops being readable, in seconds since the epoch, or
+	 *                  {@link Long#MAX_VALUE} for a column written without a TTL
+	 */
+	boolean set(int i, @Nullable Object value, long writeTime, long expiresAt);
+
+	/**
+	 * Sets when this row's primary key stops being live, in seconds since the epoch. That is
+	 * Cassandra's row marker: {@code INSERT ... USING TTL} expires the row itself, so the row goes
+	 * when its columns do rather than lingering as a key with nothing in it.
+	 */
+	void markLive(long expiresAt);
+
+	/**
+	 * Whether this row is still readable: its marker has not expired, or some column outside the
+	 * primary key still holds an unexpired value.
+	 */
+	boolean isLive();
+
+	/**
+	 * The microsecond timestamp a column was written at, or null when it holds nothing - which is
+	 * what a cluster answers for {@code writetime()} of a null column.
+	 */
+	@Nullable
+	Long writeTime(int i);
+
+	/**
+	 * The seconds a column has left before it expires, or null when it holds nothing or was written
+	 * without a TTL.
+	 */
+	@Nullable
+	Integer ttl(int i);
+
+	/**
 	 * Opens a slot at {@code i} and fills it with {@code value}, shifting the values after it along.
 	 * A row's values are positional, tied to its table's column list, so a column added to the table
 	 * has to be added to every row at the same index.

@@ -5,12 +5,20 @@ import com.datastax.oss.driver.api.core.context.DriverContext;
 import com.datastax.oss.driver.api.core.metadata.Metadata;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.tagadvance.tools.SeaStarReadWriteLock;
+import java.time.Clock;
 import java.util.Map;
 import java.util.Optional;
 
 public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContext, Metadata {
 
 	Node getNode();
+
+	/**
+	 * The clock a write is stamped with and a TTL expires against. Defaults to
+	 * {@link Clock#systemUTC()}; a session built with {@link SeaStarCqlSessionBuilder#withClock} gets
+	 * that one instead, which is how a test observes expiry without waiting for it.
+	 */
+	Clock getClock();
 
 	default Optional<SeaStarKeyspace> getSeaStarKeyspace(final String name) {
 		return getSeaStarKeyspace(CqlIdentifier.fromInternal(name));
