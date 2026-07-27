@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.DriverException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import java.time.Duration;
 import java.util.List;
@@ -15,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -92,7 +94,7 @@ class ConcurrencyTest {
 		final var table = keyspace.newSeaStarTable("t");
 		table.addColumn("id", DataTypes.INT);
 		table.markPartitionKey(CqlIdentifier.fromInternal("id"));
-		final var counter = new java.util.concurrent.atomic.AtomicInteger();
+		final var counter = new AtomicInteger();
 
 		assertCompletes(List.of(table::getColumns, table::snapshot,
 			() -> table.insertColumn(CqlIdentifier.fromInternal("c" + counter.getAndIncrement()),
@@ -116,7 +118,7 @@ class ConcurrencyTest {
 		session.execute("CREATE TABLE stress.t (id int PRIMARY KEY, name text)");
 
 		final Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
-		final var id = new java.util.concurrent.atomic.AtomicInteger();
+		final var id = new AtomicInteger();
 		final List<Runnable> work = List.of(
 			() -> tolerate(unexpected,
 				() -> session.execute("INSERT INTO stress.t (id, name) VALUES (%d, 'a')".formatted(
@@ -152,7 +154,7 @@ class ConcurrencyTest {
 	private static void tolerate(final Queue<Throwable> unexpected, final Runnable runnable) {
 		try {
 			runnable.run();
-		} catch (final com.datastax.oss.driver.api.core.DriverException e) {
+		} catch (final DriverException e) {
 			// The race answered, which is the point.
 		} catch (final Throwable e) {
 			unexpected.add(e);

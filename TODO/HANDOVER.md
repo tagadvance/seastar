@@ -15,7 +15,7 @@ git log --oneline main..final-push
 ./gradlew :lib:containerTest # needs Docker
 ```
 
-Last verified: 213 tests green locally, 112 green on the container.
+Last verified: 282 tests green locally, 150 green on the container.
 
 ### Done
 
@@ -33,6 +33,8 @@ Last verified: 213 tests green locally, 112 green on the container.
 | j_plan | J7 | CI on JDK 17/21/25; container suite nightly and on demand |
 | e_plan | E0 E1 E2 E3 E4 E5 | ALTER TABLE/KEYSPACE, DROP INDEX/TYPE; everything else rejected by name; `docs/support-matrix.md` |
 | d_plan | D5 D6 D7 D9 | select clause (aggregates, token, writetime/ttl, cast, aliases, JSON both ways); static columns per partition; per-cell write time and TTL against an injectable clock; paging documented as a deliberate single page |
+| b_plan | B1-B7 | one lock per keyspace (l_plan L1's middle path, not B2's hierarchy); row lock and table lock gone; every `Volatile*` field `@GuardedBy` or immutable; `ConcurrencyTest` |
+| l_plan | L1 | decided and implemented as above |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -41,8 +43,8 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**,
-  **k_plan all**, **j_plan J3 J8**.
+- **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
+  **j_plan J3 J8**, **l_plan L2-L7**.
 
 ### Decisions already made - do not relitigate
 
@@ -120,41 +122,52 @@ a JDK bump is the most likely thing to break them. Run it with
 6. **TestContainers drags in the 3.x DataStax driver**, whose Guava 19 and slf4j 1.7 shadow the
    pinned versions inside a JMH uber jar. The container probe needs its own source set.
 
-## What the locking rework needs to know
+## The locking rework: what landed
 
-D6 and D7 changed the storage, and l_plan L1 is about to change how it is locked. Three things
-matter:
+**The lock hierarchy is written up in `AGENTS.md`. Read it there, not here.** In short: one lock per
+keyspace, `context.read -> keyspace.write` for every mutation, no table lock and no row lock. That
+deletes B1's deadlock rather than ordering around it, which is l_plan L1's middle path and what
+b_plan B3 independently recommended.
 
-1. **`VolatileTable#statics(...)` takes no lock, on purpose.** A row resolves its partition's static
-   cells while reading, under the table's *read* lock, and a `ReentrantReadWriteLock` read lock
-   cannot be upgraded - taking a write lock there deadlocks, and it did. The map is a
-   `ConcurrentHashMap` and `computeIfAbsent` is what makes creation atomic. If the row lock goes and
-   the keyspace lock arrives, keep that property: whatever lock protects the column list must already
-   be held by the caller, and the map must stay concurrent or the lookup must move outside the read
-   path.
-2. **A row's values are a `Cells`, not a `List<Object>`.** Values, write times and expiries move
-   together through `insert`/`remove`, which is what keeps ALTER TABLE ADD/DROP in step. A partition's
-   static cells are a `Cells` of the same width, so the same shift applies to them - see
-   `VolatileTable#insertColumn`/`removeColumn`/`truncate`.
-3. **Reads are no longer pure.** `VolatileRow#cellsOf` resolves and caches the partition's statics on
-   first use, so the read path mutates two fields (`statics`, `staticsResolved`). It is idempotent
-   and guarded by the row's own lock today; with the row lock gone it needs the keyspace lock or a
-   volatile/final rework.
+The three hazards the previous wave flagged, and what became of them:
 
-A partition-key index would help here too: `InsertHandler` now also scans the partition to drop a
-static row when the first clustered row arrives, and `DeleteHandler` scans it to clear static cells.
+1. **`VolatileTable#statics(...)` still takes no lock, on purpose,** and the reason is unchanged: a
+   row resolves its partition's static cells while reading, and a read lock cannot be upgraded. The
+   map stays a `ConcurrentHashMap` and `computeIfAbsent` is still what makes creation atomic. It is
+   the one documented exception to "the keyspace lock guards everything".
+2. **A row's values are still a `Cells`.** The partition index keys off them directly
+   (`VolatileRow#storedValues`) rather than through `getObject`, which round-trips every value
+   through its codec.
+3. **The impure read was the sharpest edge, and it resolved cleanly.** `VolatileRow`'s two fields
+   (`statics`, `staticsResolved`) collapsed into one `volatile @Nullable Cells`. Several readers may
+   resolve at once now that there is no row lock, but they all get the same `Cells` instance back
+   from the `computeIfAbsent`, so the race is benign and publishing the reference is all that is
+   needed. Null means "not resolved yet" rather than "no statics", which is sound because a row only
+   asks when the column it is reading is declared static.
 
 ## Known performance debt
 
-- `InsertHandler` scans every existing row for a primary-key match on each insert, so bulk load is
-  O(n^2) (~5e9 comparisons at 100k rows). Seeding a fixture goes through this path, so it works
-  against goal 2. Needs a partition-key index.
-- Every SELECT is a full scan: point lookup by full primary key costs 5.8 us at 10 rows, 63 us at
-  1k, 12 749 us at 100k.
-- D1's read-time sort roughly doubles a full scan (`selectAll` at 1k: 334 -> 624 us), because every
-  returned row's partition key is re-encoded through `getBytesUnsafe`, which takes two locks and
-  runs a codec. A point lookup is unaffected. Both this and the line above are the same missing
-  partition key index; see the "After D1" section of `benchmarks.md`.
+The partition-key index landed with the lock rework; the numbers are in the last section of
+`benchmarks.md`. What it fixed: bulk load through INSERT (100k rows now seed in 1.7 s rather than an
+extrapolated ~19 minutes), and the point lookup, which no longer scales with the table at all -
+12.7 us at 1 000 rows and 13.4 us at 100 000, a 1 900x improvement at 100k.
+
+What is left:
+
+- **A full scan did not improve, and got 4-11 % worse at small row counts.** Two causes, both
+  deliberate: `rows()` copies under the read lock rather than handing out a lazy stream over live
+  storage (b_plan B5 - a lazy one escapes the lock), and a map of partitions has worse locality than
+  one array. At 100 000 rows the same change measures 13 % faster, so the cost is only visible where
+  the scan is cheap anyway.
+- **D1's read-time sort still costs a full scan its per-row key encoding.** The index removed the
+  search, not the encoding: a query returning every row still puts every row's partition key through
+  `getBytesUnsafe` and a codec. Iterating partitions in token order would remove it - the index now
+  makes that possible, where before it was not - and that is the next thing to try if `selectAll`
+  matters.
+- **`VolatileRow#getObject` round-trips through the codec.** Overriding it to return the stored value
+  was considered and rejected: a `blob` column would hand out its stored `ByteBuffer` rather than a
+  duplicate, so a caller that consumed it would drain the stored value. The index sidesteps it with a
+  package-private accessor instead.
 
 ## Working agreement reminders
 

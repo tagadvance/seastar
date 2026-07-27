@@ -5,6 +5,12 @@
 (`d_plan_query_engine.txt` D1), so the "after" numbers are comparable. Re-run the same tasks after
 those land and diff against this file.
 
+Both have since landed. Their measurements are the last two sections:
+[After D1](#after-d1-what-read-time-ordering-costs) and
+[After the lock rework and the partition index](#after-the-lock-rework-and-the-partition-index).
+**Compare within a section, not across them** - this laptop throttles, and the same code measures 2-3x
+apart between sittings, so each section pairs its own before and after taken back to back.
+
 Measured at commit `1145dae`. No library code changed for this run: everything under
 `lib/src/main` is identical to `3708bfa`, and the only additions are the benchmark source sets,
 which are not on the default build and not in the published jar.
@@ -275,7 +281,7 @@ right:
   existing primary key on every insert, so bulk loading by CQL is O(n^2) - at 100k rows that is
   ~5x10^9 row comparisons and takes far longer than the benchmark it sets up. `BenchmarkFixture`
   seeds through `SeaStarTable.addRow` instead, which is the same call the INSERT path makes after
-  its scan.
+  its scan. **Fixed by the partition index**; measured in the last section, 100 000 rows in 1.7 s.
 - **`SeaStarRow.validate` builds its exception message with mismatched format arguments.** A
   type-mismatch on seeding reported `Value %d (1) is not compatible with column type name-0 [INT]`,
   which names neither the offending value nor the right column. Worth a line in
@@ -317,9 +323,108 @@ Reading the numbers:
   iterate partitions in token order instead of hashing every row, and a point lookup would stop
   scanning. Both plans point at the same missing structure.
 
+**The index has since landed**, and it took the point lookup with it - see the next section. The full
+scan did not improve: the index removes the *search*, not the per-row key encoding the sort needs, so
+a query that returns every row still encodes every row's key. Iterating partitions in token order,
+which would remove it, is a further change and was not made.
+
 This is a fidelity-for-speed trade the design goal decides: SeaStar existed to return rows in an
 order Cassandra never returns them in, and a test that asserted on the order passed here and failed
 against a cluster.
+
+## After the lock rework and the partition index
+
+`b_plan_locks_and_concurrency.txt` collapsed the lock hierarchy onto one lock per keyspace, and the
+same wave gave a table an index from partition key to its rows. This is the measurement
+`i_plan_benchmarks.txt` I3 asked for: baseline before, same benchmarks after.
+
+**Read these against each other and not against the tables above.** Before is `87dbbce`, after is the
+merge of this wave, and the two were run back to back in one sitting on the machine described at the
+top. The older tables were taken on other days; this laptop throttles enough that its absolute
+numbers drift by 2-3x between sittings, which is exactly why D1 was measured the same way. Same JMH
+settings as the rest of the file: `AverageTime`, 1 fork, 5 x 1 s warmup, 5 x 1 s measurement.
+Microseconds per operation.
+
+| benchmark | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SelectScalingBenchmark.selectPoint`, 10 rows | 12.589 ± 0.305 | 12.765 ± 0.544 | none |
+| `SelectScalingBenchmark.selectPoint`, 1 000 rows | 176.433 ± 19.776 | **12.670 ± 0.102** | **-93 %** |
+| `SelectScalingBenchmark.selectPoint`, 100 000 rows | 25 838 ± 802 | **13.414 ± 0.259** | **-99.9 %** |
+| `StatementBenchmark.selectPoint` - 1 row out of 1 000 | 171.416 ± 4.011 | **12.451 ± 0.164** | **-93 %** |
+| `StatementBenchmark.update` | 188.374 ± 29.036 | **16.337 ± 0.426** | **-91 %** |
+| `StatementBenchmark.deleteByPrimaryKey` | 182.370 ± 1.854 | **13.493 ± 0.064** | **-93 %** |
+| `StatementBenchmark.insertPrepared` | 65.823 ± 0.790 | **12.214 ± 0.385** | **-81 %** |
+| `StatementBenchmark.insertLiteral` | 68.110 ± 1.537 | **13.278 ± 0.384** | **-81 %** |
+| `StatementBenchmark.batch100` - 100 INSERTs | 1 619.098 ± 19.382 | **1 200.849 ± 11.586** | **-26 %** |
+| `SelectScalingBenchmark.selectAll`, 100 000 rows | 139 100 ± 5 495 | 120 760 ± 847 | -13 % |
+| `StatementBenchmark.createTable` | 6.279 ± 1.052 | 5.991 ± 1.170 | none |
+| `StatementBenchmark.prepareCached` | 0.383 ± 0.005 | 0.386 ± 0.013 | none |
+| `StatementBenchmark.prepareUncached` | 6.387 ± 0.392 | 6.456 ± 0.458 | none |
+| `StatementBenchmark.prepareUncachedResolved` | 6.461 ± 0.293 | 6.524 ± 0.277 | none |
+| `StatementBenchmark.selectScan` - all 1 000 rows | 744.960 ± 60.670 | 758.788 ± 34.224 | +2 % |
+| `SelectScalingBenchmark.selectAll`, 1 000 rows | 743.833 ± 23.872 | 774.527 ± 36.219 | **+4 %** |
+| `SelectScalingBenchmark.selectAll`, 10 rows | 9.242 ± 0.057 | 10.238 ± 0.049 | **+11 %** |
+
+Reading the numbers:
+
+- **The point lookup stopped scaling with the table**, which was the whole point. 12.7 us at 1 000
+  rows and 13.4 us at 100 000: a 1 900x improvement at 100k, and what is left is the per-statement
+  cost - the parse - rather than the store. The three plans that pointed at "the missing partition
+  key index" were all pointing at the same number.
+- **Every write improved by the same mechanism.** INSERT no longer scans for a matching primary key,
+  UPDATE and DELETE no longer scan for the rows they address, and the static-row sweep and the
+  partition-wide delete walk a partition instead of the table.
+- **The full scan is the honest regression: +11 % at 10 rows, +4 % at 1 000.** `rows()` now copies
+  the row list under the read lock rather than handing out a lazy stream over live storage - a lazy
+  one escapes the lock and gives its consumer a `ConcurrentModificationException`, which is
+  b_plan B5 - and walking a map of partitions has worse locality than walking one array. It is a
+  correctness cost, paid on the operation that is O(rows) by definition, and it is bought back at
+  100 000 rows where the same change measures 13 % *faster*.
+- **Nothing else moved.** The parse path, `CREATE TABLE` and the prepared statement cache are
+  untouched by both changes, and they measure untouched. That is the useful control in the table:
+  four benchmarks that should not have changed did not.
+
+### Bulk loading through INSERT
+
+benchmarks.md recorded that seeding 100 000 rows through `INSERT` was not possible, and that
+`BenchmarkFixture` had to write through `SeaStarTable.addRow` instead. Measured the same way, one
+prepared statement executed per row, milliseconds:
+
+| rows | before | after |
+| ---: | ---: | ---: |
+| 1 000 | 649 | 484 |
+| 10 000 | 9 608 | 605 |
+| 25 000 | 70 005 | not measured |
+| 100 000 | not measured | **1 693** |
+
+The two columns stop at different row counts on purpose. Before, 25 000 rows already took 70
+seconds, and the shape is unmistakably quadratic - 2.5x the rows for 7.3x the time - so 100 000
+extrapolates to something like 19 minutes and was not worth waiting for. After, 25 000 was not worth
+measuring because 100 000 finished in under two seconds.
+
+At 1 000 rows both columns are mostly JIT warmup, which is why neither looks linear there. Past that
+the after column settles at roughly **17 us per row**, and **100 000 rows seed in 1.7 seconds**.
+
+`BenchmarkFixture` could go through CQL now rather than writing to `SeaStarTable.addRow`. It has been
+left alone deliberately, so the scaling benchmarks keep measuring what they measured before.
+
+### Startup
+
+`:lib:startupBenchmark`, 20 cold JVMs per variant, before and after in the same sitting.
+Milliseconds, median.
+
+| metric | before | after |
+| --- | ---: | ---: |
+| `build.cold` | 436.02 | 441.35 |
+| `query.first` | 203.19 | 200.70 |
+| `jvm.to.first.query` | 694 | 685 |
+| `build.warm` | 7.98 | 8.24 |
+| `query.warm` | 0.56 | 0.56 |
+
+Unchanged, as expected: goal 2 is class loading, and neither locking nor row storage is on that path.
+The check was worth running because b_plan B2's cost note asked for it - the four-level hierarchy it
+proposed would have added two or three uncontended acquisitions per row mutation. One lock per
+keyspace adds none.
 
 ## Reproducing
 

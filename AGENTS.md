@@ -119,11 +119,68 @@ Two layered abstractions:
 
 `VolatileDriverContext` is the root: it is simultaneously the driver `DriverContext`, the cluster `Metadata`, and the owner of the keyspace map. `SeaStarCqlSession.getContext()` returns it, and tests reach into it (`context.newSeaStarKeyspace(...)`, `keyspace.newSeaStarTable(...)`) to populate data directly rather than via CQL.
 
+### The lock hierarchy
+
+There are two locks, and a third that is not part of the tree. **Acquire them outermost first, and
+never the other way round.**
+
+```
+context lock     VolatileDriverContext  - guards the keyspace map, and nothing else
+  keyspace lock  VolatileKeyspace       - guards everything inside the keyspace
+    (udt value)  VolatileUdtValue       - a detached value; below both, acquires neither
+```
+
+There is **no table lock and no row lock.** `VolatileTable`, `VolatileColumn` and
+`VolatileUserDefinedType` return their keyspace's lock from `lock()`, and `VolatileRow` holds none at
+all - it goes through its table's. A row's values are positionally tied to its table's column list,
+so one lock over both is what keeps them consistent, and with only one lock there is no pair to take
+in the wrong order. Two keyspaces do not contend.
+
+The rules:
+
+- **A mutation is `context.read` then `keyspace.write`.** Do not hand-roll it: `SeaStarTable#mutate`
+  takes both, and `SeaStarTable#query` is the read-only counterpart (`context.read` +
+  `keyspace.read`). Every DML handler goes through one of them.
+- **Creating or dropping a keyspace takes `context.write`.** That is the only thing that does.
+- **Never acquire a lock while holding an inner one.** `VolatileUdtValue` is where this can still be
+  got wrong, because reading its type takes the keyspace lock: resolve whatever the type has to say
+  *before* taking the value's own lock.
+- **No read-to-write upgrades.** `ReentrantReadWriteLock` deadlocks on one. Downgrades are fine and
+  are relied on - a handler holding `keyspace.write` calls methods that take `keyspace.read`.
+- **Every field of every `Volatile*` class is annotated `@GuardedBy` or documented as immutable.**
+  `jcip-annotations` is a `compileOnly` dependency for exactly this. Keep it that way when adding a
+  field.
+- **Getters hand out copies, not live views.** `getSeaStarKeyspaces`, `getSeaStarTables`,
+  `getSeaStarUserDefinedTypes`, `rows()` and `partition(...)` all snapshot under the read lock. A
+  lazy stream over the live storage escapes the lock and gives its consumer a
+  `ConcurrentModificationException`.
+
+One deliberate exception, and it is load-bearing: **`VolatileTable#statics(...)` writes to
+`staticsByPartition` while its caller may hold only the read lock.** A row resolves its partition's
+static cells while reading, and a read lock cannot be upgraded - taking the write lock there
+deadlocks, and did. The map is a `ConcurrentHashMap` and `computeIfAbsent` is what makes creation
+atomic. `VolatileRow#statics` caches the result in a single `volatile` field for the same reason: two
+readers racing get the same `Cells` back, so the race is benign.
+
+`ConcurrencyTest` is the regression test for all of this. It is a unit test, not part of
+`AbstractCqlSessionTest`, because a live cluster cannot reach SeaStar's own locks. Everything in it
+is time-bounded and fails on a latch: a hung Gradle test worker is far worse than a red test.
+
+### Row storage and the partition index
+
+A table stores its rows as a map from partition key to that partition's rows, which is how a node
+stores them anyway. `SeaStarTable#partition(List)` reads one partition; `rows()` reads all of them.
+
+`RestrictionRules#partitions` turns a WHERE clause into the partitions it reaches, or null when it
+pins no partition key and has to be answered by a scan; `RestrictionRules#rows` is the two cases in
+one call. SELECT, UPDATE and DELETE all go through it, and INSERT knows its partition outright. This
+is what makes a point lookup and a bulk load stop being O(rows) - see [benchmarks.md](benchmarks.md).
+
 ### Identifiers
 Everything is keyed by `CqlIdentifier`. Most internal APIs use `CqlIdentifier.fromInternal(name)` (case-sensitive, no quoting) — note this differs from `fromCql` (which interprets quoting/case rules). Be deliberate about which you use when adding lookups.
 
 ### Known correctness caveat noted by the author
-SeaStar currently deserializes and re-serializes row data rather than storing it natively (the author calls this unnecessary but hasn't overridden all the default getters). Thread-safety is a stated invariant: everything should be thread-safe unless its documentation says otherwise (classes carry `@ThreadSafe`/`@NotThreadSafe` from `jcip-annotations`).
+SeaStar currently deserializes and re-serializes row data rather than storing it natively (the author calls this unnecessary but hasn't overridden all the default getters). Thread-safety is a stated invariant: everything should be thread-safe unless its documentation says otherwise (classes carry `@ThreadSafe`/`@NotThreadSafe` from `jcip-annotations`), and the lock hierarchy above is how that invariant is kept.
 
 ## Adding a new CQL statement type
 
