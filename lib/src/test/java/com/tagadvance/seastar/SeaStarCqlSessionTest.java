@@ -30,7 +30,7 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 	@Test
 	@DisplayName("A TypeChangeEvent evicts cached prepared statements referencing the changed UDT")
 	void testPreparedStatementEvictedOnTypeChange() throws Exception {
-		try (final var session = (SeaStarCqlSession) SeaStarCqlSession.builder().build()) {
+		try (final var session = SeaStarCqlSession.builder().build()) {
 			final var context = session.getContext();
 			session.execute("CREATE KEYSPACE ks WITH replication = "
 				+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
@@ -106,7 +106,7 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 	@Test
 	@DisplayName("Closing a session discards its keyspaces")
 	void testCloseDiscardsKeyspaces() {
-		final var session = (SeaStarCqlSession) SeaStarCqlSession.builder().build();
+		final var session = SeaStarCqlSession.builder().build();
 		session.execute("CREATE KEYSPACE ks WITH replication = "
 			+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
 		assertTrue(session.getContext().getSeaStarKeyspace("ks").isPresent());
@@ -120,7 +120,7 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 	@Test
 	@DisplayName("A keyspace created outside CQL reports Cassandra's default replication")
 	void testProgrammaticKeyspaceDefaults() {
-		try (final var session = (SeaStarCqlSession) SeaStarCqlSession.builder().build()) {
+		try (final var session = SeaStarCqlSession.builder().build()) {
 			final var keyspace = session.getContext().newSeaStarKeyspace("direct");
 
 			assertEquals(
