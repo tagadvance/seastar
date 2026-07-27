@@ -49,6 +49,11 @@ public class VolatileRow implements SeaStarRow {
 	 * ordinary INSERT leaves a row that outlives its columns.
 	 */
 	private long markerExpiresAt = Cells.NEVER;
+	/**
+	 * When the marker was written, in microseconds since the epoch, so that a delete stamped older
+	 * than the insert it would remove is discarded like any other write.
+	 */
+	private long markerWriteTime;
 	private AttachmentPoint attachmentPoint;
 
 	protected VolatileRow(final @NonNull SeaStarDriverContext context,
@@ -68,6 +73,7 @@ public class VolatileRow implements SeaStarRow {
 		// A copy, and a mutable one: ALTER TABLE ADD and DROP open and close a slot in every row, and
 		// the caller's list may be immutable (SeaStarTable#addRow(Object...) hands over a List.of).
 		this.cells = new Cells(validate(data), writeTime);
+		this.markerWriteTime = writeTime;
 		this.attachmentPoint = context;
 		// A value written into a static slot belongs to the partition, not to this row. Nulls are
 		// left alone: a row that simply does not name a static column must not clear it.
@@ -138,8 +144,23 @@ public class VolatileRow implements SeaStarRow {
 	}
 
 	@Override
-	public void markLive(final long expiresAt) {
-		writeLock(() -> this.markerExpiresAt = expiresAt);
+	public void markLive(final long writeTime, final long expiresAt) {
+		writeLock(() -> {
+			if (writeTime < markerWriteTime) {
+				return;
+			}
+			this.markerWriteTime = writeTime;
+			this.markerExpiresAt = expiresAt;
+		});
+	}
+
+	@Override
+	public void clearMarker(final long timestamp) {
+		writeLock(() -> {
+			if (timestamp >= markerWriteTime) {
+				this.markerExpiresAt = Long.MIN_VALUE;
+			}
+		});
 	}
 
 	@Override

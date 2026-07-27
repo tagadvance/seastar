@@ -17,6 +17,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.DeleteStatement.Parsed;
@@ -57,6 +60,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		// A DELETE that names no clustering column removes the partition, and a partition's static
 		// columns go with it; one that reaches a single row leaves them alone.
 		final var partitionWide = deletedColumns.isEmpty() && !restrictsClustering(delete);
+		final var stamped = delete.timestamp() != null;
 
 		final AsyncResultSet result = table.writeLockUnchecked(() -> {
 			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
@@ -65,7 +69,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -78,12 +82,12 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
+				applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
-			applyDelete(table, matched, deletedColumns, partitionWide, writes, coordinator);
+			applyDelete(table, matched, deletedColumns, partitionWide, writes, stamped, coordinator);
 
 			return newAsyncResultSet(executionInfo);
 		});
@@ -97,7 +101,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	 */
 	private static void applyDelete(final SeaStarTable table, final List<SeaStarRow> matched,
 		final List<Assignment> deletedColumns, final boolean partitionWide, final Writes writes,
-		final Node coordinator) {
+		final boolean stamped, final Node coordinator) {
 		if (!deletedColumns.isEmpty()) {
 			for (final var row : matched) {
 				for (final var deleted : deletedColumns) {
@@ -110,20 +114,34 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 			return;
 		}
 
-		if (partitionWide && table.hasStaticColumns()) {
-			// Static cells live with the partition rather than with any row, so removing the rows
-			// would leave them behind for the next write to the same partition to read back.
-			final var statics = staticIndices(table);
-			matched.forEach(row -> statics.forEach(
-				index -> row.set(index, null, writes.timestamp(), Writes.NEVER)));
-		}
-		table.removeRowIf(matched::contains);
+		// Static cells live with the partition rather than with any row, so removing the rows would
+		// leave them behind for the next write to the same partition to read back.
+		final var cleared = partitionWide ? nonKeyIndices(table) : nonStaticNonKeyIndices(table);
+		matched.forEach(row -> cleared.forEach(
+			index -> row.set(index, null, writes.timestamp(), Writes.NEVER)));
+		matched.forEach(row -> row.clearMarker(writes.timestamp()));
+		// A delete stamped with a timestamp of its own removes only what it is newer than, so a row
+		// holding a value written after it survives; an unstamped one is the newest write there is.
+		table.removeRowIf(stamped ? row -> matched.contains(row) && !row.isLive()
+			: matched::contains);
 	}
 
-	private static List<Integer> staticIndices(final SeaStarTable table) {
-		return java.util.stream.IntStream.range(0, table.size())
-			.filter(index -> table.get(index) instanceof ColumnMetadata column && column.isStatic())
+	private static List<Integer> nonKeyIndices(final SeaStarTable table) {
+		final var primaryKey = Stream.concat(table.getPartitionKey().stream(),
+				table.getClusteringColumns().keySet().stream())
+			.map(ColumnMetadata::getName)
+			.collect(Collectors.toSet());
+
+		return IntStream.range(0, table.size())
+			.filter(index -> !primaryKey.contains(table.get(index).getName()))
 			.boxed()
+			.toList();
+	}
+
+	private static List<Integer> nonStaticNonKeyIndices(final SeaStarTable table) {
+		return nonKeyIndices(table).stream()
+			.filter(index -> !(table.get(index) instanceof ColumnMetadata column
+				&& column.isStatic()))
 			.toList();
 	}
 
@@ -133,7 +151,7 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 			.keySet()
 			.stream()
 			.map(ColumnMetadata::getName)
-			.collect(java.util.stream.Collectors.toSet());
+			.collect(Collectors.toSet());
 
 		return delete.restrictions()
 			.stream()
