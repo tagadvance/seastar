@@ -43,7 +43,7 @@ import org.jspecify.annotations.Nullable;
  * lookup and a partition-wide delete from a scan of the table into a walk of one partition.
  */
 @ThreadSafe
-public class VolatileTable implements SeaStarTable {
+class VolatileTable implements SeaStarTable {
 
 	/**
 	 * Immutable.

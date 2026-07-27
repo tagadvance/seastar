@@ -23,7 +23,7 @@ import org.apache.cassandra.cql3.statements.ModificationStatement;
  * {@link SeaStarCqlRequestHandler} is analogous to {@link CqlRequestHandler}.
  */
 @ThreadSafe
-public class SeaStarCqlRequestHandler {
+class SeaStarCqlRequestHandler {
 
 	private final Statement<?> initialStatement;
 	private final SeaStarDriverContext context;

@@ -13,7 +13,7 @@ import com.datastax.oss.driver.internal.core.session.RequestProcessor;
  * @param <ResultT>  the type of result when a request is processed
  * @see RequestProcessor
  */
-public interface SeaStarRequestProcessor<RequestT extends Request, ResultT> {
+interface SeaStarRequestProcessor<RequestT extends Request, ResultT> {
 
 	/**
 	 * Whether the processor can produce the given result from the given request.

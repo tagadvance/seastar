@@ -29,7 +29,7 @@ import org.jspecify.annotations.NonNull;
  * hierarchy in {@code AGENTS.md}.
  */
 @ThreadSafe
-public class VolatileKeyspace implements SeaStarKeyspace {
+class VolatileKeyspace implements SeaStarKeyspace {
 
 	/**
 	 * Immutable, and shared with everything this keyspace holds.

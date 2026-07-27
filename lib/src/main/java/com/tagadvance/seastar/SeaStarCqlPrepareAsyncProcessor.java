@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  * {@link SeaStarCqlPrepareAsyncProcessor} is analogous to {@link CqlPrepareAsyncProcessor}.
  */
 @ThreadSafe
-public class SeaStarCqlPrepareAsyncProcessor implements
+class SeaStarCqlPrepareAsyncProcessor implements
 	SeaStarRequestProcessor<PrepareRequest, CompletionStage<SeaStarPreparedStatement>> {
 
 	private static final Logger LOG = LoggerFactory.getLogger(

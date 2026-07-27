@@ -47,7 +47,7 @@ import org.jspecify.annotations.NonNull;
  * cannot vanish underneath it. See the lock hierarchy in {@code AGENTS.md}.
  */
 @ThreadSafe
-public class VolatileDriverContext extends DefaultDriverContext implements SeaStarDriverContext {
+class VolatileDriverContext extends DefaultDriverContext implements SeaStarDriverContext {
 
 	private static final AtomicInteger SESSION_NAME_COUNTER = new AtomicInteger();
 

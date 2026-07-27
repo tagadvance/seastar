@@ -15,7 +15,7 @@ import org.jspecify.annotations.NonNull;
  * keyspace's. See the lock hierarchy in {@code AGENTS.md}.
  */
 @ThreadSafe
-public class VolatileColumn implements SeaStarColumn {
+class VolatileColumn implements SeaStarColumn {
 
 	/**
 	 * Immutable, and the owner of the lock the mutable field below is guarded by.

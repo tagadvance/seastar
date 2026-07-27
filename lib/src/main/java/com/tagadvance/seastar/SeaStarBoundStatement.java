@@ -31,7 +31,7 @@ import org.jspecify.annotations.NonNull;
  * across threads that both mutate it.
  */
 @NotThreadSafe
-public class SeaStarBoundStatement implements BoundStatement {
+class SeaStarBoundStatement implements BoundStatement {
 
 	private final SeaStarDriverContext context;
 	private final PreparedStatement preparedStatement;

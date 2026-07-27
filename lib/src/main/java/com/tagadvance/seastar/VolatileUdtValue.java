@@ -29,7 +29,7 @@ import org.jspecify.annotations.Nullable;
  * it. Nothing is acquired while it is held; whatever the type has to answer is asked for first.
  */
 @ThreadSafe
-public class VolatileUdtValue implements SeaStarUdtValue {
+class VolatileUdtValue implements SeaStarUdtValue {
 
 	/**
 	 * Immutable; see {@link com.tagadvance.tools.SeaStarReadWriteLock#lock()}.

@@ -20,7 +20,7 @@ import org.jspecify.annotations.NonNull;
  * bottom of it.
  */
 @Immutable
-public class VolatileNode implements Node {
+class VolatileNode implements Node {
 
 	private static final String DATACENTER = "datacenter1";
 	private static final String RACK = "rack1";

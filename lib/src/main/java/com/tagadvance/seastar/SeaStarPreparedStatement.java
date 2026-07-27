@@ -30,7 +30,7 @@ import org.jspecify.annotations.NonNull;
  * immutable once built.
  */
 @ThreadSafe
-public class SeaStarPreparedStatement implements PreparedStatement {
+class SeaStarPreparedStatement implements PreparedStatement {
 
 	private final SeaStarDriverContext context;
 	private final ByteBuffer id;
