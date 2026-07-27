@@ -12,46 +12,67 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
+import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A user defined type. Holds no lock of its own; a type belongs to a keyspace and is guarded by that
+ * keyspace's lock, the same one its tables are. See the lock hierarchy in {@code AGENTS.md}.
+ */
 @ThreadSafe
 public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 
-	private final ReadWriteLock lock;
-
+	/**
+	 * Immutable.
+	 */
 	private final SeaStarDriverContext context;
-	private final CqlIdentifier keyspace;
+	/**
+	 * Immutable, and the owner of the lock every field below is guarded by.
+	 */
+	private final SeaStarKeyspace keyspace;
+	/**
+	 * Immutable.
+	 */
 	private final CqlIdentifier name;
+	/**
+	 * Immutable.
+	 */
 	private final boolean isFrozen;
+	@GuardedBy("keyspace.lock()")
 	private final List<UserDefinedTypeDefinition> definitions;
+	@GuardedBy("keyspace.lock()")
 	private AttachmentPoint attachmentPoint;
 
-	public VolatileUserDefinedType(final SeaStarDriverContext context, final CqlIdentifier keyspace,
+	public VolatileUserDefinedType(final SeaStarDriverContext context, final SeaStarKeyspace keyspace,
 		final CqlIdentifier name, final boolean isFrozen,
 		final List<UserDefinedTypeDefinition> definitions) {
-		this(context, keyspace, name, isFrozen,
-			new ArrayList<>(requireNonNull(definitions, "definitions must not be null")),
-			new ReentrantReadWriteLock());
-	}
-
-	private VolatileUserDefinedType(final SeaStarDriverContext context, final CqlIdentifier keyspace,
-		final CqlIdentifier name, final boolean isFrozen,
-		final List<UserDefinedTypeDefinition> definitions, final ReadWriteLock lock) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace = requireNonNull(keyspace, "keyspace must not be null");
 		this.name = requireNonNull(name, "name must not be null");
 		this.isFrozen = isFrozen;
-		this.definitions = definitions;
-		this.lock = lock;
+		this.definitions = new ArrayList<>(
+			requireNonNull(definitions, "definitions must not be null"));
 		this.attachmentPoint = context;
+	}
+
+	/**
+	 * A copy that differs only in whether it is frozen, sharing the original's field list so that
+	 * ALTER TYPE stays visible through every variant handed out as a column type.
+	 */
+	private VolatileUserDefinedType(final VolatileUserDefinedType original, final boolean isFrozen) {
+		this.context = original.context;
+		this.keyspace = original.keyspace;
+		this.name = original.name;
+		this.isFrozen = isFrozen;
+		this.definitions = original.definitions;
+		this.attachmentPoint = original.context;
 	}
 
 	@Override
 	public ReadWriteLock lock() {
-		return lock;
+		return keyspace.lock();
 	}
 
 	@Override
@@ -61,7 +82,7 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 
 	@Override
 	public CqlIdentifier getKeyspace() {
-		return keyspace;
+		return keyspace.name();
 	}
 
 	@Override
@@ -102,12 +123,13 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 			() -> definitions.stream().map(UserDefinedTypeDefinition::dataType).toList());
 	}
 
-	// Copies share the definitions and the lock so that ALTER TYPE stays visible through every frozen
-	// and non-frozen variant handed out as a column type, the way schema propagates on a cluster.
+	// Copies share the definitions so that ALTER TYPE stays visible through every frozen and
+	// non-frozen variant handed out as a column type, the way schema propagates on a cluster. They
+	// share a lock too, because they share a keyspace.
 	@Override
 	@NonNull
 	public UserDefinedType copy(final boolean newFrozen) {
-		return new VolatileUserDefinedType(context, keyspace, name, newFrozen, definitions, lock);
+		return new VolatileUserDefinedType(this, newFrozen);
 	}
 
 	@Override
@@ -167,7 +189,7 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 			// frozen is ignored in comparisons, matching DefaultUserDefinedType. This lets a
 			// frozen column type equal the non-frozen declared type, so UdtCodec.accepts matches a
 			// bound value.
-			return keyspace.equals(that.getKeyspace()) && name.equals(that.getName())
+			return getKeyspace().equals(that.getKeyspace()) && name.equals(that.getName())
 				&& getFieldNames().equals(that.getFieldNames())
 				&& getFieldTypes().equals(that.getFieldTypes());
 		} else {
@@ -177,7 +199,7 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(keyspace, name, getFieldNames(), getFieldTypes());
+		return Objects.hash(getKeyspace(), name, getFieldNames(), getFieldTypes());
 	}
 
 	public record UserDefinedTypeDefinition(@NonNull CqlIdentifier name,

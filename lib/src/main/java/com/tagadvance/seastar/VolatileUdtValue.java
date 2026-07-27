@@ -14,17 +14,33 @@ import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
+import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.Immutable;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * One value of a user defined type.
+ *
+ * <p>The innermost lock of the hierarchy, and the only {@code Volatile*} class still holding one of
+ * its own: a value is not part of the schema tree - it is handed to a caller, who may keep it after
+ * the type it was made from has been altered - so there is no keyspace lock that naturally covers
+ * it. Nothing is acquired while it is held; whatever the type has to answer is asked for first.
+ */
 @ThreadSafe
 public class VolatileUdtValue implements SeaStarUdtValue {
 
+	/**
+	 * Immutable; see {@link com.tagadvance.tools.SeaStarReadWriteLock#lock()}.
+	 */
 	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
+	/**
+	 * Immutable.
+	 */
 	private final SeaStarUserDefinedType type;
+	@GuardedBy("lock")
 	private final List<UdtValueEntry> values = new ArrayList<>();
 
 	public VolatileUdtValue(@NonNull SeaStarUserDefinedType type, @NonNull Object... values) {
@@ -72,26 +88,40 @@ public class VolatileUdtValue implements SeaStarUdtValue {
 			.orElse(-1));
 	}
 
+	/**
+	 * The entries, copied out under the read lock so that the encoding and comparison the callers go
+	 * on to do happen with no lock held. Encoding asks the type for its attachment point, which takes
+	 * the keyspace lock, and that is outside this one.
+	 */
+	private List<UdtValueEntry> entries() {
+		return readLockUnchecked(() -> List.copyOf(values));
+	}
+
 	@Override
 	@Nullable
 	public ByteBuffer getBytesUnsafe(final int i) {
 		// A value written before ALTER TYPE ... ADD has fewer slots than the type now has. Reading the
 		// missing trailing fields as null mirrors how a short stored payload decodes on a cluster;
 		// UdtCodec.encode probes up to the type's field count, not the value's.
-		return readLockUnchecked(() -> i < values.size() ? values.get(i).toByteBuffer() : null);
+		final var entries = entries();
+
+		return i < entries.size() ? entries.get(i).toByteBuffer() : null;
 	}
 
+	/**
+	 * The field name, type and decoded value are all resolved before the value's own lock is taken.
+	 * Reading the type takes the keyspace's lock, which is outside this one; taking them the other
+	 * way round would be the one lock inversion this class could still make.
+	 */
 	@Override
 	@NonNull
 	public UdtValue setBytesUnsafe(final int i, final ByteBuffer bytes) {
-		writeLock(() -> {
-			final var name = type.getFieldNames().get(i);
-			final var dataType = type.getFieldTypes().get(i);
-			final var decode = codecRegistry().codecFor(dataType).decode(bytes, protocolVersion());
-			final var newValue = new UdtValueEntry(name, dataType, decode);
+		final var name = type.getFieldNames().get(i);
+		final var dataType = type.getFieldTypes().get(i);
+		final var decode = codecRegistry().codecFor(dataType).decode(bytes, protocolVersion());
+		final var newValue = new UdtValueEntry(name, dataType, decode);
 
-			values.set(i, newValue);
-		});
+		writeLock(() -> values.set(i, newValue));
 
 		return this;
 	}
@@ -133,17 +163,15 @@ public class VolatileUdtValue implements SeaStarUdtValue {
 			return false;
 		}
 
-		return readLockUnchecked(() -> IntStream.range(0, values.size())
-			.allMatch(i -> Objects.equals(getObject(i), that.getObject(i))));
+		return IntStream.range(0, entries().size())
+			.allMatch(i -> Objects.equals(getObject(i), that.getObject(i)));
 	}
 
 	@Override
 	public int hashCode() {
-		return readLockUnchecked(() -> {
-			final var fields = IntStream.range(0, values.size()).mapToObj(this::getObject).toList();
+		final var fields = IntStream.range(0, entries().size()).mapToObj(this::getObject).toList();
 
-			return Objects.hash(getType(), fields);
-		});
+		return Objects.hash(getType(), fields);
 	}
 
 	@Immutable

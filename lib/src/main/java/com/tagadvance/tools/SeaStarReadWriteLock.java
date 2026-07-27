@@ -13,6 +13,14 @@ import org.jspecify.annotations.NonNull;
 @FunctionalInterface
 public interface SeaStarReadWriteLock extends ReadWriteLock {
 
+	/**
+	 * The lock this object is guarded by.
+	 *
+	 * <p><strong>Must return the same instance on every call.</strong> The helpers below acquire and
+	 * release through separate invocations, so an implementation that hands out a fresh lock each
+	 * time would release something it never took. Every implementation returns a final field, or the
+	 * field of the object it shares a lock with.
+	 */
 	ReadWriteLock lock();
 
 	@Override
@@ -27,7 +35,7 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		return lock().writeLock();
 	}
 
-	default <E extends Exception> void readLock(final Runnable runnable) {
+	default void readLock(final Runnable runnable) {
 		readLock().lock();
 		try {
 			runnable.run();
@@ -36,7 +44,7 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		}
 	}
 
-	default <E extends Exception> void writeLock(final Runnable runnable) {
+	default void writeLock(final Runnable runnable) {
 		writeLock().lock();
 		try {
 			runnable.run();

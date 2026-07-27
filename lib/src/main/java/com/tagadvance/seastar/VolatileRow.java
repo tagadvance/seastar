@@ -13,47 +13,72 @@ import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * One row of a table.
+ *
+ * <p>Holds no lock of its own. A row is only ever read or written alongside the column list its
+ * values are positionally tied to, so the lock that guards the column list guards the row: the
+ * keyspace's, reached through {@link #table}. That is also what deletes the deadlock a row lock
+ * made possible, because there is no second lock left to take in the wrong order.
+ */
 @ThreadSafe
 public class VolatileRow implements SeaStarRow {
 
-	private final ReadWriteLock lock = new ReentrantReadWriteLock();
+	private static final long serialVersionUID = 1L;
 
+	/**
+	 * Immutable.
+	 */
 	private final SeaStarDriverContext context;
+	/**
+	 * Immutable, and the owner of the lock every mutable field below is guarded by.
+	 */
 	private final SeaStarTable table;
 	/**
 	 * The table again, where it is the implementation this row is paired with, which is what knows
-	 * about static columns and which columns are part of the key.
+	 * about static columns and which columns are part of the key. Immutable.
 	 */
 	private final @Nullable VolatileTable volatileTable;
+	/**
+	 * The reference is immutable; the cells it holds are guarded by the table's lock.
+	 */
+	@GuardedBy("table.lock()")
 	private final Cells cells;
 	/**
-	 * The cells this row's partition shares, or null for a table with no static columns. A static
-	 * column is one cell per partition rather than one per row, so reads and writes of one are
-	 * redirected here and every row of the partition sees the same value.
+	 * The cells this row's partition shares, or null until they are resolved. A static column is one
+	 * cell per partition rather than one per row, so reads and writes of one are redirected here and
+	 * every row of the partition sees the same value.
 	 *
 	 * <p>Resolved the first time a static column is touched rather than at construction, so that
-	 * {@code ALTER TABLE ... ADD ... STATIC} reaches the rows that were already there.
+	 * {@code ALTER TABLE ... ADD ... STATIC} reaches the rows that were already there. That makes the
+	 * read path impure, and the read path holds only a read lock, so several threads may resolve at
+	 * once. They all get the same {@link Cells} back - {@link VolatileTable#statics(List)} is a
+	 * {@code computeIfAbsent} on a concurrent map - so the race is benign and a volatile write is
+	 * enough to publish it. Null therefore means "not resolved yet" rather than "no statics": a row
+	 * only asks when the column it is reading is declared static, and a static column means the
+	 * table has one.
 	 */
-	private @Nullable Cells statics;
-	private boolean staticsResolved;
+	private volatile @Nullable Cells statics;
 	/**
 	 * When the row's primary key stops being live, in seconds since the epoch, or
 	 * {@link Cells#NEVER}. This is Cassandra's row marker: {@code INSERT ... USING TTL} expires the
 	 * row itself, so a row whose every cell has gone still disappears at the right moment, while an
 	 * ordinary INSERT leaves a row that outlives its columns.
 	 */
+	@GuardedBy("table.lock()")
 	private long markerExpiresAt = Cells.NEVER;
 	/**
 	 * When the marker was written, in microseconds since the epoch, so that a delete stamped older
 	 * than the insert it would remove is discarded like any other write.
 	 */
+	@GuardedBy("table.lock()")
 	private long markerWriteTime;
+	@GuardedBy("table.lock()")
 	private AttachmentPoint attachmentPoint;
 
 	protected VolatileRow(final @NonNull SeaStarDriverContext context,
@@ -100,11 +125,6 @@ public class VolatileRow implements SeaStarRow {
 	}
 
 	@Override
-	public ReadWriteLock lock() {
-		return lock;
-	}
-
-	@Override
 	public SeaStarDriverContext context() {
 		return context;
 	}
@@ -122,12 +142,13 @@ public class VolatileRow implements SeaStarRow {
 		if (volatileTable == null || !volatileTable.isStatic(i)) {
 			return cells;
 		}
-		if (!staticsResolved) {
-			statics = volatileTable.statics(cells.values());
-			staticsResolved = true;
+		var resolved = statics;
+		if (resolved == null) {
+			resolved = volatileTable.statics(cells.values());
+			statics = resolved;
 		}
 
-		return statics == null ? cells : statics;
+		return resolved == null ? cells : resolved;
 	}
 
 	@Override
@@ -138,14 +159,13 @@ public class VolatileRow implements SeaStarRow {
 	@Override
 	public boolean set(final int i, final @Nullable Object value, final long writeTime,
 		final long expiresAt) {
-		// lock the table to prevent concurrent schema changes
-		return table.readLockUnchecked(
-			() -> writeLockUnchecked(() -> cellsOf(i).set(i, value, writeTime, expiresAt)));
+		// The table's lock is the keyspace's, so this also excludes a concurrent schema change.
+		return table.writeLockUnchecked(() -> cellsOf(i).set(i, value, writeTime, expiresAt));
 	}
 
 	@Override
 	public void markLive(final long writeTime, final long expiresAt) {
-		writeLock(() -> {
+		table.writeLock(() -> {
 			if (writeTime < markerWriteTime) {
 				return;
 			}
@@ -156,7 +176,7 @@ public class VolatileRow implements SeaStarRow {
 
 	@Override
 	public void clearMarker(final long timestamp) {
-		writeLock(() -> {
+		table.writeLock(() -> {
 			if (timestamp >= markerWriteTime) {
 				this.markerExpiresAt = Long.MIN_VALUE;
 			}
@@ -167,7 +187,7 @@ public class VolatileRow implements SeaStarRow {
 	public boolean isLive() {
 		final var now = Cells.seconds(context.getClock());
 
-		return table.readLockUnchecked(() -> readLockUnchecked(() -> {
+		return table.readLockUnchecked(() -> {
 			if (now < markerExpiresAt) {
 				return true;
 			}
@@ -178,7 +198,7 @@ public class VolatileRow implements SeaStarRow {
 			}
 
 			return false;
-		}));
+		});
 	}
 
 	private boolean isKeyColumn(final int i) {
@@ -189,37 +209,37 @@ public class VolatileRow implements SeaStarRow {
 	public @Nullable Long writeTime(final int i) {
 		final var now = Cells.seconds(context.getClock());
 
-		return table.readLockUnchecked(() -> readLockUnchecked(() -> cellsOf(i).writeTime(i, now)));
+		return table.readLockUnchecked(() -> cellsOf(i).writeTime(i, now));
 	}
 
 	@Override
 	public @Nullable Integer ttl(final int i) {
 		final var now = Cells.seconds(context.getClock());
 
-		return table.readLockUnchecked(() -> readLockUnchecked(() -> cellsOf(i).ttl(i, now)));
+		return table.readLockUnchecked(() -> cellsOf(i).ttl(i, now));
 	}
 
 	/**
 	 * {@inheritDoc}
 	 *
-	 * <p>Takes only this row's lock: the table holds its own write lock across the whole column
-	 * change, so taking it again here would be redundant.
+	 * <p>Takes no lock: the table already holds its write lock across the whole column change, and
+	 * that is the lock guarding this row.
 	 */
 	@Override
 	public void insertValue(final int i, final @Nullable Object value) {
-		writeLock(() -> cells.insert(i, value, Cells.microseconds(context.getClock())));
+		cells.insert(i, value, Cells.microseconds(context.getClock()));
 	}
 
 	@Override
 	public void removeValue(final int i) {
-		writeLock(() -> cells.remove(i));
+		cells.remove(i);
 	}
 
 	@Override
 	public Row snapshot() {
 		final var now = Cells.seconds(context.getClock());
 
-		return table.readLockUnchecked(() -> readLockUnchecked(() -> {
+		return table.readLockUnchecked(() -> {
 			final var isDetached = isDetached();
 			final var size = size();
 			final var columnDefinitions = table.snapshot();
@@ -297,7 +317,7 @@ public class VolatileRow implements SeaStarRow {
 				}
 
 			};
-		}));
+		});
 	}
 
 	@NonNull
@@ -397,12 +417,12 @@ public class VolatileRow implements SeaStarRow {
 
 	@Override
 	public boolean isDetached() {
-		return readLockUnchecked(() -> attachmentPoint == AttachmentPoint.NONE);
+		return table.readLockUnchecked(() -> attachmentPoint == AttachmentPoint.NONE);
 	}
 
 	@Override
 	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
-		writeLock(() -> {
+		table.writeLock(() -> {
 			this.attachmentPoint = requireNonNull(attachmentPoint,
 				"attachmentPoint must not be null");
 			this.table.attach(attachmentPoint);
@@ -414,7 +434,7 @@ public class VolatileRow implements SeaStarRow {
 	public ByteBuffer getBytesUnsafe(int i) {
 		final var now = Cells.seconds(context.getClock());
 
-		return readLockUnchecked(() -> codecRegistry().codecFor(getType(i))
+		return table.readLockUnchecked(() -> codecRegistry().codecFor(getType(i))
 			.encode(cellsOf(i).value(i, now), protocolVersion()));
 	}
 

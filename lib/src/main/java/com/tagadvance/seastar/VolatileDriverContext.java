@@ -25,6 +25,7 @@ import com.datastax.oss.driver.internal.core.metadata.NoopNodeStateListener;
 import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
 import com.datastax.oss.driver.internal.core.session.throttling.PassThroughRequestThrottler;
 import com.google.errorprone.annotations.ThreadSafe;
+import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.time.Clock;
 import java.util.Collections;
 import java.util.HashMap;
@@ -35,19 +36,40 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
+import net.jcip.annotations.GuardedBy;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * The root of the storage model, and the outermost lock of the hierarchy.
+ *
+ * <p>Its lock guards the keyspace map alone: creating or dropping a keyspace takes it for writing,
+ * and every statement that operates inside a keyspace holds it for reading so that the keyspace
+ * cannot vanish underneath it. See the lock hierarchy in {@code AGENTS.md}.
+ */
 @ThreadSafe
 public class VolatileDriverContext extends DefaultDriverContext implements SeaStarDriverContext {
 
 	private static final AtomicInteger SESSION_NAME_COUNTER = new AtomicInteger();
 
+	/**
+	 * Immutable.
+	 */
 	private final Node node = new VolatileNode();
 
+	/**
+	 * The outermost lock of the hierarchy. Immutable; see {@link SeaStarReadWriteLock#lock()}.
+	 */
 	private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
+	/**
+	 * Immutable.
+	 */
 	private final String sessionName;
+	@GuardedBy("lock")
 	private final Map<CqlIdentifier, SeaStarKeyspace> keyspaceById;
+	/**
+	 * Immutable; {@link Clock} is required to be thread-safe.
+	 */
 	private final Clock clock;
 
 	public VolatileDriverContext(final DriverConfigLoader configLoader,
@@ -209,8 +231,13 @@ public class VolatileDriverContext extends DefaultDriverContext implements SeaSt
 		writeLockUnchecked(() -> keyspaceById.remove(id));
 	}
 
+	/**
+	 * A snapshot of the keyspaces, taken under the read lock. A live view would let a caller iterating
+	 * it meet a concurrent {@code CREATE KEYSPACE} halfway - {@code keyspaceById} is a plain
+	 * {@link HashMap}, so that is a {@code ConcurrentModificationException} rather than a stale read.
+	 */
 	public Map<CqlIdentifier, SeaStarKeyspace> getSeaStarKeyspaces() {
-		return Collections.unmodifiableMap(keyspaceById);
+		return readLockUnchecked(() -> Map.copyOf(keyspaceById));
 	}
 
 	@Override

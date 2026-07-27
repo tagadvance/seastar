@@ -74,7 +74,7 @@ public class SelectHandler implements CqlHandler<RawStatement> {
 		final var table = query.target().table();
 		final var limit = query.limit();
 
-		return table.readLockUnchecked(() -> {
+		return table.query(() -> {
 			// A row whose marker and every cell have expired is gone, as it is on a cluster; expiry is
 			// evaluated here rather than reaped on a timer, so nothing depends on wall-clock progress.
 			var rows = table.rows().filter(SeaStarRow::isLive);

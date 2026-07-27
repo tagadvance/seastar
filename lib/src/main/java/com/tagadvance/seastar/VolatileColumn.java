@@ -6,17 +6,34 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.type.DataType;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import net.jcip.annotations.GuardedBy;
+import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * One column of a table. Holds no lock of its own; it is guarded by its table's, which is its
+ * keyspace's. See the lock hierarchy in {@code AGENTS.md}.
+ */
+@ThreadSafe
 public class VolatileColumn implements SeaStarColumn {
 
-	private final ReadWriteLock lock = new ReentrantReadWriteLock();
-
+	/**
+	 * Immutable, and the owner of the lock the mutable field below is guarded by.
+	 */
 	private final SeaStarTable table;
+	/**
+	 * Immutable.
+	 */
 	private final CqlIdentifier name;
+	/**
+	 * Immutable.
+	 */
 	private final DataType type;
+	/**
+	 * Immutable.
+	 */
 	private final boolean isStatic;
+	@GuardedBy("table.lock()")
 	private AttachmentPoint attachmentPoint;
 
 	public VolatileColumn(@NonNull SeaStarDriverContext context, @NonNull SeaStarTable table,
@@ -30,12 +47,12 @@ public class VolatileColumn implements SeaStarColumn {
 
 	@Override
 	public ReadWriteLock lock() {
-		return lock;
+		return table.lock();
 	}
 
 	@Override
 	public SeaStarTable table() {
-		return null;
+		return table;
 	}
 
 	@Override

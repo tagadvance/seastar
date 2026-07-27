@@ -60,7 +60,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var conditions = update.conditions();
 		final var writes = Writes.of(context, update);
 
-		final AsyncResultSet result = table.writeLockUnchecked(() -> {
+		final AsyncResultSet result = table.mutate(() -> {
 			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
 
 			if (update.ifExists()) {
