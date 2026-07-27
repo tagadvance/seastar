@@ -16,7 +16,6 @@ import com.datastax.oss.driver.internal.core.cql.DefaultPrepareRequest;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +38,7 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 
 			// A standalone processor registers its own TypeChangeEvent listener on the shared event
 			// bus, so we can observe its cache directly.
-			final var processor = new SeaStarCqlPrepareAsyncProcessor(Optional.of(context));
+			final var processor = new SeaStarCqlPrepareAsyncProcessor(context);
 			final var request = new DefaultPrepareRequest(
 				"INSERT INTO ks.people (id, home) VALUES (?, ?)");
 			final var prepared = processor.process(request, session, context, "test")
@@ -72,7 +71,7 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 				+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
 			session.execute("CREATE TABLE ks.people (id int PRIMARY KEY, name text)");
 
-			final var processor = new SeaStarCqlPrepareAsyncProcessor(Optional.of(context));
+			final var processor = new SeaStarCqlPrepareAsyncProcessor(context);
 			final var request = new DefaultPrepareRequest("SELECT * FROM ks.people WHERE id = ?");
 			processor.process(request, session, context, "test").toCompletableFuture().get();
 

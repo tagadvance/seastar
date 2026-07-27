@@ -21,14 +21,13 @@ import com.datastax.oss.driver.shaded.guava.common.cache.Cache;
 import com.datastax.oss.driver.shaded.guava.common.cache.CacheBuilder;
 import com.datastax.oss.driver.shaded.guava.common.collect.Iterables;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,32 +44,30 @@ public class SeaStarCqlPrepareAsyncProcessor implements
 	protected final Cache<PrepareRequest, CompletableFuture<SeaStarPreparedStatement>> cache;
 
 	public SeaStarCqlPrepareAsyncProcessor() {
-		this(Optional.empty());
+		this(null);
 	}
 
-	public SeaStarCqlPrepareAsyncProcessor(
-		final @NonNull Optional<? extends SeaStarDriverContext> context) {
+	public SeaStarCqlPrepareAsyncProcessor(final @Nullable SeaStarDriverContext context) {
 		this(context, Functions.identity());
 	}
 
-	protected SeaStarCqlPrepareAsyncProcessor(
-		final Optional<? extends SeaStarDriverContext> context,
+	protected SeaStarCqlPrepareAsyncProcessor(final @Nullable SeaStarDriverContext context,
 		Function<CacheBuilder<Object, Object>, CacheBuilder<Object, Object>> decorator) {
 
 		CacheBuilder<Object, Object> baseCache = CacheBuilder.newBuilder().weakValues();
 		this.cache = decorator.apply(baseCache).build();
-		context.ifPresent((ctx) -> {
+		if (context != null) {
 			LOG.debug("Adding handlers to invalidate cached prepared statements on schema changes");
 			// VolatileDriverContext reuses the driver's event bus, so registering the same
 			// TypeChangeEvent listener the real driver uses evicts cached prepared statements whose
 			// bind or result variables reference a UDT once something (e.g. ALTER TYPE) fires the event.
-			final var eventBus = ((InternalDriverContext) ctx).getEventBus();
+			final var eventBus = ((InternalDriverContext) context).getEventBus();
 			eventBus.register(TypeChangeEvent.class, this::onTypeChanged);
 			// ALTER TABLE has no driver-side equivalent to lean on, but the event is the driver's own
 			// and the reason to listen is the same: a statement prepared against the old column list
 			// would keep answering with it.
 			eventBus.register(TableChangeEvent.class, this::onTableChanged);
-		});
+		}
 	}
 
 	private static boolean typeMatches(final UserDefinedType oldType, final DataType typeToCheck) {

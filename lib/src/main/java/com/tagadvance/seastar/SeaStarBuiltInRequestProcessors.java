@@ -3,7 +3,6 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.internal.core.session.BuiltInRequestProcessors;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * {@link SeaStarBuiltInRequestProcessors} is analogous to {@link BuiltInRequestProcessors}.
@@ -33,8 +32,7 @@ public class SeaStarBuiltInRequestProcessors {
 		processors.add(cqlRequestSyncProcessor);
 
 		// prepare requests (sync and async)
-		final var cqlPrepareAsyncProcessor = new SeaStarCqlPrepareAsyncProcessor(
-			Optional.of(context));
+		final var cqlPrepareAsyncProcessor = new SeaStarCqlPrepareAsyncProcessor(context);
 		processors.add(cqlPrepareAsyncProcessor);
 
 		final var cqlPrepareSyncProcessor = new SeaStarCqlPrepareSyncProcessor(
