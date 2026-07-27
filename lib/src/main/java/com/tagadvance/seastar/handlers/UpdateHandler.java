@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.metadata.Node;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarDriverContext;
@@ -18,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
@@ -56,15 +58,16 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 		final var table = update.target().table();
 		final var assignments = update.assignments();
 		final var conditions = update.conditions();
+		final var writes = Writes.of(context, update);
 
 		final AsyncResultSet result = table.writeLockUnchecked(() -> {
-			final var matched = table.rows().filter(predicate).toList();
+			final var matched = table.rows().filter(SeaStarRow::isLive).filter(predicate).toList();
 
 			if (update.ifExists()) {
 				if (matched.isEmpty()) {
 					return AppliedResultSets.of(context, table, executionInfo, false);
 				}
-				apply(matched, assignments, coordinator);
+				apply(matched, assignments, writes, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
@@ -77,19 +80,19 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				if (!Conditions.hold(conditions, existing)) {
 					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
 				}
-				apply(matched, assignments, coordinator);
+				apply(matched, assignments, writes, coordinator);
 
 				return AppliedResultSets.of(context, table, executionInfo, true);
 			}
 
 			if (!matched.isEmpty()) {
-				apply(matched, assignments, coordinator);
+				apply(matched, assignments, writes, coordinator);
 			} else if (upsertKey != null) {
 				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 				upsertKey.forEach(values::set);
-				assignments.forEach(assignment -> values.set(assignment.columnIndex(),
-					assignment.apply(null, coordinator)));
-				table.addRow(values);
+				final var row = table.addRow(values, writes.timestamp());
+				apply(List.of(row), assignments, writes, coordinator);
+				row.markLive(writes.expiresAt());
 			}
 
 			return newAsyncResultSet(executionInfo);
@@ -99,23 +102,58 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	}
 
 	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments,
-		final Node coordinator) {
+		final Writes writes, final Node coordinator) {
 		for (final var row : matched) {
 			for (final var assignment : assignments) {
 				final var index = assignment.columnIndex();
-				row.set(index, assignment.apply(row.getObject(index), coordinator));
+				row.set(index, assignment.apply(row.getObject(index), coordinator),
+					writes.timestamp(), writes.expiresAt());
 			}
 		}
 	}
 
 	private static void validateAssignments(final Modification update, final Node coordinator) {
-		final var primaryKey = update.target().primaryKeyNames();
+		final var target = update.target();
+		final var primaryKey = target.primaryKeyNames();
 		for (final var assignment : update.assignments()) {
 			if (primaryKey.contains(assignment.column())) {
 				throw new InvalidQueryException(coordinator,
 					"PRIMARY KEY part %s found in SET part".formatted(
 						assignment.column().asInternal()));
 			}
+		}
+		requireNoClusteringForStatics(update, coordinator);
+	}
+
+	/**
+	 * A static column belongs to the partition, so an UPDATE that writes nothing else addresses the
+	 * partition and naming a clustering column would say otherwise. Cassandra refuses it rather than
+	 * quietly writing the whole partition, and so does SeaStar.
+	 */
+	private static void requireNoClusteringForStatics(final Modification update,
+		final Node coordinator) {
+		final var target = update.target();
+		final var table = target.table();
+		final var assignments = update.assignments();
+		final var onlyStatics = !assignments.isEmpty() && assignments.stream()
+			.allMatch(assignment -> table.get(assignment.columnIndex()) instanceof ColumnMetadata
+				column && column.isStatic());
+		if (!onlyStatics) {
+			return;
+		}
+		final var clustering = table.getClusteringColumns()
+			.keySet()
+			.stream()
+			.map(ColumnMetadata::getName)
+			.collect(Collectors.toSet());
+		final var restricted = update.restrictions()
+			.stream()
+			.flatMap(restriction -> restriction.columns().stream())
+			.map(Restriction.Column::name)
+			.anyMatch(clustering::contains);
+		if (restricted) {
+			throw new InvalidQueryException(coordinator, "Invalid restrictions on clustering columns "
+				+ "since the UPDATE statement modifies only static columns");
 		}
 	}
 

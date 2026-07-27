@@ -13,17 +13,22 @@ import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.FieldIdentifier;
+import org.apache.cassandra.cql3.Json;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
+import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsertJson;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Translates a parsed INSERT, UPDATE or DELETE into a {@link Modification}. Together with
@@ -68,6 +73,77 @@ final class Modifications {
 
 		return modification(target, assignments, List.of(), raw, codecRegistry, coordinator,
 			bindings);
+	}
+
+	/**
+	 * {@code INSERT INTO ... JSON '{...}'}, which names its columns in a document rather than in a
+	 * column list. Once decoded it is an ordinary INSERT, so the handler never learns which of the
+	 * two it was given.
+	 *
+	 * <p>A column the document leaves out is written as null unless {@code DEFAULT UNSET} was
+	 * written, which is CQL's way of saying "leave what is there alone" - the difference between an
+	 * INSERT that clears the columns it does not mention and one that does not.
+	 */
+	static Modification insertJson(final SeaStarDriverContext context,
+		final Supplier<Optional<CqlIdentifier>> sessionKeyspace, final ParsedInsertJson raw,
+		final Node coordinator, final Object... bindings) {
+		final var target = Targets.require(context, sessionKeyspace, raw, coordinator);
+		final var table = target.table();
+		final var codecRegistry = context.getCodecRegistry();
+
+		if (isCounterTable(target)) {
+			throw new InvalidQueryException(coordinator,
+				"INSERT statements are not allowed on counter table %s, use UPDATE instead".formatted(
+					table.getName().asInternal()));
+		}
+
+		final var document = document(FieldBindings.INSERT_JSON_VALUE.require(raw), coordinator,
+			bindings);
+		final Map<CqlIdentifier, DataType> types = new LinkedHashMap<>();
+		for (int i = 0; i < table.size(); i++) {
+			types.put(table.get(i).getName(), table.get(i).getType());
+		}
+		final var values = Jsons.decode(document, types, codecRegistry, coordinator);
+		final var defaultUnset = FieldBindings.INSERT_JSON_DEFAULT_UNSET.require(raw);
+		final var primaryKey = target.primaryKeyNames();
+
+		final List<Assignment> assignments = new ArrayList<>(table.size());
+		for (int i = 0; i < table.size(); i++) {
+			final var column = table.get(i).getName();
+			if (values.containsKey(column)) {
+				assignments.add(Assignment.set(i, column, values.get(column)));
+			} else if (!defaultUnset && !primaryKey.contains(column)) {
+				// A primary key column the document omits is left unassigned so that the handler
+				// reports it missing rather than writing a null key.
+				assignments.add(Assignment.set(i, column, null));
+			}
+		}
+
+		return modification(target, assignments, List.of(), raw, codecRegistry, coordinator,
+			bindings);
+	}
+
+	/**
+	 * The JSON text an {@code INSERT ... JSON} carries, whether it was written inline or bound.
+	 */
+	private static String document(final Json.Raw raw, final Node coordinator,
+		final Object... bindings) {
+		if (raw instanceof Json.Literal literal) {
+			return FieldBindings.JSON_LITERAL_TEXT.require(literal);
+		}
+		if (raw instanceof Json.Marker marker) {
+			final var index = FieldBindings.JSON_MARKER_BIND_INDEX.require(marker);
+			final var value = index < bindings.length ? bindings[index] : null;
+			if (!(value instanceof String text)) {
+				throw new InvalidQueryException(coordinator,
+					"Invalid null value for the JSON of an INSERT");
+			}
+
+			return text;
+		}
+
+		throw new InvalidQueryException(coordinator,
+			"SeaStar does not support the JSON form %s".formatted(raw.getClass().getSimpleName()));
 	}
 
 	static Modification update(final SeaStarDriverContext context,
@@ -133,9 +209,63 @@ final class Modifications {
 						condition.column().asInternal()));
 			});
 
+		final var attributes = FieldBindings.MODIFICATION_ATTRIBUTES.require(raw);
+		final var timestamp = timestamp(attributes.timestamp, isCounterTable(target), codecRegistry,
+			coordinator, bindings);
+		final var ttl = ttl(attributes.timeToLive, isCounterTable(target), codecRegistry, coordinator,
+			bindings);
+
 		return new Modification(target, List.copyOf(assignments), restrictions, conditions,
 			FieldBindings.MODIFICATION_IF_EXISTS.require(raw),
-			FieldBindings.MODIFICATION_IF_NOT_EXISTS.require(raw));
+			FieldBindings.MODIFICATION_IF_NOT_EXISTS.require(raw), timestamp, ttl);
+	}
+
+	/**
+	 * {@code USING TIMESTAMP}. A counter has no timestamp of its own - what it reads back is the sum
+	 * of every delta that reached it - so Cassandra refuses to be told one.
+	 */
+	private static @Nullable Long timestamp(final Term.@Nullable Raw raw, final boolean counter,
+		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
+		if (raw == null) {
+			return null;
+		}
+		if (counter) {
+			throw new InvalidQueryException(coordinator,
+				"Cannot provide custom timestamp for counter updates");
+		}
+		final var value = Terms.resolve(raw, DataTypes.BIGINT, codecRegistry, coordinator, bindings);
+		if (!(value instanceof Number number)) {
+			throw new InvalidQueryException(coordinator,
+				"Invalid timestamp value %s".formatted(value));
+		}
+
+		return number.longValue();
+	}
+
+	/**
+	 * {@code USING TTL}, in seconds. Zero is CQL's way of writing "no TTL", so it is carried through
+	 * rather than rejected; a negative one is a mistake.
+	 */
+	private static @Nullable Integer ttl(final Term.@Nullable Raw raw, final boolean counter,
+		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
+		if (raw == null) {
+			return null;
+		}
+		if (counter) {
+			throw new InvalidQueryException(coordinator,
+				"Cannot provide custom TTL for counter updates");
+		}
+		final var value = Terms.resolve(raw, DataTypes.INT, codecRegistry, coordinator, bindings);
+		if (!(value instanceof Number number)) {
+			throw new InvalidQueryException(coordinator, "Invalid TTL value %s".formatted(value));
+		}
+		final var seconds = number.intValue();
+		if (seconds < 0) {
+			throw new InvalidQueryException(coordinator,
+				"A TTL must be greater or equal to 0, but was %d".formatted(seconds));
+		}
+
+		return seconds;
 	}
 
 	/**
