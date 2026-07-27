@@ -46,7 +46,15 @@ record SeaStarRawType(CQL3Type.Raw raw) {
 	}
 
 	private Optional<DataType> toNative() {
-		if (!(FieldBindings.NATIVE_TYPE.require(raw) instanceof Native n)) {
+		return nativeDataType(FieldBindings.NATIVE_TYPE.require(raw));
+	}
+
+	/**
+	 * The driver type an already-resolved native CQL type stands for, and empty for anything else. A
+	 * cast in a SELECT clause names its target type this way rather than as a {@code Raw}.
+	 */
+	static Optional<DataType> nativeDataType(final CQL3Type type) {
+		if (!(type instanceof Native n)) {
 			return Optional.empty();
 		}
 
