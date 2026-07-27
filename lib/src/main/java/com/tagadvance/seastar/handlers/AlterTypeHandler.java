@@ -69,12 +69,16 @@ public class AlterTypeHandler implements CqlHandler<Raw> {
 
 		final var kind = FieldBindings.ALTER_TYPE_KIND.require(raw).name();
 		try {
-			return CompletableFuture.completedStage(switch (kind) {
+			final var result = switch (kind) {
 				case "ADD_FIELD" -> addField(executionInfo, raw, keyspace, udt);
 				case "RENAME_FIELDS" -> renameFields(executionInfo, raw, udt);
 				default -> throw new InvalidQueryException(node,
 					"Altering field types is no longer supported");
-			});
+			};
+			// Prepared statements whose variables name this UDT describe the fields it used to have.
+			SchemaChanges.typeChanged(context, udt);
+
+			return CompletableFuture.completedStage(result);
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}

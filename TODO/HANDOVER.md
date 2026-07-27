@@ -15,7 +15,7 @@ git log --oneline main..final-push
 ./gradlew :lib:containerTest # needs Docker
 ```
 
-Last verified: 171 tests green locally (on JDK 17, 21 and 25), 98 green on the container.
+Last verified: 213 tests green locally, 112 green on the container.
 
 ### Done
 
@@ -31,6 +31,7 @@ Last verified: 171 tests green locally (on JDK 17, 21 and 25), 98 green on the c
 | d_plan | D1 D2 D3 D4 D8 | Murmur3 token + clustering order, ORDER BY; literals; bound-value typing; `RestrictionRules`; counters |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 | j_plan | J7 | CI on JDK 17/21/25; container suite nightly and on demand |
+| e_plan | E0 E1 E2 E3 E4 E5 | ALTER TABLE/KEYSPACE, DROP INDEX/TYPE; everything else rejected by name; `docs/support-matrix.md` |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -39,8 +40,8 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **d_plan D5 D6 D7 D9**, **e_plan all** (in flight), **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**,
-  **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J8**.
+- **d_plan D5 D6 D7 D9**, **b_plan all**, **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**,
+  **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J8**.
 
 ### Decisions already made - do not relitigate
 
@@ -56,6 +57,19 @@ a JDK bump is the most likely thing to break them. Run it with
   fixing it. This is l_plan L1's middle path.
 - **Scope**: static columns (D6), counters (D4), TTL (D7) and JSON (D5) are all to be IMPLEMENTED,
   not rejected.
+- **Unsupported statements are a table, not a pile of handlers.** `UnsupportedStatements` maps a
+  parse-tree class to the feature name SeaStar reports, and `CqlHandlerRegistry` consults it when no
+  handler claims a statement. Rejecting a new feature is one row; supporting it is deleting one.
+  `docs/support-matrix.md` is the published form and moves with it.
+- **`DESCRIBE` is rejected for a parse-tree reason, not a scope one.** `DescribeStatement`
+  distinguishes its variants only by anonymous inner class ordinal and by the identity of a lambda
+  field, so there is no honest way to tell `DESCRIBE KEYSPACES` from `DESCRIBE TABLES`. Revisit only
+  if cassandra-all exposes the variant.
+- **`SeaStarRequestProcessorRegistry` keeps throwing `IllegalArgumentException`**, deliberately:
+  that is what the driver's own `RequestProcessorRegistry` throws, and reaching it means a caller
+  asked for a result type nothing was registered for - a client-side programming error, not a query
+  failure. Only the message changed. e_plan E0 asked for a driver exception there; that was the
+  wrong call and the reasoning is in the method's javadoc.
 - **API surface**: f_plan F1 in full - handlers, processors, registries and `Volatile*` all become
   internal or package-private.
 - **c_plan C1** (`Raw#prepare(ClientState)`) is rejected with evidence, recorded in AGENTS.md.
@@ -85,11 +99,13 @@ a JDK bump is the most likely thing to break them. Run it with
    `git reset --hard final-push` and verify with `git log --oneline -5`.
 3. **A clean textual merge is not a clean semantic merge.** Build and run BOTH suites after every
    merge, never trust the diff.
-4. ~~**`ContainerCqlSessionTest > DROP TABLE ...` flake**~~ - FIXED. It was the driver's default
-   `basic.request.timeout` of 2 seconds, which a cold containerised node exceeds on DDL while it
-   waits for schema agreement. `ContainerCqlSessionTest` now raises the request and
-   schema-agreement timeouts to 30s. This costs nothing in fidelity: a timeout is a transport
-   concern, and SeaStar accepts and ignores timeouts anyway.
+4. ~~**`ContainerCqlSessionTest > DROP TABLE ...` flake**~~ - DIAGNOSED AND FIXED. It was never
+   random: `auto_snapshot` is on by default, so `DROP TABLE` writes a snapshot before responding,
+   which exceeds the driver's default `basic.request.timeout` of 2 seconds on a loaded container.
+   A test written during e_plan reproduced it on every run until its `DROP TABLE` was removed.
+   `ContainerCqlSessionTest` now raises the request and schema-agreement timeouts to 30s; starting
+   the container with `auto_snapshot: false` would work too. This costs nothing in fidelity - a
+   timeout is a transport concern, and SeaStar accepts and ignores timeouts anyway.
 5. **Benchmarks must be serialized.** `org.gradle.parallel=true` lets two benchmark tasks share the
    cores and silently corrupts comparative runs; a Gradle shared service now enforces this.
 6. **TestContainers drags in the 3.x DataStax driver**, whose Guava 19 and slf4j 1.7 shadow the

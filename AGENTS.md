@@ -58,9 +58,11 @@ Each SeaStar class is deliberately **analogous to** a driver-internal class (the
 1. `SeaStarCqlSession.execute(request, resultType)` → `SeaStarRequestProcessorRegistry.processorFor(...)` picks a `SeaStarRequestProcessor` by matching the result type (`Statement.SYNC`/`ASYNC`, prepare sync/async). Registered in `SeaStarBuiltInRequestProcessors`.
 2. Sync processors delegate to their async counterpart and block (`CompletableFutures.getUninterruptibly`).
 3. `SeaStarCqlRequestHandler.handle()` extracts the query string + bound values (from `SimpleStatement` or `SeaStarBoundStatement`), parses it via Cassandra's `QueryProcessor`, then dispatches to a `CqlHandler` through `CqlHandlerRegistry`.
-4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`) has the statement translated (see below), then mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
+4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `AlterTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`, …) has the statement translated (see below), then mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
 
-There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are currently constructed inline in `SeaStarCqlRequestHandler`'s constructor (there's a TODO to move this out).
+There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are built once in `SeaStarCqlSession#buildHandlerRegistry` and shared across requests.
+
+A statement no handler claims does **not** fall through as an internal error. `UnsupportedStatements` turns it into an `InvalidQueryException` that names the feature and quotes the query, and it holds the table of statement families SeaStar rejects on purpose — materialized views, UDFs and aggregates, triggers, roles and permissions, `DESCRIBE`. Adding a handler for one of those means deleting its row. [docs/support-matrix.md](docs/support-matrix.md) is the published version of that table and should be updated alongside it.
 
 ### The translation layer
 Handlers do not read the parse tree. A statement is translated once, into a small model that names
@@ -127,8 +129,10 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 
 1. Write a `CqlHandler<SomeRawStatement>` where `SomeRawStatement` is the `cassandra-all` parse-tree type (find it under `org.apache.cassandra.cql3.statements...`).
 2. Implement `canProcess` (instanceof check) and `processCql`. Resolve the table through `Targets` rather than by hand, and read the statement in the translation layer rather than in the handler: extend `Queries`/`Modifications`, or add a translator beside them, and add a `FieldBinding` to `FieldBindings` for any state with no public accessor. The handler then mutates the `Volatile*` model and returns an `AsyncResultSet` via the `newAsyncResultSet` defaults on `CqlHandler`.
-3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlRequestHandler`.
+3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlSession#buildHandlerRegistry`.
 4. Match real Cassandra's failure behavior — throw the same driver exception type (`AlreadyExistsException`, `InvalidQueryException`, …) that a live cluster would.
+5. If the statement changes a table or a type, announce it through `SchemaChanges` so cached prepared statements naming it are re-resolved.
+6. Update [docs/support-matrix.md](docs/support-matrix.md), and remove the statement from `UnsupportedStatements` if it was being rejected.
 
 ## Code Style
 - Do not allow Optional as a field or parameter

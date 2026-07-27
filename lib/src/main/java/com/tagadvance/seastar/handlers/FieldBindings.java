@@ -27,13 +27,17 @@ import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.PropertyDefinitions;
 import org.apache.cassandra.cql3.statements.UpdateStatement;
+import org.apache.cassandra.cql3.statements.schema.AlterKeyspaceStatement;
+import org.apache.cassandra.cql3.statements.schema.AlterTableStatement;
 import org.apache.cassandra.cql3.statements.schema.AlterTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateIndexStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement;
+import org.apache.cassandra.cql3.statements.schema.DropIndexStatement;
 import org.apache.cassandra.cql3.statements.schema.DropKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.DropTableStatement;
+import org.apache.cassandra.cql3.statements.schema.DropTypeStatement;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.cql3.statements.schema.KeyspaceAttributes;
 import org.apache.cassandra.db.marshal.CollectionType;
@@ -78,6 +82,12 @@ final class FieldBindings {
 	 */
 	private static final Class<?> COLUMN_PROPERTIES_RAW = Reflections.requireClass(
 		"org.apache.cassandra.cql3.statements.schema.CreateTableStatement$ColumnProperties$Raw");
+	/**
+	 * A column named by {@code ALTER TABLE ... ADD} is held in a private class nested inside a private
+	 * one, so it cannot be named in source.
+	 */
+	private static final Class<?> ADDED_COLUMN = Reflections.requireClass(
+		"org.apache.cassandra.cql3.statements.schema.AlterTableStatement$AddColumns$Column");
 	/**
 	 * {@code Constants.NULL_LITERAL} is public, but its class is not, so a {@code null} term can only
 	 * be recognized by asking the class itself.
@@ -259,6 +269,31 @@ final class FieldBindings {
 	static final FieldBinding<Boolean> ALTER_TYPE_IF_FIELD_EXISTS = FieldBinding.of(
 		AlterTypeStatement.Raw.class, "ifFieldExists", Boolean.class);
 
+	static final FieldBinding<QualifiedName> ALTER_TABLE_NAME = FieldBinding.of(
+		AlterTableStatement.Raw.class, "name", QualifiedName.class);
+	static final FieldBinding<Boolean> ALTER_TABLE_IF_TABLE_EXISTS = FieldBinding.of(
+		AlterTableStatement.Raw.class, "ifTableExists", Boolean.class);
+	static final FieldBinding<Boolean> ALTER_TABLE_IF_COLUMN_EXISTS = FieldBinding.of(
+		AlterTableStatement.Raw.class, "ifColumnExists", Boolean.class);
+	static final FieldBinding<Boolean> ALTER_TABLE_IF_COLUMN_NOT_EXISTS = FieldBinding.of(
+		AlterTableStatement.Raw.class, "ifColumnNotExists", Boolean.class);
+	static final FieldBinding<Enum<?>> ALTER_TABLE_KIND = FieldBinding.ofEnum(
+		AlterTableStatement.Raw.class, "kind");
+	static final FieldBinding<List<Object>> ALTER_TABLE_ADDED_COLUMNS = FieldBinding.ofList(
+		AlterTableStatement.Raw.class, "addedColumns");
+	static final FieldBinding<Set<ColumnIdentifier>> ALTER_TABLE_DROPPED_COLUMNS =
+		FieldBinding.ofSet(AlterTableStatement.Raw.class, "droppedColumns");
+	static final FieldBinding<Map<ColumnIdentifier, ColumnIdentifier>> ALTER_TABLE_RENAMED_COLUMNS =
+		FieldBinding.ofMap(AlterTableStatement.Raw.class, "renamedColumns");
+	static final FieldBinding<ColumnIdentifier> ADDED_COLUMN_NAME = FieldBinding.of(ADDED_COLUMN,
+		"name", ColumnIdentifier.class);
+	static final FieldBinding<CQL3Type.Raw> ADDED_COLUMN_TYPE = FieldBinding.of(ADDED_COLUMN, "type",
+		CQL3Type.Raw.class);
+	static final FieldBinding<Boolean> ADDED_COLUMN_IS_STATIC = FieldBinding.of(ADDED_COLUMN,
+		"isStatic", Boolean.class);
+	static final FieldBinding<ColumnMask.Raw> ADDED_COLUMN_MASK = FieldBinding.of(ADDED_COLUMN,
+		"mask", ColumnMask.Raw.class);
+
 	static final FieldBinding<QualifiedName> CREATE_INDEX_TABLE_NAME = FieldBinding.of(
 		CreateIndexStatement.Raw.class, "tableName", QualifiedName.class);
 	static final FieldBinding<QualifiedName> CREATE_INDEX_INDEX_NAME = FieldBinding.of(
@@ -269,6 +304,22 @@ final class FieldBindings {
 		CreateIndexStatement.Raw.class, "ifNotExists", Boolean.class);
 	static final FieldBinding<ColumnIdentifier> INDEX_TARGET_COLUMN = FieldBinding.of(
 		IndexTarget.Raw.class, "column", ColumnIdentifier.class);
+	static final FieldBinding<QualifiedName> DROP_INDEX_NAME = FieldBinding.of(
+		DropIndexStatement.Raw.class, "name", QualifiedName.class);
+	static final FieldBinding<Boolean> DROP_INDEX_IF_EXISTS = FieldBinding.of(
+		DropIndexStatement.Raw.class, "ifExists", Boolean.class);
+
+	static final FieldBinding<UTName> DROP_TYPE_NAME = FieldBinding.of(DropTypeStatement.Raw.class,
+		"name", UTName.class);
+	static final FieldBinding<Boolean> DROP_TYPE_IF_EXISTS = FieldBinding.of(
+		DropTypeStatement.Raw.class, "ifExists", Boolean.class);
+
+	static final FieldBinding<String> ALTER_KEYSPACE_NAME = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "keyspaceName", String.class);
+	static final FieldBinding<KeyspaceAttributes> ALTER_KEYSPACE_ATTRIBUTES = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "attrs", KeyspaceAttributes.class);
+	static final FieldBinding<Boolean> ALTER_KEYSPACE_IF_EXISTS = FieldBinding.of(
+		AlterKeyspaceStatement.Raw.class, "ifExists", Boolean.class);
 
 	private FieldBindings() {
 		// hidden constructor

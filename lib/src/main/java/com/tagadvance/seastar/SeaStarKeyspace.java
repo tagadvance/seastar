@@ -12,6 +12,13 @@ public interface SeaStarKeyspace extends SeaStarReadWriteLock, KeyspaceMetadata 
 
 	CqlIdentifier name();
 
+	/**
+	 * Replaces the keyspace's replication options and its durable-writes flag. This is
+	 * {@code ALTER KEYSPACE}, which replaces only the options the statement names, so the caller
+	 * passes the values that survive alongside the ones that change.
+	 */
+	void alter(Map<String, String> replication, boolean durableWrites);
+
 	default Optional<SeaStarUserDefinedType> getSeaStarUserDefinedType(final String name) {
 		return getSeaStarUserDefinedType(CqlIdentifier.fromInternal(name));
 	}

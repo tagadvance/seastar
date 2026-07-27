@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.cql.BatchStatement;
+import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
@@ -34,6 +35,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -1938,6 +1940,221 @@ abstract class AbstractCqlSessionTest {
 				.stream()
 				.map(row -> row.getUuid("u").toString())
 				.toList());
+	}
+
+	@Test
+	@Order(140)
+	@DisplayName("ALTER TABLE ADD gives every existing row a null in the new column")
+	void testAlterTableAdd() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.alter_add (pk int PRIMARY KEY, z text, m text)");
+		session.execute("INSERT INTO foo.alter_add (pk, z, m) VALUES (1, 'zz', 'mm')");
+
+		session.execute("ALTER TABLE foo.alter_add ADD a text");
+
+		// A new column lands after the primary key, in alphabetical order among the rest.
+		assertEquals(List.of("pk", "a", "m", "z"), columnNames("SELECT * FROM foo.alter_add"));
+		final var row = session.execute("SELECT * FROM foo.alter_add WHERE pk = 1").one();
+		assertNotNull(row);
+		assertNull(row.getString("a"));
+		assertEquals("zz", row.getString("z"));
+
+		session.execute("ALTER TABLE foo.alter_add ADD (b text, c int)");
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TABLE foo.alter_add ADD IF NOT EXISTS b text"));
+		assertEquals(List.of("pk", "a", "b", "c", "m", "z"),
+			columnNames("SELECT * FROM foo.alter_add"));
+	}
+
+	@Test
+	@Order(141)
+	@DisplayName("ALTER TABLE DROP discards the column and the values it held")
+	void testAlterTableDrop() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.alter_drop (pk int PRIMARY KEY, a text, b text)");
+		session.execute("INSERT INTO foo.alter_drop (pk, a, b) VALUES (1, 'aa', 'bb')");
+
+		session.execute("ALTER TABLE foo.alter_drop DROP a");
+
+		assertEquals(List.of("pk", "b"), columnNames("SELECT * FROM foo.alter_drop"));
+		assertEquals("bb", session.execute("SELECT b FROM foo.alter_drop WHERE pk = 1")
+			.one()
+			.getString("b"));
+
+		// Re-adding the column brings it back empty; the dropped values do not come back.
+		session.execute("ALTER TABLE foo.alter_drop ADD a text");
+		assertNull(session.execute("SELECT a FROM foo.alter_drop WHERE pk = 1").one().getString("a"));
+		assertDoesNotThrow(() -> session.execute("ALTER TABLE foo.alter_drop DROP IF EXISTS nope"));
+	}
+
+	@Test
+	@Order(142)
+	@DisplayName("ALTER TABLE RENAME renames a primary key column and keeps its data")
+	void testAlterTableRename() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.alter_rename (pk int, ck int, v text, "
+			+ "PRIMARY KEY (pk, ck))");
+		session.execute("INSERT INTO foo.alter_rename (pk, ck, v) VALUES (1, 2, 'x')");
+
+		session.execute("ALTER TABLE foo.alter_rename RENAME ck TO ck2");
+
+		assertEquals(List.of("pk", "ck2", "v"), columnNames("SELECT * FROM foo.alter_rename"));
+		final var row = session.execute(
+			"SELECT * FROM foo.alter_rename WHERE pk = 1 AND ck2 = 2").one();
+		assertNotNull(row);
+		assertEquals("x", row.getString("v"));
+	}
+
+	@Test
+	@Order(143)
+	@DisplayName("ALTER TABLE reports the column or table at fault, and IF EXISTS forgives absence")
+	void testAlterTableIsRejected() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.alter_bad (pk int, ck int, v text, "
+			+ "PRIMARY KEY (pk, ck))");
+
+		assertMentions("v", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad ADD v text")));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad DROP nope")));
+		// A key column can be neither dropped nor, once it is not one, renamed.
+		assertMentions("pk", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad DROP pk")));
+		assertMentions("v", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad RENAME v TO v2")));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad RENAME nope TO nope2")));
+		assertMentions("already exists", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad RENAME pk TO ck")));
+		// Cassandra 5 dropped support for changing a column's type outright.
+		assertMentions("no longer supported", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_bad ALTER v TYPE blob")));
+		assertMentions("alter_missing", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER TABLE foo.alter_missing ADD x int")));
+
+		// IF EXISTS forgives a missing table, and a missing column on a DROP.
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TABLE IF EXISTS foo.alter_missing ADD x int"));
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TABLE foo.alter_bad DROP IF EXISTS nope"));
+		// Table options are not modelled, but the statement is still accepted.
+		assertDoesNotThrow(
+			() -> session.execute("ALTER TABLE foo.alter_bad WITH comment = 'hello'"));
+	}
+
+	@Test
+	@Order(144)
+	@DisplayName("DROP INDEX removes the index, and reports one that is not there by name")
+	void testDropIndex() {
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS foo.drop_index (id int PRIMARY KEY, name text)");
+		session.execute("CREATE INDEX IF NOT EXISTS drop_index_name_idx ON foo.drop_index (name)");
+		assertTrue(indexNames("drop_index").contains("drop_index_name_idx"));
+
+		session.execute("DROP INDEX foo.drop_index_name_idx");
+
+		assertFalse(indexNames("drop_index").contains("drop_index_name_idx"));
+		// An index that is not there is named in the failure, and forgiven by IF EXISTS.
+		assertMentions("drop_index_name_idx", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP INDEX foo.drop_index_name_idx")));
+		assertDoesNotThrow(() -> session.execute("DROP INDEX IF EXISTS foo.drop_index_name_idx"));
+		// A missing keyspace reads as a missing index, because the index is what was looked up.
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP INDEX nope.nope_idx")));
+		assertDoesNotThrow(() -> session.execute("DROP INDEX IF EXISTS nope.nope_idx"));
+	}
+
+	@Test
+	@Order(145)
+	@DisplayName("DROP TYPE refuses a type a table or another type still uses")
+	void testDropType() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_addr (street text)");
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_holder (home frozen<drop_addr>)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.drop_type_users "
+			+ "(id int PRIMARY KEY, homes list<frozen<drop_addr>>)");
+
+		// A nested reference counts: the type is inside another type and inside a list column.
+		assertMentions("drop_holder", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_addr")));
+		session.execute("DROP TYPE foo.drop_holder");
+		assertMentions("drop_type_users", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_addr")));
+
+		// A type nothing names is dropped and gone from the metadata.
+		session.execute("CREATE TYPE IF NOT EXISTS foo.drop_unused (v text)");
+		session.execute("DROP TYPE foo.drop_unused");
+		assertFalse(session.getMetadata()
+			.getKeyspace("foo")
+			.orElseThrow()
+			.getUserDefinedType("drop_unused")
+			.isPresent());
+
+		// A type that is not there is named in the failure, and forgiven by IF EXISTS.
+		assertMentions("drop_unused", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE foo.drop_unused")));
+		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS foo.drop_unused"));
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("DROP TYPE nope.drop_addr")));
+		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS nope.drop_addr"));
+	}
+
+	@Test
+	@Order(146)
+	@DisplayName("ALTER KEYSPACE replaces the options it names and leaves the rest alone")
+	void testAlterKeyspace() {
+		final var replicated = Map.of("class", "org.apache.cassandra.locator.SimpleStrategy",
+			"replication_factor", "2");
+		session.execute("CREATE KEYSPACE IF NOT EXISTS alter_ks WITH replication = "
+			+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
+
+		session.execute("ALTER KEYSPACE alter_ks WITH replication = "
+			+ "{'class': 'SimpleStrategy', 'replication_factor': 2}");
+
+		assertEquals(replicated, keyspace("alter_ks").getReplication());
+		assertTrue(keyspace("alter_ks").isDurableWrites());
+
+		// Naming only durable_writes leaves the replication as it was.
+		session.execute("ALTER KEYSPACE alter_ks WITH durable_writes = false");
+
+		assertFalse(keyspace("alter_ks").isDurableWrites());
+		assertEquals(replicated, keyspace("alter_ks").getReplication());
+
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER KEYSPACE nope WITH durable_writes = false")));
+		assertDoesNotThrow(() -> session.execute(
+			"ALTER KEYSPACE IF EXISTS nope WITH durable_writes = false"));
+	}
+
+	@Test
+	@Order(147)
+	@DisplayName("USE on a keyspace that does not exist names it and leaves the session where it was")
+	void testUseMissingKeyspace() {
+		session.execute("USE foo");
+
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("USE nope")));
+		assertEquals(CqlIdentifier.fromInternal("foo"), session.getKeyspace().orElseThrow());
+	}
+
+	private KeyspaceMetadata keyspace(final String name) {
+		return session.getMetadata().getKeyspace(name).orElseThrow();
+	}
+
+	private Set<String> indexNames(final String table) {
+		return session.getMetadata()
+			.getKeyspace("foo")
+			.flatMap(keyspace -> keyspace.getTable(table))
+			.orElseThrow()
+			.getIndexes()
+			.keySet()
+			.stream()
+			.map(CqlIdentifier::asInternal)
+			.collect(Collectors.toSet());
+	}
+
+	private List<String> columnNames(final String cql) {
+		return StreamSupport.stream(session.execute(cql).getColumnDefinitions().spliterator(), false)
+			.map(ColumnDefinition::getName)
+			.map(CqlIdentifier::asInternal)
+			.toList();
 	}
 
 	private List<Integer> clustering(final String cql) {

@@ -9,6 +9,8 @@ import com.datastax.oss.driver.api.core.metrics.Metrics;
 import com.datastax.oss.driver.api.core.session.Request;
 import com.datastax.oss.driver.api.core.type.reflect.GenericType;
 import com.google.errorprone.annotations.ThreadSafe;
+import com.tagadvance.seastar.handlers.AlterKeyspaceHandler;
+import com.tagadvance.seastar.handlers.AlterTableHandler;
 import com.tagadvance.seastar.handlers.AlterTypeHandler;
 import com.tagadvance.seastar.handlers.BatchHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
@@ -17,8 +19,10 @@ import com.tagadvance.seastar.handlers.CreateKeyspaceHandler;
 import com.tagadvance.seastar.handlers.CreateTableHandler;
 import com.tagadvance.seastar.handlers.CreateTypeHandler;
 import com.tagadvance.seastar.handlers.DeleteHandler;
+import com.tagadvance.seastar.handlers.DropIndexHandler;
 import com.tagadvance.seastar.handlers.DropKeyspaceHandler;
 import com.tagadvance.seastar.handlers.DropTableHandler;
+import com.tagadvance.seastar.handlers.DropTypeHandler;
 import com.tagadvance.seastar.handlers.InsertHandler;
 import com.tagadvance.seastar.handlers.SelectHandler;
 import com.tagadvance.seastar.handlers.TruncateHandler;
@@ -58,11 +62,15 @@ public class SeaStarCqlSession implements CqlSession {
 	private CqlHandlerRegistry buildHandlerRegistry() {
 		return new CqlHandlerRegistry(context.getSessionName(),
 			new CreateKeyspaceHandler(),
+			new AlterKeyspaceHandler(),
 			new UseKeyspaceHandler(this::setKeyspace),
 			new CreateTypeHandler(this::getKeyspace),
 			new AlterTypeHandler(this::getKeyspace),
+			new DropTypeHandler(this::getKeyspace),
 			new CreateTableHandler(this::getKeyspace),
+			new AlterTableHandler(this::getKeyspace),
 			new CreateIndexHandler(this::getKeyspace),
+			new DropIndexHandler(this::getKeyspace),
 			new DropTableHandler(this::getKeyspace),
 			new DropKeyspaceHandler(this::getKeyspace, this::setKeyspace),
 			new InsertHandler(this::getKeyspace),
