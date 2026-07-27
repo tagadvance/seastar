@@ -26,8 +26,8 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 
 	private final SeaStarDriverContext context;
 	private final CqlIdentifier name;
-	private final Map<String, String> replication;
-	private final boolean durableWrites;
+	private volatile Map<String, String> replication;
+	private volatile boolean durableWrites;
 	private final Map<CqlIdentifier, SeaStarUserDefinedType> userDefinedTypes;
 	private final Map<CqlIdentifier, SeaStarTable> tables;
 
@@ -55,6 +55,16 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	@Override
 	public CqlIdentifier name() {
 		return name;
+	}
+
+	@Override
+	public void alter(final Map<String, String> replication, final boolean durableWrites) {
+		requireNonNull(replication, "replication must not be null");
+
+		writeLock(() -> {
+			this.replication = Map.copyOf(replication);
+			this.durableWrites = durableWrites;
+		});
 	}
 
 	@Override

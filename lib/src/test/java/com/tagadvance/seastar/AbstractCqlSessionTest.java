@@ -2096,6 +2096,37 @@ abstract class AbstractCqlSessionTest {
 		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS nope.drop_addr"));
 	}
 
+	@Test
+	@Order(146)
+	@DisplayName("ALTER KEYSPACE replaces the options it names and leaves the rest alone")
+	void testAlterKeyspace() {
+		final var replicated = Map.of("class", "org.apache.cassandra.locator.SimpleStrategy",
+			"replication_factor", "2");
+		session.execute("CREATE KEYSPACE IF NOT EXISTS alter_ks WITH replication = "
+			+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
+
+		session.execute("ALTER KEYSPACE alter_ks WITH replication = "
+			+ "{'class': 'SimpleStrategy', 'replication_factor': 2}");
+
+		assertEquals(replicated, keyspace("alter_ks").getReplication());
+		assertTrue(keyspace("alter_ks").isDurableWrites());
+
+		// Naming only durable_writes leaves the replication as it was.
+		session.execute("ALTER KEYSPACE alter_ks WITH durable_writes = false");
+
+		assertFalse(keyspace("alter_ks").isDurableWrites());
+		assertEquals(replicated, keyspace("alter_ks").getReplication());
+
+		assertMentions("nope", assertThrows(InvalidQueryException.class,
+			() -> session.execute("ALTER KEYSPACE nope WITH durable_writes = false")));
+		assertDoesNotThrow(() -> session.execute(
+			"ALTER KEYSPACE IF EXISTS nope WITH durable_writes = false"));
+	}
+
+	private KeyspaceMetadata keyspace(final String name) {
+		return session.getMetadata().getKeyspace(name).orElseThrow();
+	}
+
 	private Set<String> indexNames(final String table) {
 		return session.getMetadata()
 			.getKeyspace("foo")
