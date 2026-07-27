@@ -86,7 +86,11 @@ final class RestrictionRules {
 		requireOnlyPrimaryKeyColumns(target, restrictions, coordinator);
 		requirePinnedClustering(target, restrictions, coordinator,
 			"Slice restrictions are not supported on the clustering columns in UPDATE statements");
-		requireWholeClusteringKey(target, restrictions, coordinator);
+		// An UPDATE that writes only static columns addresses the partition, so it neither needs the
+		// clustering key nor may name it; the handler is what refuses a clustering restriction there.
+		if (!update.writesOnlyStaticColumns()) {
+			requireWholeClusteringKey(target, restrictions, coordinator);
+		}
 		if (isConditional(update)) {
 			rejectPartitionKeyIn(target, restrictions, coordinator, "updates");
 		}
@@ -105,14 +109,16 @@ final class RestrictionRules {
 		requirePinnedPartitionKey(target, restrictions, coordinator, "DELETE");
 		requireOnlyPrimaryKeyColumns(target, restrictions, coordinator);
 		validateClusteringPrefix(target, restrictions, coordinator);
-		// Clearing named columns writes into rows rather than removing them, so it has to name them.
-		if (!delete.assignments().isEmpty() && !pinsPrimaryKey(target, restrictions, false)) {
+		// Clearing named columns writes into rows rather than removing them, so it has to name them -
+		// unless every column it clears is static, which belongs to the partition rather than a row.
+		if (!delete.assignments().isEmpty() && !delete.writesOnlyStaticColumns()
+			&& !pinsPrimaryKey(target, restrictions, false)) {
 			throw new InvalidQueryException(coordinator,
 				"Range deletions are not supported for specific columns");
 		}
 		if (isConditional(delete)) {
 			rejectPartitionKeyIn(target, restrictions, coordinator, "deletions");
-			if (!pinsPrimaryKey(target, restrictions, true)) {
+			if (!delete.writesOnlyStaticColumns() && !pinsPrimaryKey(target, restrictions, true)) {
 				throw new InvalidQueryException(coordinator,
 					"DELETE statements must restrict all PRIMARY KEY columns with equality relations "
 						+ "in order to delete non static columns");

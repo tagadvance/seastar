@@ -1,5 +1,6 @@
 package com.tagadvance.seastar.handlers;
 
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 
@@ -22,5 +23,17 @@ import org.jspecify.annotations.Nullable;
 record Modification(Target target, List<Assignment> assignments, List<Restriction> restrictions,
 					List<Condition> conditions, boolean ifExists, boolean ifNotExists,
 					@Nullable Long timestamp, @Nullable Integer ttl) {
+
+	/**
+	 * Whether every column this statement writes is static, which makes it a write to the partition
+	 * rather than to a row in it: the clustering key is then neither needed nor allowed.
+	 */
+	boolean writesOnlyStaticColumns() {
+		final var table = target.table();
+
+		return !assignments.isEmpty() && assignments.stream()
+			.allMatch(assignment -> table.get(assignment.columnIndex()) instanceof ColumnMetadata
+				column && column.isStatic());
+	}
 
 }

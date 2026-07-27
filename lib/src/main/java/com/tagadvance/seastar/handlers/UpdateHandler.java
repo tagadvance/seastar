@@ -92,7 +92,7 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 				upsertKey.forEach(values::set);
 				final var row = table.addRow(values, writes.timestamp());
 				apply(List.of(row), assignments, writes, coordinator);
-				row.markLive(writes.expiresAt());
+				row.markLive(writes.timestamp(), writes.expiresAt());
 			}
 
 			return newAsyncResultSet(executionInfo);
@@ -132,16 +132,12 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	 */
 	private static void requireNoClusteringForStatics(final Modification update,
 		final Node coordinator) {
-		final var target = update.target();
-		final var table = target.table();
-		final var assignments = update.assignments();
-		final var onlyStatics = !assignments.isEmpty() && assignments.stream()
-			.allMatch(assignment -> table.get(assignment.columnIndex()) instanceof ColumnMetadata
-				column && column.isStatic());
-		if (!onlyStatics) {
+		if (!update.writesOnlyStaticColumns()) {
 			return;
 		}
-		final var clustering = table.getClusteringColumns()
+		final var clustering = update.target()
+			.table()
+			.getClusteringColumns()
 			.keySet()
 			.stream()
 			.map(ColumnMetadata::getName)
