@@ -96,6 +96,7 @@ public final class CqlRawInspector {
 			return false;
 		}
 		final var name = value.getClass().getName();
+
 		return name.startsWith(RECURSE_PREFIX) && !name.startsWith("org.apache.cassandra.db.marshal")
 			&& !name.contains("$$Lambda");
 	}
@@ -111,6 +112,7 @@ public final class CqlRawInspector {
 		} catch (final RuntimeException e) {
 			return type + " <toString failed: " + e + ">";
 		}
+
 		return type.startsWith(RECURSE_PREFIX) ? type + " {" + text + "}" : text;
 	}
 

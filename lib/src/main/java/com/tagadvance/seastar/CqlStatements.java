@@ -83,10 +83,12 @@ final class CqlStatements {
 					j += 2;
 					continue;
 				}
+
 				return j;
 			}
 			j++;
 		}
+
 		return cql.length() - 1;
 	}
 
@@ -105,6 +107,7 @@ final class CqlStatements {
 		final StringBuilder current) {
 		final int end = cql.indexOf("*/", i + 2);
 		current.append(' ');
+
 		return end < 0 ? cql.length() - 1 : end + 1;
 	}
 

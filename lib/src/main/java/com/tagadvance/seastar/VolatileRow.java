@@ -352,7 +352,10 @@ class VolatileRow implements SeaStarRow {
 	public List<Integer> allIndicesOf(@NonNull CqlIdentifier id) {
 		final var indices = table.allIndicesOf(id);
 		if (indices.isEmpty()) {
-			// copied from DefaultRow; not sure why this is necessary
+			// A caller almost always uses the result immediately (row.getString(name), etc.); an
+			// empty list or -1 here would surface as a confusing out-of-bounds error deep in that
+			// call instead of naming the missing column up front, so DefaultRow validates eagerly
+			// and this mirrors it.
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(id));
 		}
 
@@ -363,7 +366,8 @@ class VolatileRow implements SeaStarRow {
 	public int firstIndexOf(@NonNull CqlIdentifier id) {
 		final int indexOf = table.firstIndexOf(id);
 		if (indexOf == -1) {
-			// copied from DefaultRow
+			// See the allIndicesOf(CqlIdentifier) overload just above for why this validates
+			// eagerly rather than handing back -1.
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(id));
 		}
 
@@ -385,7 +389,10 @@ class VolatileRow implements SeaStarRow {
 	public List<Integer> allIndicesOf(@NonNull String name) {
 		final var indices = table.allIndicesOf(name);
 		if (indices.isEmpty()) {
-			// copied from DefaultRow; not sure why this is necessary
+			// A caller almost always uses the result immediately (row.getString(name), etc.); an
+			// empty list or -1 here would surface as a confusing out-of-bounds error deep in that
+			// call instead of naming the missing column up front, so DefaultRow validates eagerly
+			// and this mirrors it.
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(name));
 		}
 
@@ -396,7 +403,10 @@ class VolatileRow implements SeaStarRow {
 	public int firstIndexOf(@NonNull String name) {
 		final int indexOf = table.firstIndexOf(name);
 		if (indexOf == -1) {
-			// copied from DefaultRow; not sure why this is necessary
+			// A caller almost always uses the result immediately (row.getString(name), etc.); an
+			// empty list or -1 here would surface as a confusing out-of-bounds error deep in that
+			// call instead of naming the missing column up front, so DefaultRow validates eagerly
+			// and this mirrors it.
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(name));
 		}
 

@@ -56,6 +56,7 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 			@Override
 			protected Row computeNext() {
 				final var rowData = data.poll();
+
 				return rowData == null ? endOfData() : rowData;
 			}
 		};
