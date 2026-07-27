@@ -15,7 +15,7 @@ git log --oneline main..final-push
 ./gradlew :lib:containerTest # needs Docker
 ```
 
-Last verified: 171 tests green locally (on JDK 17, 21 and 25), 98 green on the container.
+Last verified: 213 tests green locally, 112 green on the container.
 
 ### Done
 
@@ -31,6 +31,7 @@ Last verified: 171 tests green locally (on JDK 17, 21 and 25), 98 green on the c
 | d_plan | D1 D2 D8 | D1: real Murmur3 token order + clustering order at read time, ORDER BY implemented |
 | i_plan | I1 I2 I3 | `benchmarks.md`, baseline at `1145dae` |
 | j_plan | J7 | CI on JDK 17/21/25; container suite nightly and on demand |
+| e_plan | E0 E1 E2 E3 E4 E5 | ALTER TABLE/KEYSPACE, DROP INDEX/TYPE; everything else rejected by name; `docs/support-matrix.md` |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -39,7 +40,7 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **a_plan A11**, **d_plan D3 D4 D5 D6 D7 D9**, **e_plan all**, **b_plan all**,
+- **a_plan A11**, **d_plan D3 D4 D5 D6 D7 D9**, **b_plan all**,
   **f_plan F1 F2 F3 F5 F6 F7**, **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**,
   **j_plan J3 J7 J8**.
 
@@ -57,6 +58,19 @@ a JDK bump is the most likely thing to break them. Run it with
   fixing it. This is l_plan L1's middle path.
 - **Scope**: static columns (D6), counters (D4), TTL (D7) and JSON (D5) are all to be IMPLEMENTED,
   not rejected.
+- **Unsupported statements are a table, not a pile of handlers.** `UnsupportedStatements` maps a
+  parse-tree class to the feature name SeaStar reports, and `CqlHandlerRegistry` consults it when no
+  handler claims a statement. Rejecting a new feature is one row; supporting it is deleting one.
+  `docs/support-matrix.md` is the published form and moves with it.
+- **`DESCRIBE` is rejected for a parse-tree reason, not a scope one.** `DescribeStatement`
+  distinguishes its variants only by anonymous inner class ordinal and by the identity of a lambda
+  field, so there is no honest way to tell `DESCRIBE KEYSPACES` from `DESCRIBE TABLES`. Revisit only
+  if cassandra-all exposes the variant.
+- **`SeaStarRequestProcessorRegistry` keeps throwing `IllegalArgumentException`**, deliberately:
+  that is what the driver's own `RequestProcessorRegistry` throws, and reaching it means a caller
+  asked for a result type nothing was registered for - a client-side programming error, not a query
+  failure. Only the message changed. e_plan E0 asked for a driver exception there; that was the
+  wrong call and the reasoning is in the method's javadoc.
 - **API surface**: f_plan F1 in full - handlers, processors, registries and `Volatile*` all become
   internal or package-private.
 - **c_plan C1** (`Raw#prepare(ClientState)`) is rejected with evidence, recorded in AGENTS.md.
@@ -88,7 +102,11 @@ a JDK bump is the most likely thing to break them. Run it with
    merge, never trust the diff.
 4. **`ContainerCqlSessionTest > DROP TABLE ...` is a known flake** - `DriverTimeoutException: Query
    timed out after PT2S`, recurs across unrelated changes, passes on re-run. Diagnose the timeout
-   rather than the code. Undiagnosed.
+   rather than the code. Partly diagnosed: it is `DROP TABLE` specifically, and it is not random. A
+   test added during e_plan reproduced it on every run until the `DROP TABLE` was removed from it,
+   while the rest of the suite stayed green. `auto_snapshot` is on by default, so dropping a table
+   writes a snapshot before the response, which can exceed the driver's 2s request timeout on a
+   loaded container. Either raise the timeout or start the container with `auto_snapshot: false`.
 5. **Benchmarks must be serialized.** `org.gradle.parallel=true` lets two benchmark tasks share the
    cores and silently corrupts comparative runs; a Gradle shared service now enforces this.
 6. **TestContainers drags in the 3.x DataStax driver**, whose Guava 19 and slf4j 1.7 shadow the
