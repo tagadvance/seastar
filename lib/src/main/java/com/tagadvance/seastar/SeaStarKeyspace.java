@@ -6,6 +6,11 @@ import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * A keyspace: its replication options, durable-writes flag, and the tables and user-defined types
+ * it holds. Owns the one lock everything inside it - its tables, columns, rows and UDTs - shares;
+ * see the lock hierarchy in {@code AGENTS.md}.
+ */
 public interface SeaStarKeyspace extends SeaStarReadWriteLock, KeyspaceMetadata {
 
 	SeaStarDriverContext context();

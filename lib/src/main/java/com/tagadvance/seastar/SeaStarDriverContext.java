@@ -9,6 +9,13 @@ import java.time.Clock;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * The root of SeaStar's storage model and the driver's {@link DriverContext}/{@link Metadata} at
+ * once - one object serves both roles, so there is no sync problem between the two. Reachable via
+ * {@code SeaStarCqlSession#getContext()}; a test typically reaches for
+ * {@link #newSeaStarKeyspace(String)} to populate data directly rather than through CQL. Guards
+ * only the keyspace map itself; see the lock hierarchy in {@code AGENTS.md}.
+ */
 public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContext, Metadata {
 
 	Node getNode();

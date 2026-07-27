@@ -8,6 +8,12 @@ import java.util.List;
 import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A value of a {@link SeaStarUserDefinedType}: one Java value per declared field, positional the
+ * same way a {@code SeaStarRow}'s values are. Detached from any keyspace or table - it is a value,
+ * not stored state - so it takes no lock of its own; it is not safe to hand one instance to
+ * multiple threads at once.
+ */
 @NotThreadSafe
 public interface SeaStarUdtValue extends SeaStarReadWriteLock, UdtValue {
 
