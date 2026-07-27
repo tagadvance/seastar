@@ -1,6 +1,5 @@
 package com.tagadvance.seastar;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
@@ -114,8 +113,10 @@ public class VolatileRow implements SeaStarRow {
 		requireNonNull(values, "values must not be null");
 
 		table().readLock(() -> {
-			checkArgument(values.size() == table().size(), "Expected %s values but got %s",
-				table().size(), values.size());
+			if (values.size() != table().size()) {
+				throw new IllegalArgumentException(
+					"Expected %d values but got %d".formatted(table().size(), values.size()));
+			}
 			for (int i = 0; i < values.size(); i++) {
 				validate(i, values.get(i));
 			}

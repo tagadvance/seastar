@@ -26,7 +26,6 @@ dependencies {
     implementation("org.apache.cassandra:cassandra-all:5.0.8")
     implementation("org.apache.cassandra:java-driver-core:4.19.3")
     implementation("org.apache.cassandra:java-driver-query-builder:4.19.3")
-    implementation("com.google.guava:guava:33.5.0-jre")
 }
 
 testing {

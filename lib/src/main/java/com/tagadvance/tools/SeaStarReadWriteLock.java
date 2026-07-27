@@ -1,7 +1,6 @@
 package com.tagadvance.tools;
 
 import com.datastax.oss.driver.shaded.guava.common.util.concurrent.UncheckedExecutionException;
-import com.google.common.base.Throwables;
 import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -58,9 +57,7 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		try {
 			return callable.call();
 		} catch (final Exception e) {
-			Throwables.throwIfUnchecked(e);
-
-			throw new UncheckedExecutionException(e);
+			throw rethrowUnchecked(e);
 		} finally {
 			readLock().unlock();
 		}
@@ -71,12 +68,24 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 		try {
 			return callable.call();
 		} catch (final Exception e) {
-			Throwables.throwIfUnchecked(e);
-
-			throw new UncheckedExecutionException(e);
+			throw rethrowUnchecked(e);
 		} finally {
 			writeLock().unlock();
 		}
+	}
+
+	/**
+	 * Rethrows {@code e} as-is if it is already a {@link RuntimeException}, otherwise wraps it. The
+	 * return type is a {@link RuntimeException} rather than {@code void} so a caller can write
+	 * {@code throw rethrowUnchecked(e)}, which lets the compiler see the enclosing method as
+	 * returning on every path.
+	 */
+	private static RuntimeException rethrowUnchecked(final Exception e) {
+		if (e instanceof RuntimeException re) {
+			throw re;
+		}
+
+		return new UncheckedExecutionException(e);
 	}
 
 }
