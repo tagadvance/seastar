@@ -3,14 +3,10 @@ package com.tagadvance.seastar;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.CqlSessionBuilder;
-import com.datastax.oss.driver.api.core.auth.AuthProvider;
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
-import com.datastax.oss.driver.api.core.loadbalancing.NodeDistanceEvaluator;
 import com.datastax.oss.driver.api.core.metadata.EndPoint;
-import com.datastax.oss.driver.api.core.metadata.NodeStateListener;
 import com.datastax.oss.driver.api.core.session.ProgrammaticArguments;
-import com.datastax.oss.driver.api.core.ssl.SslEngineFactory;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -27,7 +23,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import javax.net.ssl.SSLContext;
 import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
@@ -127,6 +122,13 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 		return this;
 	}
 
+	/**
+	 * Rejected, unlike the transport settings below: a contact point names a real address to connect
+	 * to, and SeaStar has no network endpoint for it to name. Accepting one silently would tell the
+	 * caller a connection target was configured when nothing of the kind exists.
+	 *
+	 * @throws UnsupportedOperationException always
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder addContactPoints(
@@ -134,12 +136,20 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder addContactPoint(final @NonNull InetSocketAddress contactPoint) {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder addContactEndPoints(
@@ -147,80 +157,40 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder addContactEndPoint(final @NonNull EndPoint contactPoint) {
 		throw new UnsupportedOperationException();
 	}
 
-	@Override
-	@NonNull
-	public CqlSessionBuilder withNodeStateListener(final NodeStateListener nodeStateListener) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder addNodeStateListener(
-		final @NonNull NodeStateListener nodeStateListener) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withAuthProvider(final AuthProvider authProvider) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withAuthCredentials(final @NonNull String username,
-		final @NonNull String password) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withAuthCredentials(final @NonNull String username,
-		final @NonNull String password, final @NonNull String authorizationId) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withSslContext(final SSLContext sslContext) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public CqlSessionBuilder withLocalDatacenter(final @NonNull String profileName,
-		final @NonNull String localDatacenter) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public CqlSessionBuilder withLocalDatacenter(final @NonNull String localDatacenter) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withMetricRegistry(final Object metricRegistry) {
-		throw new UnsupportedOperationException();
-	}
-
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder withCloudProxyAddress(final InetSocketAddress cloudProxyAddress) {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder withCloudSecureConnectBundle(final @NonNull URL cloudConfigUrl) {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder withCloudSecureConnectBundle(
@@ -228,31 +198,22 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 		throw new UnsupportedOperationException();
 	}
 
+	/**
+	 * @throws UnsupportedOperationException always
+	 * @see #addContactPoints(Collection)
+	 */
 	@Override
 	@NonNull
 	public CqlSessionBuilder withCloudSecureConnectBundle(final @NonNull Path cloudConfigPath) {
 		throw new UnsupportedOperationException();
 	}
 
-	@Override
-	@NonNull
-	public CqlSessionBuilder withNodeDistanceEvaluator(
-		final @NonNull NodeDistanceEvaluator nodeDistanceEvaluator) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withNodeDistanceEvaluator(final @NonNull String profileName,
-		final @NonNull NodeDistanceEvaluator nodeDistanceEvaluator) {
-		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	@NonNull
-	public CqlSessionBuilder withSslEngineFactory(final SslEngineFactory sslEngineFactory) {
-		throw new UnsupportedOperationException();
-	}
+	// withNodeStateListener, addNodeStateListener, withAuthProvider, withAuthCredentials,
+	// withSslContext, withSslEngineFactory, withLocalDatacenter, withMetricRegistry and
+	// withNodeDistanceEvaluator are not overridden: unlike a contact point, none of them name a
+	// behavior SeaStar cannot provide, only one it does not need. SessionBuilder's own
+	// implementation records the value and returns; accepting-and-ignoring lets a caller share
+	// builder-configuration code between a real session and a SeaStar one.
 
 	@Override
 	@NonNull
