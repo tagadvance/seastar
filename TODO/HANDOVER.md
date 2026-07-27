@@ -29,7 +29,6 @@ here beyond what CI does) - run it before trusting cross-backend fidelity claims
 | j_plan | J1 J2 J4 J5 J6 | deps pinned exactly; artifacts named `seastar-*`; signing guarded; `-Xlint:all` on |
 | g_plan | G1 | doclint clean; 22 of 27 warnings are unfixable shaded-Guava noise |
 | h_plan | H2 | container suite is opt-in via `:lib:containerTest`, image pinned `cassandra:5.0.8` |
-| f_plan | F8 (deps half) | gson + jakarta.annotation removed, jspecify declared, jcip -> compileOnly |
 | c_plan | C2 C3 C4 | `FieldBindings` binding table + `FieldBindingsTest` version guard; translation layer |
 | f_plan | F4 | shared `Targets` resolver |
 | a_plan | A1-A11 | A1 fixed via F4; A6 drops the keyspace map on close (deliberate divergence); A11 fell out of D3 |
@@ -41,6 +40,7 @@ here beyond what CI does) - run it before trusting cross-backend fidelity claims
 | b_plan | B1-B7 | one lock per keyspace (l_plan L1's middle path, not B2's hierarchy); row lock and table lock gone; every `Volatile*` field `@GuardedBy` or immutable; `ConcurrencyTest` |
 | l_plan | L1 | decided and implemented as above |
 | f_plan | F1 F2 F3 F4b F5 F6 F7 F8 | see "f_plan closed out this update" below |
+| g_plan | G2, G4 (partial) | comments/spacing fixed; `package-info.java` + `@NullMarked` for 4 packages - redundant `@NonNull` sweep NOT done, see below |
 
 The full suite passes on JDK 17, 21 and 25 - verified locally, not assumed. That is the check
 j_plan J7 wanted, because the handlers `setAccessible` into package-private cassandra-all fields and
@@ -49,7 +49,9 @@ a JDK bump is the most likely thing to break them. Run it with
 
 ### Not done
 
-- **g_plan G2 G3 G4**, **h_plan H1 H3 H4 H5 H6**, **k_plan all**, **j_plan J3 J8**,
+- **g_plan G3** (the ~450-method javadoc pass; not started - big and worth its own focused
+  session, not a tack-on), **g_plan G4's @NonNull sweep** (see below), **h_plan H1 H3 H4 H5 H6**,
+  **k_plan all**, **j_plan J3** (deferred, needs you - see Open questions), **j_plan J8**,
   **l_plan L2-L7**. (f_plan is fully closed out - see below.)
 
 ### f_plan closed out this update
