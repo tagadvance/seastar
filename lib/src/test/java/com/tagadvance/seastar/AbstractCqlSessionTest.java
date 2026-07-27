@@ -28,6 +28,7 @@ import com.datastax.oss.driver.api.core.type.VectorType;
 import com.datastax.oss.driver.api.core.type.codec.CodecNotFoundException;
 import java.nio.ByteBuffer;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -2552,6 +2553,411 @@ abstract class AbstractCqlSessionTest {
 
 		assertInvalid("SELECT id FROM foo.ordering WHERE d > 1m ALLOW FILTERING", "d");
 		assertInvalid("SELECT id FROM foo.ordering WHERE l > [1] ALLOW FILTERING", "l");
+	}
+
+	// The select clause: aggregates, the per-cell functions, casts, aliases and JSON; static columns;
+	// TTL and write timestamps; and the paging idioms SeaStar answers on one page.
+
+	/**
+	 * A table with two partitions and a null in one cell, which is what tells an aggregate that skips
+	 * nulls from one that does not.
+	 */
+	private void createAggregateTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.agg "
+			+ "(pk int, ck int, n int, v text, PRIMARY KEY (pk, ck))");
+		Stream.of("(1, 1, 10, 'a')", "(1, 2, 20, null)", "(2, 1, 5, 'c')")
+			.forEach(values -> session.execute(
+				"INSERT INTO foo.agg (pk, ck, n, v) VALUES " + values));
+	}
+
+	private Row only(final String cql) {
+		final var row = session.execute(cql).one();
+		assertNotNull(row, "expected exactly one row from " + cql);
+
+		return row;
+	}
+
+	@Test
+	@Order(200)
+	@DisplayName("count(*) counts rows and count(col) counts the rows where the column is not null")
+	void testCount() {
+		createAggregateTable();
+
+		assertEquals(3L, only("SELECT count(*) FROM foo.agg").getLong(0));
+		assertEquals(2L, only("SELECT count(v) FROM foo.agg").getLong(0));
+		assertEquals(3L, only("SELECT count(n) FROM foo.agg").getLong(0));
+		assertEquals(2L, only("SELECT count(*) FROM foo.agg WHERE pk = 1").getLong(0));
+
+		assertEquals(List.of("count", "system.count(v)"),
+			columnNames("SELECT count(*), count(v) FROM foo.agg"));
+	}
+
+	@Test
+	@Order(201)
+	@DisplayName("min, max, sum and avg fold in the column's own type")
+	void testAggregates() {
+		createAggregateTable();
+
+		final var numbers = only("SELECT min(n), max(n), sum(n), avg(n) FROM foo.agg");
+		assertEquals(5, numbers.getInt(0));
+		assertEquals(20, numbers.getInt(1));
+		assertEquals(35, numbers.getInt(2));
+		// An int column averages to an int, so 35 / 3 is 11 rather than 11.67.
+		assertEquals(11, numbers.getInt(3));
+
+		final var texts = only("SELECT min(v), max(v) FROM foo.agg");
+		assertEquals("a", texts.getString(0));
+		assertEquals("c", texts.getString(1));
+	}
+
+	@Test
+	@Order(202)
+	@DisplayName("An aggregate over nothing answers zero for count and sum, and null for min and max")
+	void testAggregatesOverEmptyResult() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.aggempty (pk int PRIMARY KEY, n int, v text)");
+
+		assertEquals(0L, only("SELECT count(*) FROM foo.aggempty").getLong(0));
+		assertEquals(0L, only("SELECT count(n) FROM foo.aggempty").getLong(0));
+
+		final var row = only("SELECT min(n), max(n), sum(n), avg(n), min(v) FROM foo.aggempty");
+		assertTrue(row.isNull(0), "min over an empty result should be null");
+		assertTrue(row.isNull(1), "max over an empty result should be null");
+		assertEquals(0, row.getInt(2), "sum over an empty result should be zero");
+		assertEquals(0, row.getInt(3), "avg over an empty result should be zero");
+		assertTrue(row.isNull(4), "min over an empty result should be null");
+	}
+
+	@Test
+	@Order(203)
+	@DisplayName("sum needs a numeric column, and an unknown function is named")
+	void testAggregateTypeErrors() {
+		createAggregateTable();
+
+		assertInvalid("SELECT sum(v) FROM foo.agg", "sum");
+		assertInvalid("SELECT avg(v) FROM foo.agg", "avg");
+		assertInvalid("SELECT count(nosuch) FROM foo.agg", "nosuch");
+		assertInvalid("SELECT nosuchfunction(n) FROM foo.agg", "nosuchfunction");
+	}
+
+	@Test
+	@Order(204)
+	@DisplayName("An alias names the result column, and a plain column beside an aggregate is kept")
+	void testAliases() {
+		createAggregateTable();
+
+		assertEquals(List.of("c", "value"),
+			columnNames("SELECT ck AS c, v AS value FROM foo.agg WHERE pk = 1"));
+		assertEquals(List.of("total"), columnNames("SELECT count(*) AS total FROM foo.agg"));
+		assertEquals(3L, only("SELECT count(*) AS total FROM foo.agg").getLong("total"));
+
+		// A cluster answers a plain column beside an aggregate with the first matched row's value.
+		final var mixed = only("SELECT count(*), pk FROM foo.agg WHERE pk = 1");
+		assertEquals(2L, mixed.getLong(0));
+		assertEquals(1, mixed.getInt(1));
+	}
+
+	@Test
+	@Order(205)
+	@DisplayName("token(pk) answers the Murmur3 token a row is stored at")
+	void testToken() {
+		createAggregateTable();
+
+		assertEquals(List.of("system.token(pk)"), columnNames("SELECT token(pk) FROM foo.agg"));
+		assertEquals(-4069959284402364209L,
+			only("SELECT token(pk) FROM foo.agg WHERE pk = 1").getLong(0));
+		// token() is defined over the partition key's types rather than its columns, so a call whose
+		// argument types do not line up is what gets refused.
+		assertInvalid("SELECT token(v) FROM foo.agg", "token");
+		assertInvalid("SELECT token(pk, ck) FROM foo.agg", "token");
+	}
+
+	@Test
+	@Order(206)
+	@DisplayName("cast converts between the numeric types and to text")
+	void testCast() {
+		createAggregateTable();
+
+		final var row = only("SELECT cast(n AS text), cast(n AS double) FROM foo.agg WHERE pk = 2");
+		assertEquals("5", row.getString(0));
+		assertEquals(5.0, row.getDouble(1));
+		assertEquals(List.of("cast(n as text)"), columnNames("SELECT cast(n AS text) FROM foo.agg"));
+	}
+
+	@Test
+	@Order(207)
+	@DisplayName("SELECT JSON returns one [json] text column holding every selected column")
+	void testSelectJson() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.js (pk int PRIMARY KEY, a text, b int)");
+		session.execute("INSERT INTO foo.js (pk, a, b) VALUES (1, 'x', 2)");
+		session.execute("INSERT INTO foo.js (pk) VALUES (9)");
+
+		assertEquals(List.of("[json]"), columnNames("SELECT JSON * FROM foo.js"));
+		assertEquals("{\"pk\": 1, \"a\": \"x\", \"b\": 2}",
+			only("SELECT JSON * FROM foo.js WHERE pk = 1").getString(0));
+		assertEquals("{\"pk\": 9, \"a\": null, \"b\": null}",
+			only("SELECT JSON * FROM foo.js WHERE pk = 9").getString(0));
+		assertEquals("{\"b\": 2, \"a\": \"x\"}",
+			only("SELECT JSON b, a FROM foo.js WHERE pk = 1").getString(0));
+		assertEquals("{\"count\": 2}", only("SELECT JSON count(*) FROM foo.js").getString(0));
+		assertEquals("{\"total\": 2}",
+			only("SELECT JSON count(*) AS total FROM foo.js").getString(0));
+	}
+
+	@Test
+	@Order(208)
+	@DisplayName("INSERT JSON writes the columns the document names and nulls the rest")
+	void testInsertJson() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.insjson "
+			+ "(pk int PRIMARY KEY, a text, b int, l list<int>, m map<text, int>)");
+		session.execute("INSERT INTO foo.insjson (pk, a, b) VALUES (1, 'x', 2)");
+
+		// DEFAULT NULL is the default: a column the document leaves out is cleared.
+		session.execute("INSERT INTO foo.insjson JSON '{\"pk\": 1, \"a\": \"y\"}'");
+		final var cleared = only("SELECT a, b FROM foo.insjson WHERE pk = 1");
+		assertEquals("y", cleared.getString(0));
+		assertTrue(cleared.isNull(1));
+
+		// DEFAULT UNSET leaves it alone instead.
+		session.execute("INSERT INTO foo.insjson JSON '{\"pk\": 1, \"b\": 9}' DEFAULT UNSET");
+		final var kept = only("SELECT a, b FROM foo.insjson WHERE pk = 1");
+		assertEquals("y", kept.getString(0));
+		assertEquals(9, kept.getInt(1));
+
+		session.execute(
+			"INSERT INTO foo.insjson JSON '{\"pk\": 2, \"l\": [1, 2], \"m\": {\"k\": 7}}'");
+		final var collections = only("SELECT l, m FROM foo.insjson WHERE pk = 2");
+		assertEquals(List.of(1, 2), collections.getList(0, Integer.class));
+		assertEquals(Map.of("k", 7), collections.getMap(1, String.class, Integer.class));
+
+		assertInvalid("INSERT INTO foo.insjson JSON '{\"pk\": 3, \"nosuch\": 1}'", "nosuch");
+		assertInvalid("INSERT INTO foo.insjson JSON '{\"pk\": 3, \"b\": \"nope\"}'", "b");
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute("INSERT INTO foo.insjson JSON 'not json'"));
+	}
+
+	@Test
+	@Order(209)
+	@DisplayName("A JSON round trip preserves every column of a row")
+	void testJsonRoundTrip() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.jsround (pk int PRIMARY KEY, t timestamp, "
+			+ "u uuid, b blob, d decimal, f double, s set<text>, bo boolean, i inet, da date)");
+		session.execute("INSERT INTO foo.jsround (pk, t, u, b, d, f, s, bo, i, da) VALUES "
+			+ "(1, 1700000000000, 123e4567-e89b-12d3-a456-426614174000, 0x00ff, 1.25, 2.5, "
+			+ "{'a', 'b'}, true, '127.0.0.1', '2024-01-15')");
+
+		final var json = only("SELECT JSON * FROM foo.jsround WHERE pk = 1").getString(0);
+		session.execute("INSERT INTO foo.jsround JSON '" + json.replace("\"pk\": 1", "\"pk\": 2")
+			+ "'");
+
+		final var copy = only("SELECT JSON * FROM foo.jsround WHERE pk = 2").getString(0);
+		assertEquals(json.replace("\"pk\": 1", "\"pk\": 2"), copy);
+	}
+
+	@Test
+	@Order(210)
+	@DisplayName("writetime and ttl report a cell's metadata, and null for a cell holding nothing")
+	void testWritetimeAndTtl() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.wt (pk int PRIMARY KEY, v text, w text)");
+		final var before = Instant.now().toEpochMilli() * 1000;
+		session.execute("INSERT INTO foo.wt (pk, v) VALUES (1, 'a') USING TTL 3600");
+
+		final var row = only("SELECT writetime(v), ttl(v), writetime(w), ttl(w) FROM foo.wt");
+		final var writetime = row.getLong(0);
+		assertTrue(writetime >= before, "writetime %d should be at or after %d".formatted(writetime,
+			before));
+		final var ttl = row.getInt(1);
+		assertTrue(ttl > 3500 && ttl <= 3600, "ttl should be counting down from 3600 but was " + ttl);
+		assertTrue(row.isNull(2), "writetime of a column holding nothing should be null");
+		assertTrue(row.isNull(3), "ttl of a column holding nothing should be null");
+
+		assertEquals(List.of("writetime(v)", "ttl(v)"),
+			columnNames("SELECT writetime(v), ttl(v) FROM foo.wt"));
+	}
+
+	@Test
+	@Order(211)
+	@DisplayName("writetime and ttl are refused on a primary key part, which is not a cell")
+	void testWritetimeOnPrimaryKey() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.wtpk (pk int PRIMARY KEY, v text)");
+
+		assertInvalid("SELECT writetime(pk) FROM foo.wtpk", "pk");
+		assertInvalid("SELECT ttl(pk) FROM foo.wtpk", "pk");
+	}
+
+	@Test
+	@Order(212)
+	@DisplayName("A write stamped older than the value already stored is discarded")
+	void testUsingTimestampResolvesConflicts() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ts (pk int PRIMARY KEY, v text)");
+		session.execute("INSERT INTO foo.ts (pk, v) VALUES (1, 'new') USING TIMESTAMP 2000");
+		assertEquals(2000L, only("SELECT writetime(v) FROM foo.ts WHERE pk = 1").getLong(0));
+
+		session.execute("INSERT INTO foo.ts (pk, v) VALUES (1, 'old') USING TIMESTAMP 1000");
+		assertEquals("new", only("SELECT v FROM foo.ts WHERE pk = 1").getString(0));
+
+		session.execute("UPDATE foo.ts USING TIMESTAMP 3000 SET v = 'newer' WHERE pk = 1");
+		assertEquals("newer", only("SELECT v FROM foo.ts WHERE pk = 1").getString(0));
+		assertEquals(3000L, only("SELECT writetime(v) FROM foo.ts WHERE pk = 1").getLong(0));
+
+		// A DELETE stamped older than the value it would remove leaves it alone.
+		session.execute("DELETE FROM foo.ts USING TIMESTAMP 2500 WHERE pk = 1");
+		assertEquals(1, session.execute("SELECT v FROM foo.ts WHERE pk = 1").all().size());
+		session.execute("DELETE FROM foo.ts USING TIMESTAMP 4000 WHERE pk = 1");
+		assertEquals(0, session.execute("SELECT v FROM foo.ts WHERE pk = 1").all().size());
+	}
+
+	@Test
+	@Order(213)
+	@DisplayName("A TTL of zero means no TTL, and a negative one is refused")
+	void testTtlBounds() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.ttlb (pk int PRIMARY KEY, v text)");
+		session.execute("INSERT INTO foo.ttlb (pk, v) VALUES (1, 'a') USING TTL 0");
+
+		assertTrue(only("SELECT ttl(v) FROM foo.ttlb WHERE pk = 1").isNull(0));
+		assertInvalid("INSERT INTO foo.ttlb (pk, v) VALUES (2, 'b') USING TTL -1", "TTL");
+	}
+
+	@Test
+	@Order(214)
+	@DisplayName("A counter takes no custom TTL or timestamp")
+	void testCounterRejectsUsing() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.cnt (pk int PRIMARY KEY, c counter)");
+
+		assertInvalid("UPDATE foo.cnt USING TTL 60 SET c = c + 1 WHERE pk = 1", "TTL");
+		assertInvalid("UPDATE foo.cnt USING TIMESTAMP 1000 SET c = c + 1 WHERE pk = 1", "timestamp");
+	}
+
+	/**
+	 * A partition with two clustered rows, which is the shape a static column is about: one value
+	 * shared by the partition beside values that belong to each row.
+	 */
+	private void createStaticTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.st "
+			+ "(pk int, ck int, st text static, v text, PRIMARY KEY (pk, ck))");
+	}
+
+	@Test
+	@Order(215)
+	@DisplayName("A static column is shared by every row of its partition")
+	void testStaticColumnsAreShared() {
+		createStaticTable();
+		session.execute("INSERT INTO foo.st (pk, ck, v) VALUES (1, 1, 'a')");
+		session.execute("INSERT INTO foo.st (pk, ck, v) VALUES (1, 2, 'b')");
+		session.execute("INSERT INTO foo.st (pk, ck, v, st) VALUES (1, 3, 'c', 'shared')");
+
+		assertEquals(List.of("shared", "shared", "shared"),
+			texts("SELECT st FROM foo.st WHERE pk = 1"));
+
+		// Another partition keeps its own value, which is what makes it a partition-level cell.
+		session.execute("INSERT INTO foo.st (pk, ck, v, st) VALUES (2, 1, 'd', 'other')");
+		assertEquals(List.of("other"), texts("SELECT st FROM foo.st WHERE pk = 2"));
+		assertEquals(List.of("shared", "shared", "shared"),
+			texts("SELECT st FROM foo.st WHERE pk = 1"));
+
+		session.execute("UPDATE foo.st SET st = 'changed' WHERE pk = 1");
+		assertEquals(List.of("changed", "changed", "changed"),
+			texts("SELECT st FROM foo.st WHERE pk = 1"));
+
+		session.execute("DELETE st FROM foo.st WHERE pk = 1");
+		assertEquals(3, session.execute("SELECT st FROM foo.st WHERE pk = 1")
+			.all()
+			.stream()
+			.filter(row -> row.isNull(0))
+			.count());
+	}
+
+	@Test
+	@Order(216)
+	@DisplayName("A static-only INSERT needs no clustering key and reads back with a null one")
+	void testStaticOnlyInsert() {
+		createStaticTable();
+		session.execute("INSERT INTO foo.st (pk, st) VALUES (7, 'only-static')");
+
+		final var row = only("SELECT pk, ck, st, v FROM foo.st WHERE pk = 7");
+		assertEquals(7, row.getInt("pk"));
+		assertTrue(row.isNull("ck"), "a static-only row has no clustering key");
+		assertEquals("only-static", row.getString("st"));
+		assertTrue(row.isNull("v"));
+
+		// Once the partition has a clustered row, that row is what it answers with.
+		session.execute("INSERT INTO foo.st (pk, ck, v) VALUES (7, 1, 'x')");
+		final var clustered = session.execute("SELECT ck, st, v FROM foo.st WHERE pk = 7").all();
+		assertEquals(1, clustered.size());
+		assertEquals(1, clustered.get(0).getInt("ck"));
+		assertEquals("only-static", clustered.get(0).getString("st"));
+	}
+
+	@Test
+	@Order(217)
+	@DisplayName("An UPDATE that writes only static columns cannot restrict a clustering column")
+	void testStaticUpdateRestrictions() {
+		createStaticTable();
+		session.execute("INSERT INTO foo.st (pk, ck, v) VALUES (5, 1, 'a')");
+
+		assertInvalid("UPDATE foo.st SET st = 'x' WHERE pk = 5 AND ck = 1", "static");
+		assertDoesNotThrow(() -> session.execute("UPDATE foo.st SET st = 'x' WHERE pk = 5"));
+		assertDoesNotThrow(
+			() -> session.execute("UPDATE foo.st SET st = 'y', v = 'b' WHERE pk = 5 AND ck = 1"));
+		assertEquals(List.of("y"), texts("SELECT st FROM foo.st WHERE pk = 5"));
+	}
+
+	@Test
+	@Order(218)
+	@DisplayName("Deleting a partition takes its static columns with it")
+	void testStaticColumnsGoWithThePartition() {
+		createStaticTable();
+		session.execute("INSERT INTO foo.st (pk, ck, v, st) VALUES (8, 1, 'a', 'gone')");
+
+		session.execute("DELETE FROM foo.st WHERE pk = 8");
+		assertEquals(0, session.execute("SELECT st FROM foo.st WHERE pk = 8").all().size());
+
+		session.execute("INSERT INTO foo.st (pk, ck, v) VALUES (8, 1, 'a')");
+		assertTrue(only("SELECT st FROM foo.st WHERE pk = 8").isNull(0),
+			"a re-created partition should not read the static value the deleted one held");
+	}
+
+	@Test
+	@Order(219)
+	@DisplayName("SELECT DISTINCT reads one row per partition, keys and static columns only")
+	void testDistinctWithStatics() {
+		createStaticTable();
+		session.execute("INSERT INTO foo.st (pk, ck, v, st) VALUES (11, 1, 'a', 's11')");
+		session.execute("INSERT INTO foo.st (pk, ck, v, st) VALUES (11, 2, 'b', 's11')");
+
+		assertEquals(List.of("s11"), texts("SELECT DISTINCT st FROM foo.st WHERE pk = 11"));
+		assertInvalid("SELECT DISTINCT v FROM foo.st", "v");
+	}
+
+	@Test
+	@Order(220)
+	@DisplayName("The paging idioms terminate and return every row")
+	void testPagingIdiomsTerminate() throws Exception {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.pages (pk int, ck int, PRIMARY KEY (pk, ck))");
+		for (int i = 1; i <= 5; i++) {
+			session.execute("INSERT INTO foo.pages (pk, ck) VALUES (1, %d)".formatted(i));
+		}
+
+		final var statement = SimpleStatement.newInstance("SELECT ck FROM foo.pages WHERE pk = 1")
+			.setPageSize(2);
+
+		assertEquals(5, session.execute(statement).all().size());
+
+		var counted = 0;
+		for (final var ignored : session.execute(statement)) {
+			counted++;
+		}
+		assertEquals(5, counted);
+
+		final List<Integer> fetched = new ArrayList<>();
+		var page = session.executeAsync(statement).toCompletableFuture().get();
+		while (true) {
+			page.currentPage().forEach(row -> fetched.add(row.getInt(0)));
+			if (!page.hasMorePages()) {
+				break;
+			}
+			page = page.fetchNextPage().toCompletableFuture().get();
+		}
+		assertEquals(List.of(1, 2, 3, 4, 5), fetched);
 	}
 
 	@AfterAll
