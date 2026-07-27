@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
@@ -64,7 +65,7 @@ public class VolatileTable implements SeaStarTable {
 		this.clusteringColumns = new LinkedHashMap<>();
 		this.indexes = new LinkedHashMap<>();
 		this.rows = new ArrayList<>();
-		this.staticsByPartition = new LinkedHashMap<>();
+		this.staticsByPartition = new ConcurrentHashMap<>();
 		this.attachmentPoint = context;
 	}
 
@@ -72,21 +73,23 @@ public class VolatileTable implements SeaStarTable {
 	 * The static cells shared by the partition the given row values belong to, created empty the
 	 * first time that partition is written, or null when the table declares no static column and so
 	 * has nothing to share.
+	 *
+	 * <p>Takes no lock of its own. A row resolves its partition while reading, under the table's read
+	 * lock, and a read lock cannot be upgraded; the map is concurrent instead, and every caller
+	 * already holds at least a read lock over the column list this reads.
 	 */
 	@Nullable
 	Cells statics(final List<Object> values) {
-		return writeLockUnchecked(() -> {
-			if (columns.stream().noneMatch(SeaStarColumn::isStatic)) {
-				return null;
-			}
-			final List<Object> key = partitionKey.stream()
-				.map(this::indexOf)
-				.map(index -> index < 0 ? null : values.get(index))
-				.collect(Collectors.toCollection(ArrayList::new));
+		if (columns.stream().noneMatch(SeaStarColumn::isStatic)) {
+			return null;
+		}
+		final List<Object> key = partitionKey.stream()
+			.map(this::indexOf)
+			.map(index -> index < 0 ? null : values.get(index))
+			.collect(Collectors.toCollection(ArrayList::new));
 
-			return staticsByPartition.computeIfAbsent(Collections.unmodifiableList(key),
-				ignored -> new Cells(Collections.nCopies(columns.size(), null), 0L));
-		});
+		return staticsByPartition.computeIfAbsent(Collections.unmodifiableList(key),
+			ignored -> new Cells(Collections.nCopies(columns.size(), null), 0L));
 	}
 
 	/**
