@@ -144,7 +144,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	/**
-	 * SeaStar cannot create a materialized view - {@code CREATE MATERIALIZED VIEW} has no handler -
+	 * SeaStar does not support materialized views - {@code CREATE MATERIALIZED VIEW} is rejected -
 	 * so a keyspace never holds one. An empty map is what a live cluster returns for a keyspace
 	 * without views, and it keeps metadata walkers such as {@link #describe(boolean)} working.
 	 */
@@ -163,7 +163,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	/**
-	 * SeaStar cannot create a user-defined function - {@code CREATE FUNCTION} has no handler - so a
+	 * SeaStar does not support user-defined functions - {@code CREATE FUNCTION} is rejected - so a
 	 * keyspace never holds one, and an empty map is the same answer a live cluster gives.
 	 */
 	@Override
@@ -173,7 +173,7 @@ public class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	/**
-	 * SeaStar cannot create a user-defined aggregate - {@code CREATE AGGREGATE} has no handler - so a
+	 * SeaStar does not support user-defined aggregates - {@code CREATE AGGREGATE} is rejected - so a
 	 * keyspace never holds one, and an empty map is the same answer a live cluster gives.
 	 */
 	@Override
