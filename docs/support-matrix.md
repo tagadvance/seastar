@@ -13,11 +13,12 @@ cases that suite covers.
 
 | Statement | Supported | Notes |
 | --- | --- | --- |
-| `SELECT` | yes | Rows come back in partition-token and clustering order. `ORDER BY`, `LIMIT`, `DISTINCT` and `ALLOW FILTERING` are implemented; the range, `CONTAINS`, `LIKE` and `IS NOT NULL` operators are parsed and rejected. Every query is a full scan - there is no partition index yet. |
-| `INSERT` | yes | Including `IF NOT EXISTS`. Bulk load is O(n^2) in the number of rows. |
-| `UPDATE` | yes | Including `IF` conditions. |
-| `DELETE` | yes | Including `IF EXISTS`. |
-| `BATCH` | yes | Children are applied in order. **Not atomic and not isolated**: a child that fails partway through leaves the earlier ones applied, where a cluster rejects the whole batch first. |
+| `SELECT` | yes | Rows come back in partition-token and clustering order. `ORDER BY`, `LIMIT`, `DISTINCT` and `ALLOW FILTERING` are implemented; the range, `CONTAINS`, `LIKE` and `IS NOT NULL` operators are parsed and rejected. Every query is a full scan - there is no partition index yet. `GROUP BY` and `PER PARTITION LIMIT` are rejected. |
+| `SELECT` clause | yes | Column aliases, `count(*)`, `count`, `min`, `max`, `sum`, `avg`, `token`, `writetime`, `ttl`, `cast` and `SELECT JSON`. A cast converts between the numeric types and to text; any other pair is rejected. Element selection (`m['k']`), field selection, slices and arithmetic in the select clause are rejected by name. |
+| `INSERT` | yes | Including `IF NOT EXISTS`, `INSERT ... JSON` with `DEFAULT NULL`/`DEFAULT UNSET`, and `USING TTL`/`USING TIMESTAMP`. Bulk load is O(n^2) in the number of rows. |
+| `UPDATE` | yes | Including `IF` conditions and `USING TTL`/`USING TIMESTAMP`. |
+| `DELETE` | yes | Including `IF EXISTS` and `USING TIMESTAMP`. |
+| `BATCH` | yes | Children are applied in order. **Not atomic and not isolated**: a child that fails partway through leaves the earlier ones applied, where a cluster rejects the whole batch first. A batch-level `USING` is rejected; write it on each child. |
 | `TRUNCATE` | yes | |
 | `USE` | yes | A keyspace that does not exist fails with `InvalidQueryException`, as on a cluster. |
 
@@ -39,7 +40,7 @@ cases that suite covers.
 | `CREATE TYPE` | yes | `IF NOT EXISTS`. |
 | `ALTER TYPE` | yes | `ADD` and `RENAME`; altering a field's type is rejected, as on Cassandra 5. Prepared statements naming the type are re-resolved. |
 | `DROP TYPE` | yes | `IF EXISTS`. Refuses a type another type or a table column still names, counting nested references (`list<frozen<t>>` holds `t`). |
-| `CREATE INDEX` | yes | `IF NOT EXISTS`, single column, named or derived `<table>_<column>_idx`. An indexed column can be queried without `ALLOW FILTERING`; the index is metadata, not an access path - the query is still a scan. |
+| `CREATE INDEX` | yes | `IF NOT EXISTS`, single column, named or derived `<table>_<column>_idx`. An indexed column can be queried without `ALLOW FILTERING`; the index is metadata, not an access path - the query is still a scan. A custom index class, `WITH OPTIONS` and a collection target (`KEYS(m)`, `ENTRIES(m)`, `FULL(m)`) are rejected. |
 | `DROP INDEX` | yes | `IF EXISTS`. A keyspace that does not exist reads as an index that does not exist, as on a cluster. |
 
 ## Not implemented
@@ -62,12 +63,54 @@ in cassandra.yaml*, both `InvalidQueryException`. SeaStar's reason differs, so t
 | `CREATE`/`ALTER`/`DROP ROLE`, `GRANT`, `REVOKE`, `LIST ROLES`, `LIST PERMISSIONS`, identity statements | SeaStar has no authentication or authorization model, so there is nothing for a permission to restrict. Note that a default Cassandra node - which also has no auth configured - answers these with `UnauthorizedException` rather than `InvalidQueryException`. |
 | `DESCRIBE ...` | Not a scope decision but a parse-tree one: `DescribeStatement` tells `DESCRIBE KEYSPACES` from `DESCRIBE TABLES` only by which anonymous inner class it is, and `DESCRIBE TABLE` only by the identity of an opaque lambda field. There is no honest way to read the variant back out, and keying off `$1` versus `$2` would break silently on any cassandra-all upgrade. `TableMetadata#describe()` works, so the same text is reachable through the metadata API. |
 
+## Cells: write time, TTL and static columns
+
+Every cell carries the microsecond timestamp it was written at and, where a statement gave one, the
+second it stops being readable. Both read back through `writetime()` and `ttl()`.
+
+- **Expiry is lazy and clock-driven.** Nothing is reaped and no timer runs; a TTL is evaluated on
+  read against the session's clock. `SeaStarCqlSessionBuilder#withClock(java.time.Clock)` supplies
+  it, and `SeaStarClock` is a clock a test moves with `advance(Duration)` - so a test asserting on
+  expiry does not sleep. The default is `Clock.systemUTC()`, which behaves like a cluster.
+- **`INSERT ... USING TTL` expires the row, not just its columns.** The row marker takes the TTL, so
+  the row disappears rather than leaving a primary key with nothing under it, exactly as on a
+  cluster. `UPDATE ... USING TTL` writes no marker, so the row survives its columns.
+- **Two writes to one cell are resolved by timestamp.** A write stamped older than the value already
+  stored is discarded, and so is a `DELETE ... USING TIMESTAMP` older than what it would remove.
+- **A static column is one cell per partition.** Writing it through one row is visible from all of
+  them, a static-only `INSERT` may leave the clustering key out and reads back with a null one, and
+  a partition-wide `DELETE` takes the static cells with it. An `UPDATE` that writes only static
+  columns may not restrict a clustering column, as on a cluster.
+
+## Paging
+
+**SeaStar does not page, deliberately.** A cluster pages because a result may not fit in memory and
+because the rows are on another machine; SeaStar's rows are already in this process, so a page
+boundary would be an invention with nothing behind it.
+
+`setPageSize` is accepted and has no effect, `AsyncResultSet#hasMorePages()` is always false, and
+`fetchNextPage()` always throws `IllegalStateException` - which is what the driver's contract says an
+implementation does when there is no next page. Every client idiom still terminates and returns every
+row: `while (rs.hasMorePages())` runs zero times, `rs.all()`, `rs.iterator()` and `rs.currentPage()`
+return the lot. What is not reproduced is code that asserts on the page boundary itself - a page
+count, a page size being respected, or `fetchNextPage()` returning something.
+`AbstractCqlSessionTest` pins the idioms on both backends.
+
 ## Known gaps within supported statements
 
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ
 from a cluster's.
 
 - **Table options are not modelled.** `TableMetadata#getOptions()` is always empty.
+- **A tombstone is not stored.** A delete resolves against what is there at the time; it leaves
+  nothing behind, so a write stamped older than a delete that already happened is applied rather than
+  suppressed.
+- **Two writes at the same timestamp resolve to the later statement.** A cluster compares the
+  serialized values and keeps the greater.
+- **Deleting a partition's last clustered row also takes its static columns.** A cluster leaves the
+  static row behind, readable with a null clustering key.
+- **`UPDATE` cannot create a partition from static columns alone.** `UPDATE t SET s = 'x' WHERE
+  pk = 1` on a partition with no rows writes nothing, where a cluster creates a static row.
 - **Batches are not atomic or isolated.** See `BATCH` above.
 - **Secondary indexes are metadata only.** They make a query legal without `ALLOW FILTERING`; they do
   not make it faster.
