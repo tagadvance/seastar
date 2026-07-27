@@ -112,7 +112,7 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 				create(table, target, values, assignments, writes);
 			} else {
 				apply(target, existing, assignments, writes);
-				existing.markLive(writes.expiresAt());
+				existing.markLive(writes.timestamp(), writes.expiresAt());
 			}
 
 			return newAsyncResultSet(executionInfo);
@@ -130,7 +130,7 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 		final List<Object> values, final List<Assignment> assignments, final Writes writes) {
 		final var row = table.addRow(values, writes.timestamp());
 		apply(target, row, assignments, writes);
-		row.markLive(writes.expiresAt());
+		row.markLive(writes.timestamp(), writes.expiresAt());
 		removeStaticRow(table, target, row);
 	}
 
