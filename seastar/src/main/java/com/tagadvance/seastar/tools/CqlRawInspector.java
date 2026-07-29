@@ -16,7 +16,7 @@ import org.apache.cassandra.cql3.QueryProcessor;
  * package-private fields. The class name can be fed to {@code javap -p}; the field dump shows the
  * concrete field names and values a {@code CqlHandler} would read via {@code Reflections}.
  *
- * <p>Usage: {@code ./gradlew :lib:inspectRaw -Pquery="CREATE KEYSPACE foo ..."}
+ * <p>Usage: {@code ./gradlew :seastar:inspectRaw -Pquery="CREATE KEYSPACE foo ..."}
  */
 public final class CqlRawInspector {
 

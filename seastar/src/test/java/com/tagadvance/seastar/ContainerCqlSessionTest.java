@@ -13,7 +13,7 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * Runs the shared fidelity suite against a real Cassandra node. Excluded from the default
- * {@code test} task; run it with {@code ./gradlew :lib:containerTest}. Skipped rather than failed
+ * {@code test} task; run it with {@code ./gradlew :seastar:containerTest}. Skipped rather than failed
  * when no Docker daemon is reachable.
  */
 @Tag("container")
