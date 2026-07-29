@@ -14,6 +14,9 @@ import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
 import com.datastax.oss.driver.internal.core.cql.DefaultPrepareRequest;
 import com.datastax.oss.driver.internal.core.metadata.schema.events.TypeChangeEvent;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -82,6 +85,33 @@ class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
 			session.execute("ALTER TABLE ks.people ADD nickname text");
 
 			assertNull(processor.getCache().getIfPresent(request));
+		}
+	}
+
+	/**
+	 * Not shared with {@link ContainerCqlSessionTest} because the digest is a node's internal scheme
+	 * rather than anything the driver API promises - but both of these were captured from
+	 * {@code cassandra:5.0.8}, which answers with exactly these bytes.
+	 */
+	@Test
+	@DisplayName("A prepared statement's id is an MD5 of the keyspace and the query, as a node's is")
+	void testPreparedStatementIdIsAnMd5() throws Exception {
+		try (final var session = SeaStarCqlSession.builder().build()) {
+			session.execute("CREATE KEYSPACE ks WITH replication = "
+				+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
+			session.execute("CREATE TABLE ks.t (id int PRIMARY KEY, v text)");
+			final var digest = MessageDigest.getInstance("MD5");
+
+			final var qualified = "SELECT * FROM ks.t WHERE id = ?";
+			assertEquals(ByteBuffer.wrap(digest.digest(qualified.getBytes(StandardCharsets.UTF_8))),
+				session.prepare(qualified).getId());
+
+			session.execute("USE ks");
+			final var unqualified = "SELECT v FROM t WHERE id = ?";
+
+			assertEquals(
+				ByteBuffer.wrap(digest.digest(("ks" + unqualified).getBytes(StandardCharsets.UTF_8))),
+				session.prepare(unqualified).getId());
 		}
 	}
 
