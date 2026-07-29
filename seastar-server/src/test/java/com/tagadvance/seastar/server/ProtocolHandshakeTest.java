@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 class ProtocolHandshakeTest {
 
 	private static final int V4 = ProtocolConstants.Version.V4;
+	private static final int V5 = ProtocolConstants.Version.V5;
 
 	private SeaStarCqlSession session;
 	private SeaStarProtocolServer server;
@@ -49,7 +50,7 @@ class ProtocolHandshakeTest {
 	}
 
 	@Test
-	@DisplayName("OPTIONS is answered with the CQL version, no compression, and v4 only")
+	@DisplayName("OPTIONS is answered with the CQL version, no compression, and both versions")
 	void testOptions() throws IOException {
 		try (final var client = new WireClient(server.port())) {
 			final var response = client.send(V4, 1, Options.INSTANCE);
@@ -57,7 +58,7 @@ class ProtocolHandshakeTest {
 
 			assertEquals(List.of("3.4.7"), supported.options.get(Startup.CQL_VERSION_KEY));
 			assertEquals(List.of(), supported.options.get(Startup.COMPRESSION_KEY));
-			assertEquals(List.of("4/v4"), supported.options.get("PROTOCOL_VERSIONS"));
+			assertEquals(List.of("4/v4", "5/v5"), supported.options.get("PROTOCOL_VERSIONS"));
 		}
 	}
 
@@ -115,10 +116,21 @@ class ProtocolHandshakeTest {
 	}
 
 	@Test
-	@DisplayName("a v5 STARTUP is refused in the exact shape that makes a driver downgrade")
-	void testV5IsRejected() throws IOException {
+	@DisplayName("a v5 STARTUP is answered with READY, on a v5 header")
+	void testV5IsServed() throws IOException {
 		try (final var client = new WireClient(server.port())) {
-			final var response = client.send(ProtocolConstants.Version.V5, 1, new Startup());
+			final var response = client.send(V5, 1, new Startup());
+
+			assertInstanceOf(Ready.class, response.message);
+			assertEquals(V5, response.protocolVersion);
+		}
+	}
+
+	@Test
+	@DisplayName("a v3 OPTIONS is refused in the shape that makes a driver downgrade")
+	void testV3IsRejected() throws IOException {
+		try (final var client = new WireClient(server.port())) {
+			final var response = client.send(ProtocolConstants.Version.V3, 1, Options.INSTANCE);
 			final var error = assertInstanceOf(Error.class, response.message);
 
 			// All three conditions ProtocolInitHandler requires before ChannelFactory will retry a
@@ -126,20 +138,23 @@ class ProtocolHandshakeTest {
 			assertEquals(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, error.code);
 			assertTrue(error.message.contains("Invalid or unsupported protocol version"),
 				error.message);
-			assertEquals(V4, response.protocolVersion);
+			assertTrue(error.message.contains("4/v4, 5/v5"), error.message);
 		}
 	}
 
 	@Test
-	@DisplayName("a v3 OPTIONS is refused the same way, since only v4 is implemented")
-	void testV3IsRejected() throws IOException {
+	@DisplayName("the v6 beta is refused too, and named in the refusal")
+	void testV6IsRejected() throws IOException {
 		try (final var client = new WireClient(server.port())) {
-			final var response = client.send(ProtocolConstants.Version.V3, 1, Options.INSTANCE);
+			final var response = client.send(ProtocolConstants.Version.V6, 1, new Startup());
 			final var error = assertInstanceOf(Error.class, response.message);
 
 			assertEquals(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, error.code);
-			assertTrue(error.message.contains("Invalid or unsupported protocol version"),
+			assertTrue(error.message.contains("Invalid or unsupported protocol version (6)"),
 				error.message);
+			// The refusal carries the version the server speaks, not the one that was asked for,
+			// which is what cassandra:5.0.8 sends and the only choice that always decodes.
+			assertEquals(V5, response.protocolVersion);
 		}
 	}
 
@@ -159,7 +174,7 @@ class ProtocolHandshakeTest {
 			assertTrue(error.message.contains("Invalid or unsupported protocol version"),
 				error.message);
 			assertEquals(3, response.streamId);
-			assertEquals(V4, response.protocolVersion);
+			assertEquals(V5, response.protocolVersion);
 		}
 	}
 

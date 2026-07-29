@@ -135,11 +135,44 @@ Two standing caveats:
 The server module carries a second, different unstable-API exposure. Do not confuse it with the one above:
 
 - `com.datastax.oss.protocol.internal.*` — internal by package name, but server-side use is what native-protocol is *for*; `FrameCodec.defaultServer` says so. Low risk.
-- `com.datastax.oss.driver.internal.core.protocol.*` — `ByteBufPrimitiveCodec`, `FrameDecoder`, `FrameEncoder`. Genuinely internal and genuinely liable to move.
+- `com.datastax.oss.driver.internal.core.protocol.*` — `ByteBufPrimitiveCodec`, `FrameDecoder`, `FrameEncoder`, and for v5 `BytesToSegmentDecoder`, `SegmentToFrameDecoder`, `FrameToSegmentEncoder`, `SegmentToBytesEncoder`. Genuinely internal and genuinely liable to move.
 
 The important difference: this is **ordinary compilation against public classes**, so a driver bump that moves one of them fails the build at `compileJava`. The `cassandra-all` hazard is reflection, which compiles fine and only `FieldBindingsTest` catches. Do not reach for reflection here out of habit — if a driver type is not public, that is a signal, not an obstacle to route around.
 
 The mitigation is the same either way: `java-driver-core` and `native-protocol` are pinned to exact versions.
+
+### Protocol versions and framing (`:seastar-server`)
+
+The listener serves **v4 and v5**, and refuses everything else in the shape that makes a driver
+retry one version lower - `PROTOCOL_ERROR`, on the first request of the channel, with a message
+containing the literal `"Invalid or unsupported protocol version"`. That wording is load-bearing;
+`ProtocolInitHandler` looks for exactly that substring, and paraphrasing it makes an unconfigured
+driver fail outright instead of stepping down.
+
+- **The refusal happens at the header, not after decoding.** An unconfigured driver's first byte is
+  66 (`DSE_V2`), and `FrameCodec` has codecs for v3-v6 only, so such a frame does not decode at all
+  and there would be no stream to answer politely. `ProtocolVersionGate` is a `ByteToMessageDecoder`
+  ahead of the frame decoder that reads the raw version byte, settles the connection's version, and
+  removes itself. The refusal is written at the highest version the server speaks, which is what a
+  node does and the only choice that is always decodable.
+- **`Framing` owns both pipeline shapes and the switch between them.** Legacy is `bytes <-> frames`;
+  v5 is `bytes <-> segments <-> frames`, with a CRC24 over each segment header and a CRC32 over each
+  payload. All six handlers are the driver's own and every one is direction-agnostic - the direction
+  is in the `FrameCodec` (`defaultServer`), not the handler - so **no framing code is written here**.
+- **The switch is mid-stream, on the same connection, right after `READY`.** The
+  `OPTIONS`/`STARTUP` exchange is legacy-framed at every version. The driver switches its side on
+  *receiving* `READY`; the server switches on *having sent* it, so the ordering is: write the READY,
+  then rearrange. Both are submitted to the channel's event loop from the funnel, in that order,
+  which is what guarantees the READY is encoded before the pipeline changes under it. Do not hang
+  the switch off the write's future - a completed future notifies inline, on the funnel.
+- **A CRC mismatch ends the connection.** It is a `PROTOCOL_ERROR` naming the mismatch, then close:
+  the corruption is in the framing rather than in a message, so there is no stream id to fail and no
+  way to resynchronize. `SegmentFramingTest` corrupts a header and a payload deliberately, which is
+  the only way to produce one over loopback.
+- **Three things differ per version below the framing**, and they are the only ones: `PREPARE`
+  carries a result metadata id from v5, `duration` stops being a custom type at v5, and a v5 request
+  may name its own keyspace. The version comes off `SeaStarConnection`, which is why `RawTypes`,
+  `Results` and `SystemTables` all take one.
 
 ### Answering a statement over the wire (`:seastar-server`)
 

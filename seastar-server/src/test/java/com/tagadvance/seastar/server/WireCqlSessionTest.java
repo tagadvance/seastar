@@ -1,5 +1,6 @@
 package com.tagadvance.seastar.server;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.datastax.oss.driver.api.core.CqlSession;
@@ -10,6 +11,7 @@ import com.tagadvance.seastar.SeaStarCqlSession;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.AfterAllCallback;
@@ -55,32 +57,38 @@ class WireCqlSessionTest extends AbstractCqlSessionTest {
 		return connect(server);
 	}
 
-	@Override
-	protected boolean hasResultMetadataId() {
-		return false;
-	}
-
 	/**
-	 * The other half of {@link #hasResultMetadataId()}: the suite skips its assertion, so this pins
-	 * what happens instead, and it is written to fail rather than to pass silently once the listener
-	 * speaks v5. At that point the identifier starts arriving, this is the test that says so, and the
-	 * override above comes out.
+	 * The suite is run over a session that negotiated its own version and settled on v5, so
+	 * {@code hasResultMetadataId()} is left at its default and
+	 * {@code testResultMetadataIdIsReadable} runs rather than skipping.
 	 *
-	 * <p>Stands up its own server rather than borrowing the suite's, so that it does not depend on
-	 * where in the ordered suite it lands.
+	 * <p>This is the other half of it, and the reason the skip was never the whole story: v4 is
+	 * still served, a driver pinned to it still gets null, and that is the driver's own documented
+	 * contract rather than a gap. Stands up its own server rather than borrowing the suite's, so
+	 * that it does not depend on where in the ordered suite it lands.
 	 */
 	@Test
-	@DisplayName("no result metadata id arrives, because the listener speaks protocol v4")
+	@DisplayName("a session pinned to v4 gets no result metadata id, as the driver documents")
 	void testNoResultMetadataIdAtV4() {
 		try (final var isolated = SeaStarCqlSession.builder().build();
 			final var listener = SeaStarProtocolServer.builder().session(isolated).build().start();
-			final var connected = connect(listener)) {
+			final var connected = connect(listener, "V4")) {
+			assertEquals("V4", connected.getContext().getProtocolVersion().name());
 			connected.execute("CREATE KEYSPACE v4 WITH replication = "
 				+ "{'class':'SimpleStrategy','replication_factor':1}");
 			connected.execute("CREATE TABLE v4.t (id int PRIMARY KEY, name text)");
 
-			assertNull(connected.prepare("SELECT * FROM v4.t WHERE id = ?").getResultMetadataId(),
-				"a v5 listener would answer this, and the suite's assertion should be re-enabled");
+			assertNull(connected.prepare("SELECT * FROM v4.t WHERE id = ?").getResultMetadataId());
+		}
+	}
+
+	@Test
+	@DisplayName("an unpinned session against this listener negotiates protocol v5")
+	void testTheSuiteRunsOverV5() {
+		try (final var isolated = SeaStarCqlSession.builder().build();
+			final var listener = SeaStarProtocolServer.builder().session(isolated).build().start();
+			final var connected = connect(listener)) {
+			assertEquals("V5", connected.getContext().getProtocolVersion().name());
 		}
 	}
 
@@ -99,12 +107,26 @@ class WireCqlSessionTest extends AbstractCqlSessionTest {
 	 * @return a session pointed at it
 	 */
 	private static CqlSession connect(final SeaStarProtocolServer server) {
+		return connect(server, null);
+	}
+
+	/**
+	 * @param server  the listener to connect to
+	 * @param version the protocol version to pin, or {@code null} to let the driver negotiate
+	 * @return a session pointed at it
+	 */
+	private static CqlSession connect(final SeaStarProtocolServer server,
+		final @Nullable String version) {
+		final var config = DriverConfigLoader.programmaticBuilder()
+			.withDuration(DefaultDriverOption.METADATA_SCHEMA_WINDOW, Duration.ofMillis(1));
+		if (version != null) {
+			config.withString(DefaultDriverOption.PROTOCOL_VERSION, version);
+		}
+
 		return CqlSession.builder()
 			.addContactPoint(new InetSocketAddress(InetAddress.getLoopbackAddress(), server.port()))
 			.withLocalDatacenter("datacenter1")
-			.withConfigLoader(DriverConfigLoader.programmaticBuilder()
-				.withDuration(DefaultDriverOption.METADATA_SCHEMA_WINDOW, Duration.ofMillis(1))
-				.build())
+			.withConfigLoader(config.build())
 			.build();
 	}
 

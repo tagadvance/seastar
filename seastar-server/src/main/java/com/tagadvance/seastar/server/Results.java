@@ -43,11 +43,13 @@ final class Results {
 	}
 
 	/**
-	 * @param summary   what the statement was, as the core summarized it before it ran
-	 * @param resultSet what it answered with
+	 * @param summary         what the statement was, as the core summarized it before it ran
+	 * @param resultSet       what it answered with
+	 * @param protocolVersion the version of the connection it is going out on
 	 * @return the result message to send back
 	 */
-	static Message of(final CqlStatementSummary summary, final AsyncResultSet resultSet) {
+	static Message of(final CqlStatementSummary summary, final AsyncResultSet resultSet,
+		final int protocolVersion) {
 		if (summary instanceof CqlStatementSummary.KeyspaceSelected selected) {
 			return new SetKeyspace(selected.keyspace());
 		}
@@ -57,7 +59,7 @@ final class Results {
 			return change == null ? Void.INSTANCE : change;
 		}
 
-		return of(resultSet);
+		return of(resultSet, protocolVersion);
 	}
 
 	/**
@@ -80,35 +82,39 @@ final class Results {
 	 * with nothing - a prepared {@code EXECUTE}, or one of the system tables the server answers
 	 * itself.
 	 *
-	 * @param resultSet what the statement answered with
+	 * @param resultSet       what the statement answered with
+	 * @param protocolVersion the version of the connection it is going out on
 	 * @return {@code ROWS} if it has any columns, {@code VOID} otherwise
 	 */
-	static Message of(final AsyncResultSet resultSet) {
+	static Message of(final AsyncResultSet resultSet, final int protocolVersion) {
 		final var definitions = resultSet.getColumnDefinitions();
 
-		return definitions.size() == 0 ? Void.INSTANCE : rows(definitions, resultSet);
+		return definitions.size() == 0 ? Void.INSTANCE
+			: rows(definitions, resultSet, protocolVersion);
 	}
 
 	/**
 	 * Column definitions as the protocol writes them, for a result set or for the two halves of a
 	 * {@code PREPARED}.
 	 *
-	 * @param definitions the columns to describe
+	 * @param definitions     the columns to describe
+	 * @param protocolVersion the version of the connection they are going out on
 	 * @return one spec per column, in order
 	 */
-	static List<ColumnSpec> specs(final ColumnDefinitions definitions) {
+	static List<ColumnSpec> specs(final ColumnDefinitions definitions, final int protocolVersion) {
 		final var specs = new ArrayList<ColumnSpec>(definitions.size());
 		for (int i = 0; i < definitions.size(); i++) {
 			final var definition = definitions.get(i);
 			specs.add(new ColumnSpec(name(definition.getKeyspace()), name(definition.getTable()),
-				definition.getName().asInternal(), i, RawTypes.of(definition.getType())));
+				definition.getName().asInternal(), i,
+				RawTypes.of(definition.getType(), protocolVersion)));
 		}
 
 		return specs;
 	}
 
 	private static Message rows(final ColumnDefinitions definitions,
-		final AsyncResultSet resultSet) {
+		final AsyncResultSet resultSet, final int protocolVersion) {
 		final var data = new ArrayDeque<List<ByteBuffer>>(resultSet.remaining());
 		for (final var row : resultSet.currentPage()) {
 			final var values = new ArrayList<ByteBuffer>(definitions.size());
@@ -124,7 +130,8 @@ final class Results {
 
 		// No paging state: there is no next page, ever. RowsMetadata computes its own flags from the
 		// specs, which is what sets GLOBAL_TABLES_SPEC when every column shares a table.
-		return new DefaultRows(new RowsMetadata(specs(definitions), null, null, null), data);
+		return new DefaultRows(
+			new RowsMetadata(specs(definitions, protocolVersion), null, null, null), data);
 	}
 
 	/**

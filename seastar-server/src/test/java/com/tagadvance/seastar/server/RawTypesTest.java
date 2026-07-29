@@ -23,9 +23,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>The expectations come from a {@code cassandra:5.0.8} container: a table with one column of
  * every type was created and selected from over a raw v4 socket, and the {@code RawType} in the
- * result metadata is what these assert.
+ * result metadata is what these assert. Only {@code duration} differs at v5, where it stops being a
+ * custom type and takes a protocol id of its own.
  */
 class RawTypesTest {
+
+	private static final int V4 = ProtocolConstants.Version.V4;
+	private static final int V5 = ProtocolConstants.Version.V5;
 
 	private static final DataType ADDRESS = new UserDefinedTypeBuilder(
 		CqlIdentifier.fromInternal("ks"), CqlIdentifier.fromInternal("address"))
@@ -55,55 +59,74 @@ class RawTypesTest {
 	@MethodSource("everySupportedType")
 	@DisplayName("every supported type survives a round trip through the driver's own reader")
 	void testRoundTrip(final DataType type) {
-		final var read = DataTypeHelper.fromProtocolSpec(RawTypes.of(type), AttachmentPoint.NONE);
-
-		assertEquals(type, read);
+		// Both versions, because the whole point of describing a column is that the client rebuilds
+		// the same type from it, and only one of the two paths is exercised by any one connection.
+		assertEquals(type,
+			DataTypeHelper.fromProtocolSpec(RawTypes.of(type, V4), AttachmentPoint.NONE));
+		assertEquals(type,
+			DataTypeHelper.fromProtocolSpec(RawTypes.of(type, V5), AttachmentPoint.NONE));
 	}
 
 	@Test
 	@DisplayName("a primitive is written as its protocol code")
 	void testPrimitive() {
 		assertEquals(RawType.PRIMITIVES.get(ProtocolConstants.DataType.INT),
-			RawTypes.of(DataTypes.INT));
+			RawTypes.of(DataTypes.INT, V4));
 		assertEquals(RawType.PRIMITIVES.get(ProtocolConstants.DataType.VARCHAR),
-			RawTypes.of(DataTypes.TEXT));
+			RawTypes.of(DataTypes.TEXT, V4));
 	}
 
 	@Test
-	@DisplayName("duration travels as a custom type, because it is not a primitive until v5")
+	@DisplayName("duration travels as a custom type at v4, because it is not a primitive until v5")
 	void testDuration() {
 		final var custom = assertInstanceOf(RawType.RawCustom.class,
-			RawTypes.of(DataTypes.DURATION));
+			RawTypes.of(DataTypes.DURATION, V4));
 
 		assertEquals("org.apache.cassandra.db.marshal.DurationType", custom.className);
+	}
+
+	@Test
+	@DisplayName("duration takes its own protocol code from v5 on")
+	void testDurationAtV5() {
+		assertEquals(RawType.PRIMITIVES.get(ProtocolConstants.DataType.DURATION),
+			RawTypes.of(DataTypes.DURATION, V5));
 	}
 
 	@Test
 	@DisplayName("a collection carries its element types, recursively")
 	void testCollections() {
 		assertEquals(new RawType.RawList(RawType.PRIMITIVES.get(ProtocolConstants.DataType.INT)),
-			RawTypes.of(DataTypes.listOf(DataTypes.INT)));
+			RawTypes.of(DataTypes.listOf(DataTypes.INT), V4));
 		assertEquals(new RawType.RawSet(RawType.PRIMITIVES.get(ProtocolConstants.DataType.VARCHAR)),
-			RawTypes.of(DataTypes.setOf(DataTypes.TEXT)));
+			RawTypes.of(DataTypes.setOf(DataTypes.TEXT), V4));
 		assertEquals(new RawType.RawMap(RawType.PRIMITIVES.get(ProtocolConstants.DataType.VARCHAR),
 				new RawType.RawList(RawType.PRIMITIVES.get(ProtocolConstants.DataType.INT))),
-			RawTypes.of(DataTypes.mapOf(DataTypes.TEXT, DataTypes.listOf(DataTypes.INT))));
+			RawTypes.of(DataTypes.mapOf(DataTypes.TEXT, DataTypes.listOf(DataTypes.INT)), V4));
+	}
+
+	@Test
+	@DisplayName("the version reaches a nested element type, not only the outermost one")
+	void testVersionIsRecursive() {
+		assertEquals(new RawType.RawList(RawType.PRIMITIVES.get(ProtocolConstants.DataType.DURATION)),
+			RawTypes.of(DataTypes.listOf(DataTypes.DURATION), V5));
+		assertInstanceOf(RawType.RawCustom.class,
+			((RawType.RawList) RawTypes.of(DataTypes.listOf(DataTypes.DURATION), V4)).elementType);
 	}
 
 	@Test
 	@DisplayName("frozen is a schema concept and does not reach the wire")
 	void testFrozenIsNotEncoded() {
-		assertEquals(RawTypes.of(DataTypes.listOf(DataTypes.INT)),
-			RawTypes.of(DataTypes.frozenListOf(DataTypes.INT)));
-		assertEquals(RawTypes.of(DataTypes.setOf(DataTypes.TEXT)),
-			RawTypes.of(DataTypes.frozenSetOf(DataTypes.TEXT)));
+		assertEquals(RawTypes.of(DataTypes.listOf(DataTypes.INT), V4),
+			RawTypes.of(DataTypes.frozenListOf(DataTypes.INT), V4));
+		assertEquals(RawTypes.of(DataTypes.setOf(DataTypes.TEXT), V4),
+			RawTypes.of(DataTypes.frozenSetOf(DataTypes.TEXT), V4));
 	}
 
 	@Test
 	@DisplayName("a tuple carries its component types in order")
 	void testTuple() {
 		final var tuple = assertInstanceOf(RawType.RawTuple.class,
-			RawTypes.of(DataTypes.tupleOf(DataTypes.INT, DataTypes.TEXT)));
+			RawTypes.of(DataTypes.tupleOf(DataTypes.INT, DataTypes.TEXT), V4));
 
 		assertEquals(List.of(RawType.PRIMITIVES.get(ProtocolConstants.DataType.INT),
 			RawType.PRIMITIVES.get(ProtocolConstants.DataType.VARCHAR)), tuple.fieldTypes);
@@ -112,7 +135,7 @@ class RawTypesTest {
 	@Test
 	@DisplayName("a user-defined type carries its whole field list, in the declared order")
 	void testUserDefinedType() {
-		final var udt = assertInstanceOf(RawType.RawUdt.class, RawTypes.of(ADDRESS));
+		final var udt = assertInstanceOf(RawType.RawUdt.class, RawTypes.of(ADDRESS, V4));
 
 		assertEquals("ks", udt.keyspace);
 		assertEquals("address", udt.typeName);
@@ -126,10 +149,12 @@ class RawTypesTest {
 	@DisplayName("a vector is a custom type naming its element marshaller and its dimension")
 	void testVector() {
 		final var custom = assertInstanceOf(RawType.RawCustom.class,
-			RawTypes.of(DataTypes.vectorOf(DataTypes.FLOAT, 3)));
+			RawTypes.of(DataTypes.vectorOf(DataTypes.FLOAT, 3), V4));
 
 		assertEquals("org.apache.cassandra.db.marshal.VectorType("
 			+ "org.apache.cassandra.db.marshal.FloatType, 3)", custom.className);
+		// Still a class name at v5: native-protocol 1.5.2 has no RawVector to write instead.
+		assertEquals(custom, RawTypes.of(DataTypes.vectorOf(DataTypes.FLOAT, 3), V5));
 	}
 
 	@Test
@@ -137,7 +162,7 @@ class RawTypesTest {
 	void testVectorOfAnUnnameableElement() {
 		final var vector = DataTypes.vectorOf(DataTypes.tupleOf(DataTypes.INT), 2);
 		final var thrown = assertThrows(UnsupportedOperationException.class,
-			() -> RawTypes.of(vector));
+			() -> RawTypes.of(vector, V4));
 
 		assertTrue(thrown.getMessage().contains("tuple<int>"), thrown.getMessage());
 	}

@@ -62,14 +62,26 @@ class DriverHandshakeTest {
 	}
 
 	@Test
-	@DisplayName("a driver left on its v5 default downgrades to v4 and opens a session")
-	void testDowngradeFromTheV5Default() {
+	@DisplayName("a driver pinned to v5 completes the handshake and opens a session")
+	void testPinnedToV5() {
+		try (final var connected = connect(
+			builder -> builder.withString(DefaultDriverOption.PROTOCOL_VERSION, "V5"))) {
+			assertEquals("SeaStar", connected.getMetadata().getClusterName().orElseThrow(
+				() -> new AssertionError("the cluster name comes from system.local")));
+		}
+	}
+
+	@Test
+	@DisplayName("an unconfigured driver walks down its own chain and settles on v5")
+	void testNegotiationFromTheDefault() {
 		// An unconfigured driver's first byte on the wire is 66 (DSE_V2), not 5, and it walks down
-		// DSE_V2 -> DSE_V1 -> V5 -> V4. Had the refusal been the wrong shape it would have stopped at
-		// the first one with an UnsupportedProtocolVersionException, or - the outcome b_plan B4 is
-		// really guarding against - waited out its init timeout with nothing useful to say.
+		// DSE_V2 -> DSE_V1 -> V5. Had the refusal of the two DSE versions been the wrong shape it
+		// would have stopped at the first one with an UnsupportedProtocolVersionException, or - the
+		// outcome b_plan B4 is really guarding against - waited out its init timeout with nothing
+		// useful to say. It stops at v5 now rather than walking on to v4, which is the whole of
+		// f_plan F3 seen from the client.
 		try (final var connected = connect(UnaryOperator.identity())) {
-			assertEquals("V4", connected.getContext().getProtocolVersion().name());
+			assertEquals("V5", connected.getContext().getProtocolVersion().name());
 		}
 	}
 
