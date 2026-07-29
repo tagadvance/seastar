@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
@@ -59,6 +60,23 @@ import org.junit.jupiter.api.TestMethodOrder;
 public abstract class AbstractCqlSessionTest {
 
 	protected abstract CqlSession createInstance();
+
+	/**
+	 * Whether this backend answers
+	 * {@link com.datastax.oss.driver.api.core.cql.PreparedStatement#getResultMetadataId()} with an
+	 * identifier rather than with null.
+	 *
+	 * <p>Not a fidelity question but a protocol one, and the driver's own contract rather than
+	 * SeaStar's: the field arrived with native protocol v5, and the driver documents the method as
+	 * returning null at v4 or lower whatever it is talking to. A backend reached over a v4 socket
+	 * therefore has none to report, and would not have one from a real node either. The in-process
+	 * session is on no protocol at all and computes a digest.
+	 *
+	 * @return true unless this backend is reached over a protocol older than v5
+	 */
+	protected boolean hasResultMetadataId() {
+		return true;
+	}
 
 	private CqlSession session;
 
@@ -1788,6 +1806,9 @@ public abstract class AbstractCqlSessionTest {
 	@Order(97)
 	@DisplayName("getResultMetadataId returns a readable, stable, read-only identifier")
 	void testResultMetadataIdIsReadable() {
+		assumeTrue(hasResultMetadataId(),
+			"the result metadata id arrived with native protocol v5; this backend is reached over v4");
+
 		session.execute("CREATE TABLE IF NOT EXISTS foo.meta_id (id int PRIMARY KEY, name text)");
 		final var prepared = session.prepare("SELECT * FROM foo.meta_id WHERE id = ?");
 

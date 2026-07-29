@@ -171,3 +171,7 @@ from a cluster's.
 - **Over the wire, a prepared statement is never evicted.** A node has a bounded cache and answers
   an id it has forgotten with `UNPREPARED` so the client re-prepares. `seastar-server` remembers
   every id for the life of the session, so that path is never exercised against it.
+- **Over the wire, `PreparedStatement#getResultMetadataId()` is null.** The listener speaks native
+  protocol v4, and the identifier arrived with v5; the driver documents the method as returning null
+  at v4 or lower whatever it is talking to, so a real node reached at v4 answers the same way. In
+  process there is no protocol and SeaStar computes a digest, so the two disagree.
