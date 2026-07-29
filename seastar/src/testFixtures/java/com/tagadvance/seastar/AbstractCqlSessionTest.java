@@ -28,6 +28,9 @@ import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.api.core.type.VectorType;
 import com.datastax.oss.driver.api.core.type.codec.CodecNotFoundException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,6 +88,26 @@ public abstract class AbstractCqlSessionTest {
 		if (session == null) {
 			session = createInstance();
 		}
+	}
+
+	/**
+	 * Runs before the {@code USE} at order 2 because it has to: the digest omits the keyspace only
+	 * while none is selected, and no statement puts a session back in that state.
+	 *
+	 * @see #testPreparedStatementIdDigestsTheKeyspace()
+	 */
+	@Test
+	@Order(0)
+	@DisplayName("With no keyspace selected a prepared statement is identified by MD5 of the query")
+	void testPreparedStatementIdWithoutAKeyspace() {
+		session.execute("CREATE KEYSPACE IF NOT EXISTS idks WITH REPLICATION = "
+			+ "{ 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		session.execute("CREATE TABLE IF NOT EXISTS idks.t (id uuid PRIMARY KEY, v text)");
+		assertTrue(session.getKeyspace().isEmpty(), "no keyspace may be selected yet");
+
+		final var query = "SELECT * FROM idks.t WHERE id = ?";
+
+		assertEquals(md5(query), hex(session.prepare(query).getId()));
 	}
 
 	@Test
@@ -2164,6 +2187,27 @@ public abstract class AbstractCqlSessionTest {
 		assertEquals(CqlIdentifier.fromInternal("foo"), session.getKeyspace().orElseThrow());
 	}
 
+	/**
+	 * The half of the rule that is easy to get half right: the selected keyspace is digested ahead
+	 * of the query, so the same query prepared under two keyspaces has two ids. The query is
+	 * deliberately unqualified, so it can only resolve through the selected keyspace.
+	 *
+	 * @see #testPreparedStatementIdWithoutAKeyspace()
+	 */
+	@Test
+	@Order(148)
+	@DisplayName("A prepared statement's id digests the selected keyspace ahead of the query")
+	void testPreparedStatementIdDigestsTheKeyspace() {
+		session.execute("USE foo");
+		session.execute("CREATE TABLE IF NOT EXISTS ids (id uuid PRIMARY KEY, v text)");
+		final var keyspace = session.getKeyspace()
+			.orElseThrow(() -> new IllegalStateException("a keyspace is required to digest one"));
+
+		final var query = "SELECT v FROM ids WHERE id = ?";
+
+		assertEquals(md5(keyspace.asInternal() + query), hex(session.prepare(query).getId()));
+	}
+
 	private KeyspaceMetadata keyspace(final String name) {
 		return session.getMetadata().getKeyspace(name).orElseThrow();
 	}
@@ -2195,6 +2239,15 @@ public abstract class AbstractCqlSessionTest {
 		assertTrue(thrown.getMessage().toLowerCase().contains(expected.toLowerCase()),
 			"%s should name %s but said: %s".formatted(thrown.getClass().getSimpleName(), expected,
 				thrown.getMessage()));
+	}
+
+	private static String md5(final String text) {
+		try {
+			return hex(ByteBuffer.wrap(
+				MessageDigest.getInstance("MD5").digest(text.getBytes(StandardCharsets.UTF_8))));
+		} catch (final NoSuchAlgorithmException e) {
+			throw new IllegalStateException("MD5 is required of every JRE", e);
+		}
 	}
 
 	private static String hex(final ByteBuffer buffer) {
