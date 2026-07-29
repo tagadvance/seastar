@@ -145,6 +145,25 @@ class SystemSchemaTest {
 		assertNull(awkward.getObject("memtable"));
 	}
 
+	/**
+	 * Nothing in the driver reads the {@code counter} flag, but a node writes it and the projection
+	 * is a projection of what a node writes. Captured from {@code cassandra:5.0.8}, which answers
+	 * {@code {'compound', 'counter'}} for a table holding a counter column and {@code {'compound'}}
+	 * for every other.
+	 */
+	@Test
+	@DisplayName("A counter table carries the counter flag beside compound")
+	void testCounterTableFlags() {
+		session.execute("CREATE TABLE d4.cnt (id int PRIMARY KEY, c counter)");
+
+		final var rows = rows(select("tables"));
+		assertEquals(List.of("awkward", "cnt", "simple"),
+			rows.stream().map(row -> row.getString("table_name")).collect(toList()));
+		assertEquals(Set.of("compound"), rows.get(0).getSet("flags", String.class));
+		assertEquals(Set.of("compound", "counter"), rows.get(1).getSet("flags", String.class));
+		assertEquals(Set.of("compound"), rows.get(2).getSet("flags", String.class));
+	}
+
 	@Test
 	@DisplayName("system_schema.columns encodes kind, position, clustering order and CQL type")
 	void testColumns() {
