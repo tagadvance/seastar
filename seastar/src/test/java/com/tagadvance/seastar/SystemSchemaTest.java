@@ -11,6 +11,9 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.UserDefinedType;
+import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
+import com.datastax.oss.driver.internal.core.metadata.schema.parsing.DataTypeCqlNameParser;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -245,6 +248,41 @@ class SystemSchemaTest {
 				.filter(row -> !"id".equals(row.getString("column_name")))
 				.collect(java.util.stream.Collectors.toMap(row -> row.getString("column_name"),
 					row -> row.getString("type"))));
+	}
+
+	/**
+	 * The end of the round trip: every type string this projects is handed back to the parser the
+	 * driver actually uses on it, and has to come out as the type the model started with. That is
+	 * what a connecting driver does with these rows, and it is stricter than comparing strings -
+	 * frozenness and collection nesting have to survive too.
+	 */
+	@Test
+	@DisplayName("Every projected type string parses back into the model's own DataType")
+	void testTypeStringsRoundTripThroughTheDriversParser() {
+		final var parser = new DataTypeCqlNameParser();
+		final var keyspaceId = CqlIdentifier.fromInternal("d4");
+		final var keyspace = context.getSeaStarKeyspace("d4")
+			.orElseThrow(() -> new IllegalStateException("keyspace d4 is required by this test"));
+		final Map<CqlIdentifier, UserDefinedType> userTypes = Map.copyOf(
+			keyspace.getUserDefinedTypes());
+
+		rows(select("columns")).forEach(row -> {
+			final var table = keyspace.getSeaStarTable(row.getString("table_name"))
+				.orElseThrow(() -> new IllegalStateException("every projected table exists"));
+			final var expected = table.getColumns()
+				.get(CqlIdentifier.fromInternal(row.getString("column_name")))
+				.getType();
+
+			assertEquals(expected, parser.parse(keyspaceId, row.getString("type"), userTypes,
+				(InternalDriverContext) context), row.getString("type"));
+		});
+
+		final var fieldTypes = rows(select("types")).get(0).getList("field_types", String.class);
+		assertEquals(keyspace.getSeaStarUserDefinedType("address")
+			.orElseThrow(() -> new IllegalStateException("type address is required by this test"))
+			.getFieldTypes(), fieldTypes.stream()
+			.map(type -> parser.parse(keyspaceId, type, userTypes, (InternalDriverContext) context))
+			.collect(toList()));
 	}
 
 	@Test
