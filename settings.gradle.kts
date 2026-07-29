@@ -9,3 +9,4 @@ plugins {
 
 rootProject.name = "SeaStar"
 include("seastar")
+include("seastar-server")
