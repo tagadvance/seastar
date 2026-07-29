@@ -416,6 +416,76 @@ class WireStatementTest {
 	}
 
 	@Test
+	@DisplayName("preparing the same query twice hands back the same id")
+	void testPreparingTwice() throws IOException {
+		schema();
+		final var query = "SELECT * FROM ks.t WHERE id = ?";
+
+		assertArrayEquals(
+			assertInstanceOf(Prepared.class, send(new Prepare(query))).preparedQueryId,
+			assertInstanceOf(Prepared.class, send(new Prepare(query))).preparedQueryId);
+	}
+
+	@Test
+	@DisplayName("an id prepared on one connection executes on another, because it is the node's")
+	void testAPreparedIdIsPerServer() throws IOException {
+		schema();
+		final var prepared = assertInstanceOf(Prepared.class,
+			send(new Prepare("INSERT INTO ks.t (id, v) VALUES (?, ?)")));
+
+		try (final var other = new WireClient(server.port())) {
+			other.send(V4, 1, new Startup());
+			final var execute = new Execute(prepared.preparedQueryId,
+				options(List.of(bytes(1), text("elsewhere")), Map.of(), null));
+
+			// A driver prepares on one pooled connection and executes on whichever the pool hands it.
+			// An id that only worked where it was made would produce intermittent UNPREPARED rather
+			// than a clean failure.
+			assertInstanceOf(Void.class, other.send(V4, 2, execute).message);
+		}
+
+		assertEquals("elsewhere", text(row("SELECT v FROM ks.t").get(0)));
+	}
+
+	@Test
+	@DisplayName("an id stays good however many statements are prepared after it")
+	void testNothingIsEvicted() throws IOException {
+		schema();
+		final var first = assertInstanceOf(Prepared.class,
+			send(new Prepare("INSERT INTO ks.t (id, v) VALUES (?, ?)")));
+		for (int i = 0; i < 256; i++) {
+			send(new Prepare("SELECT * FROM ks.t WHERE id = " + i));
+		}
+
+		// The registry is a plain map on purpose. A cache that silently dropped an id the client
+		// still holds would answer UNPREPARED for something this server did issue.
+		assertInstanceOf(Void.class, send(new Execute(first.preparedQueryId,
+			options(List.of(bytes(1), text("still good")), Map.of(), null))));
+	}
+
+	@Test
+	@DisplayName("a prepared SELECT run after ALTER TABLE answers with the column that was added")
+	void testPreparedStatementAfterASchemaChange() throws IOException {
+		schema();
+		send("INSERT INTO ks.t (id, v) VALUES (1, 'a')");
+		final var prepared = assertInstanceOf(Prepared.class,
+			send(new Prepare("SELECT * FROM ks.t WHERE id = ?")));
+		assertEquals(List.of("id", "v"),
+			prepared.resultMetadata.columnSpecs.stream().map(spec -> spec.name).toList());
+
+		send("ALTER TABLE ks.t ADD w text");
+		final var rows = assertInstanceOf(Rows.class, send(new Execute(prepared.preparedQueryId,
+			options(List.of(bytes(1)), Map.of(), null))));
+
+		// e_plan E4: the registry holds a core prepared statement rather than a parse result of its
+		// own, and the core re-resolves the query every time it runs, so there is nothing here to
+		// subscribe to SchemaChanges. A v5 server would also have to change the resultMetadataId; v4
+		// has no such mechanism, and the driver takes what the response describes.
+		assertEquals(List.of("id", "v", "w"),
+			rows.getMetadata().columnSpecs.stream().map(spec -> spec.name).toList());
+	}
+
+	@Test
 	@DisplayName("EXECUTE on an id this server never issued is UNPREPARED, carrying the id back")
 	void testUnprepared() throws IOException {
 		final var id = new byte[]{1, 2, 3, 4};
@@ -455,6 +525,23 @@ class WireStatementTest {
 			QueryOptions.NO_DEFAULT_TIMESTAMP, null, QueryOptions.NO_NOW_IN_SECONDS);
 
 		assertInstanceOf(Unprepared.class, send(batch));
+	}
+
+	@Test
+	@DisplayName("a BATCH naming an unknown id applies nothing, not the statements before it")
+	void testBatchWithAnUnknownIdAppliesNothing() throws IOException {
+		schema();
+		final var batch = new Batch(ProtocolConstants.BatchType.LOGGED,
+			List.<Object>of("INSERT INTO ks.t (id, v) VALUES (1, 'first')", new byte[]{9, 9}),
+			List.of(List.of(), List.of()), ProtocolConstants.ConsistencyLevel.ONE,
+			ProtocolConstants.ConsistencyLevel.SERIAL, QueryOptions.NO_DEFAULT_TIMESTAMP, null,
+			QueryOptions.NO_NOW_IN_SECONDS);
+
+		assertInstanceOf(Unprepared.class, send(batch));
+
+		// The whole batch is assembled before any of it runs. Executing the prefix and then failing
+		// would leave the client re-preparing and retrying a batch whose first half already applied.
+		assertEquals(0, assertInstanceOf(Rows.class, send("SELECT * FROM ks.t")).getData().size());
 	}
 
 	private void schema() throws IOException {
@@ -506,5 +593,6 @@ class WireStatementTest {
 	private static String text(final ByteBuffer value) {
 		return StandardCharsets.UTF_8.decode(value.duplicate()).toString();
 	}
+
 
 }
