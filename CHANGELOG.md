@@ -11,3 +11,7 @@ Initial alpha release. Public API: `SeaStarCqlSession` (via `.builder()...build(
 UserDefinedType,UdtValue}` model interfaces, and `SystemSchema`. Everything else is internal - see
 [AGENTS.md](AGENTS.md) for the architecture and [docs/support-matrix.md](docs/support-matrix.md)
 for what CQL is and isn't supported.
+
+The `seastar-server` artifact ships one public type, `SeaStarProtocolServer`, which serves a
+session over Cassandra's native protocol for clients that cannot be pointed at an in-process one.
+It speaks protocol v4 and completes the handshake; statements over the wire are not answered yet.
