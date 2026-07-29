@@ -96,6 +96,16 @@ return the lot. What is not reproduced is code that asserts on the page boundary
 count, a page size being respected, or `fetchNextPage()` returning something.
 `AbstractCqlSessionTest` pins the idioms on both backends.
 
+Over the wire (`seastar-server`) this is protocol-legal rather than a divergence - a node is always
+free to return everything, and result metadata with no paging state is what says "last page", so a
+driver reads the answer as complete and stops asking. Two consequences:
+
+- **`page_size` in a request is accepted and ignored.** A client that sets it and expects three
+  round trips gets one.
+- **A paging state in a request is refused with `PROTOCOL_ERROR`**, not ignored. It can only have
+  come from this server and this server never issues one; ignoring it would answer page one forever,
+  which is an infinite loop in the client rather than a slow answer.
+
 ## Known gaps within supported statements
 
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ
@@ -122,3 +132,11 @@ from a cluster's.
 - **A prepared statement with no bind or result columns is not evicted by a schema change.** It has
   no column list to go stale, so nothing is lost by it - but a caller re-preparing the same string
   gets the cached instance.
+- **Over the wire, a DDL statement that changes nothing still reports a schema change.** A node
+  answers `CREATE TABLE IF NOT EXISTS` on a table that already exists with `VOID`, because it
+  compares the schema before and after. `seastar-server` sends `SCHEMA_CHANGE`, which costs a
+  connected driver one redundant metadata refresh; the alternative would risk leaving it holding
+  stale metadata.
+- **Over the wire, a prepared statement is never evicted.** A node has a bounded cache and answers
+  an id it has forgotten with `UNPREPARED` so the client re-prepares. `seastar-server` remembers
+  every id for the life of the session, so that path is never exercised against it.
