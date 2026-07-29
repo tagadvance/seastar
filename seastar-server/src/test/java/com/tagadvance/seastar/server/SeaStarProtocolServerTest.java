@@ -124,6 +124,20 @@ class SeaStarProtocolServerTest {
 	}
 
 	@Test
+	@DisplayName("a port already in use fails the start rather than the first connection")
+	void testBindFailure() throws IOException {
+		try (final var taken = new ServerSocket(0, 0, InetAddress.getLoopbackAddress())) {
+			final var server = SeaStarProtocolServer.builder()
+				.session(session)
+				.port(taken.getLocalPort())
+				.build();
+
+			assertThrows(IllegalStateException.class, server::start);
+			server.close();
+		}
+	}
+
+	@Test
 	@DisplayName("a bound port is released again by close")
 	void testPortIsReleased() throws IOException {
 		final int port;
