@@ -97,6 +97,27 @@ class DriverSessionTest {
 	}
 
 	@Test
+	@DisplayName("a prepared statement reflects a column added after it was prepared")
+	void testPreparedStatementAfterASchemaChange() {
+		// e_plan E4, answered end to end rather than at the socket: a bound statement asks for its
+		// metadata to be skipped, so if the server ever honoured that the driver would decode this row
+		// against the columns the PREPARE described and never see `extra` at all.
+		try (final var connected = connect(false)) {
+			connected.execute(KEYSPACE);
+			connected.execute(TABLE);
+			connected.execute("INSERT INTO harness.t (id, name) VALUES (1, 'one')");
+			final var prepared = connected.prepare("SELECT * FROM harness.t WHERE id = ?");
+
+			connected.execute("ALTER TABLE harness.t ADD extra text");
+			connected.execute("UPDATE harness.t SET extra = 'added' WHERE id = 1");
+			final var row = connected.execute(prepared.bind(1)).one();
+
+			assertNotNull(row);
+			assertEquals("added", row.getString("extra"));
+		}
+	}
+
+	@Test
 	@DisplayName("DDL returns promptly rather than waiting out the schema-agreement timeout")
 	void testDdlIsNotSlow() {
 		// d_plan D5's failure mode, and it is loud only if something asserts on it: with a null or
