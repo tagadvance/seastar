@@ -1,5 +1,6 @@
 plugins {
     id("seastar.java-conventions")
+    id("seastar.benchmark-conventions")
 }
 
 description = "A native-protocol listener that serves an in-memory SeaStar CqlSession over the " +
@@ -36,4 +37,39 @@ testing {
             }
         }
     }
+}
+
+// Benchmarks live in their own source set: never on the default build, never in the published jar.
+// The probe measures what the wire costs on top of an in-process session, so it needs a real driver
+// and a real socket and nothing else.
+val wireBench: SourceSet by sourceSets.creating
+
+configurations["wireBenchImplementation"].extendsFrom(configurations["implementation"])
+configurations["wireBenchRuntimeOnly"].extendsFrom(configurations["runtimeOnly"])
+
+// ColdJvmBenchmark, the fork-a-fresh-JVM-per-sample harness, plus the Metrics format a probe prints.
+// Shared from :seastar rather than reimplemented, so a startup number measured here is comparable
+// with the in-process one measured there.
+val benchHarnessSource = configurations.dependencyScope("benchHarnessSource")
+val benchHarness = configurations.resolvable("benchHarness") {
+    extendsFrom(benchHarnessSource.get())
+}
+
+dependencies {
+    add("benchHarnessSource", project(path = ":seastar", configuration = "benchHarness"))
+}
+
+wireBench.compileClasspath += sourceSets["main"].output + benchHarness.get()
+wireBench.runtimeClasspath += sourceSets["main"].output + benchHarness.get()
+
+// A fresh JVM per sample rather than JMH, because class loading - Netty's, the driver's, and
+// cassandra-all's parser - is most of what a startup number is made of, and JMH's warmup would
+// erase exactly the thing under test.
+tasks.register<JavaExec>("wireStartupBenchmark") {
+    description = "Cold and warm startup of a driver over seastar-server, one fresh JVM per sample."
+    group = "benchmark"
+    mainClass = "com.tagadvance.seastar.bench.ColdJvmBenchmark"
+    classpath = wireBench.runtimeClasspath
+    args("com.tagadvance.seastar.bench.WireStartupProbe", "20")
+    usesService(gradle.sharedServices.registrations["benchmarkExclusivity"].service)
 }

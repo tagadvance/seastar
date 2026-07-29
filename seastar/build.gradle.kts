@@ -99,6 +99,14 @@ jmh {
 // serialized against these ones and not only against each other.
 val benchmarkExclusivity = gradle.sharedServices.registrations["benchmarkExclusivity"].service
 
+// ColdJvmBenchmark and Metrics are a generic harness - fork a probe class N times, report the
+// distribution of whatever it printed - and :seastar-server's wire benchmark runs its own probe
+// under them. Shared as a consumable configuration; reaching into another project's source sets
+// from its build file is the thing this exists to avoid.
+configurations.consumable("benchHarness")
+artifacts.add("benchHarness",
+    tasks.named<JavaCompile>("compileJmhJava").flatMap { it.destinationDirectory })
+
 tasks.named<me.champeau.jmh.JMHTask>("jmh") {
     usesService(benchmarkExclusivity)
 }
