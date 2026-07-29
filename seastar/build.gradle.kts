@@ -1,13 +1,10 @@
 plugins {
-    `java-library`
-    `maven-publish`
-    signing
+    id("seastar.java-conventions")
     id("me.champeau.jmh") version "0.7.3"
 }
 
-repositories {
-    mavenCentral()
-}
+description = "An in-memory implementation of the DataStax Java driver's CqlSession that mirrors " +
+    "Cassandra's behavior, intended as a fast alternative to TestContainers for tests."
 
 val logbackConfiguration = layout.projectDirectory.file("logback-tools.xml").asFile.absolutePath
 
@@ -27,7 +24,6 @@ dependencies {
 testing {
     suites {
         val test by getting(JvmTestSuite::class) {
-            useJUnitJupiter("6.1.2")
             dependencies {
                 implementation("org.mockito:mockito-core:5.23.0")
                 implementation("org.mockito:mockito-junit-jupiter:5.23.0")
@@ -36,45 +32,6 @@ testing {
                 implementation("org.testcontainers:testcontainers-cassandra:2.0.5")
             }
         }
-    }
-}
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
-}
-
-// The published bytecode is always 17; this only changes the JVM the tests run on, so CI can prove
-// the setAccessible reflection into cassandra-all still works on a newer runtime.
-// ./gradlew test -PtestJavaVersion=21
-val testJavaVersion = (project.findProperty("testJavaVersion") as String?)?.toInt()
-if (testJavaVersion != null) {
-    tasks.withType<Test>().configureEach {
-        javaLauncher = javaToolchains.launcherFor {
-            languageVersion = JavaLanguageVersion.of(testJavaVersion)
-        }
-    }
-}
-
-tasks.withType<JavaCompile>().configureEach {
-    // Explicit here as well as in the toolchain so the bytecode target is visible in this file.
-    options.release = 17
-    options.compilerArgs.add("-Xlint:all")
-}
-
-tasks.withType<Javadoc>().configureEach {
-    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")
-}
-
-tasks.withType<AbstractArchiveTask>().configureEach {
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-}
-
-tasks.named<Jar>("jar") {
-    manifest {
-        attributes("Automatic-Module-Name" to "com.tagadvance.seastar")
     }
 }
 
@@ -189,92 +146,4 @@ tasks.register<JavaExec>("inspectRaw") {
     systemProperty("logback.configurationFile", logbackConfiguration)
     args((project.findProperty("query") as String?)?.let { listOf(it) } ?: emptyList<String>())
     notCompatibleWithConfigurationCache("reads -Pquery at execution time")
-}
-
-group = "com.tagadvance"
-version = "1.0.0-alpha"
-
-java {
-    withSourcesJar()
-    withJavadocJar()
-}
-
-publishing {
-    publications {
-        create<MavenPublication>("mavenJava") {
-            artifactId = "seastar"
-            from(components["java"])
-
-            pom {
-                name.set("SeaStar")
-                description.set(
-                    "An in-memory implementation of the DataStax Java driver's CqlSession that "
-                        + "mirrors Cassandra's behavior, intended as a fast alternative to "
-                        + "TestContainers for tests.")
-                url.set("https://github.com/tagadvance/seastar")
-                inceptionYear.set("2026")
-
-                licenses {
-                    license {
-                        name.set("MIT License")
-                        url.set("https://raw.githubusercontent.com/tagadvance/seastar/main/LICENSE")
-                    }
-                }
-
-                organization {
-                    name.set("tagadvance")
-                    url.set("https://tagadvance.com")
-                }
-
-                developers {
-                    developer {
-                        id.set("tagadvance")
-                        name.set("Tag Spilman")
-                        email.set("tagadvance+SeaStar@gmail.com")
-                        organization.set("tagadvance")
-                        organizationUrl.set("https://tagadvance.com")
-                    }
-                }
-
-                scm {
-                    connection.set("scm:git:git://github.com:tagadvance/seastar.git")
-                    developerConnection.set("scm:git:ssh://git@github.com:tagadvance/seastar.git")
-                    url.set("https://github.com/tagadvance/seastar")
-                }
-
-                issueManagement {
-                    system.set("GitHub Issues")
-                    url.set("https://github.com/tagadvance/seastar/issues")
-                }
-            }
-        }
-    }
-
-    repositories {
-        maven("https://s01.oss.sonatype.org/content/repositories/snapshots/") {
-            name = "SonatypeSnapshot"
-            credentials {
-                username = System.getenv("SONATYPE_USER")
-                password = System.getenv("SONATYPE_PASSWORD")
-            }
-        }
-        maven("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/") {
-            name = "SonatypeStaging"
-            credentials {
-                username = System.getenv("SONATYPE_USER")
-                password = System.getenv("SONATYPE_PASSWORD")
-            }
-        }
-    }
-}
-
-// Only configure signing when a key is actually present, so that every documented Gradle
-// command - publishToMavenLocal included - works for a contributor with no credentials.
-val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
-
-if (!signingKey.isNullOrBlank()) {
-    signing {
-        useInMemoryPgpKeys(signingKey, providers.environmentVariable("GPG_SIGNING_PASSWORD").orNull)
-        sign(publishing.publications)
-    }
 }
