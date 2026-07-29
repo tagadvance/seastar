@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
@@ -270,6 +271,67 @@ class SystemSchemaTest {
 	}
 
 	/**
+	 * A case-sensitive identifier is quoted in the type string and raw everywhere else. The type
+	 * string is the only place it can be quoted: the driver reads a UDT name back with
+	 * {@code CqlIdentifier#fromCql}, which would fold {@code Address} to lower case, while
+	 * {@code column_name}, {@code table_name} and {@code field_names} are plain text a node stores as
+	 * written. All of it captured from {@code cassandra:5.0.8}.
+	 */
+	@Test
+	@DisplayName("A case-sensitive UDT name is quoted in the type string and raw everywhere else")
+	void testCaseSensitiveIdentifiers() {
+		session.execute("CREATE TYPE d4.\"Address\" (street text, \"Zip\" int)");
+		session.execute("CREATE TYPE d4.\"Outer\" (inner_f frozen<\"Address\">)");
+		session.execute("CREATE TABLE d4.\"Quoted\" (\"Id\" int PRIMARY KEY, "
+			+ "home frozen<\"Address\">, u \"Address\")");
+
+		assertEquals(
+			List.of("Id|partition_key|int", "home|regular|frozen<\"Address\">",
+				"u|regular|\"Address\""), rows(select("columns")).stream()
+				.filter(row -> "Quoted".equals(row.getString("table_name")))
+				.map(row -> String.join("|", row.getString("column_name"), row.getString("kind"),
+					row.getString("type")))
+				.collect(toList()));
+
+		final var type = rows(select("types")).stream()
+			.filter(row -> "Outer".equals(row.getString("type_name")))
+			.findFirst()
+			.orElseThrow(() -> new IllegalStateException("type Outer is required by this test"));
+		assertEquals(List.of("inner_f"), type.getList("field_names", String.class));
+		assertEquals(List.of("frozen<\"Address\">"), type.getList("field_types", String.class));
+
+		// The half that matters: the driver has to get the model's own type back out of the string.
+		assertEquals(columnType("Quoted", "home"), parse("frozen<\"Address\">"));
+		assertEquals(columnType("Quoted", "u"), parse("\"Address\""));
+	}
+
+	/**
+	 * The three type strings the fixture schema does not reach, and the one the driver's parser is
+	 * most likely to disagree with the projection about. A tuple is always written frozen, a vector
+	 * travels as CQL rather than as a marshaller class name, and {@code duration} is a primitive.
+	 * Captured from {@code cassandra:5.0.8}.
+	 */
+	@Test
+	@DisplayName("Vector, tuple and duration columns carry the type strings a node writes")
+	void testVectorTupleAndDurationTypeStrings() {
+		session.execute("CREATE TABLE d4.wide (id int PRIMARY KEY, v vector<float, 3>, "
+			+ "tup frozen<tuple<int, text>>, dur duration, "
+			+ "nest frozen<map<text, frozen<list<int>>>>)");
+
+		assertEquals(
+			List.of("dur|duration", "id|int", "nest|frozen<map<text, frozen<list<int>>>>",
+				"tup|frozen<tuple<int, text>>", "v|vector<float, 3>"), rows(select("columns")).stream()
+				.filter(row -> "wide".equals(row.getString("table_name")))
+				.map(row -> String.join("|", row.getString("column_name"), row.getString("type")))
+				.collect(toList()));
+
+		assertEquals(columnType("wide", "v"), parse("vector<float, 3>"));
+		assertEquals(columnType("wide", "tup"), parse("frozen<tuple<int, text>>"));
+		assertEquals(columnType("wide", "dur"), parse("duration"));
+		assertEquals(columnType("wide", "nest"), parse("frozen<map<text, frozen<list<int>>>>"));
+	}
+
+	/**
 	 * The end of the round trip: every type string this projects is handed back to the parser the
 	 * driver actually uses on it, and has to come out as the type the model started with. That is
 	 * what a connecting driver does with these rows, and it is stricter than comparing strings -
@@ -375,6 +437,28 @@ class SystemSchemaTest {
 		assertFalse(keyspaces.containsKey(CqlIdentifier.fromInternal("system")));
 		assertEquals(Set.of(CqlIdentifier.fromInternal("d4")), keyspaces.keySet());
 		assertTrue(context.getSeaStarKeyspace("system_schema").isEmpty());
+	}
+
+	/**
+	 * A projected type string, read back through the parser a connecting driver reads these rows
+	 * with.
+	 */
+	private DataType parse(final String type) {
+		return new DataTypeCqlNameParser().parse(CqlIdentifier.fromInternal("d4"), type,
+			Map.copyOf(keyspace().getUserDefinedTypes()), (InternalDriverContext) context);
+	}
+
+	private DataType columnType(final String table, final String column) {
+		return keyspace().getSeaStarTable(table)
+			.orElseThrow(() -> new IllegalStateException(table + " is required by this test"))
+			.getColumns()
+			.get(CqlIdentifier.fromInternal(column))
+			.getType();
+	}
+
+	private SeaStarKeyspace keyspace() {
+		return context.getSeaStarKeyspace("d4")
+			.orElseThrow(() -> new IllegalStateException("keyspace d4 is required by this test"));
 	}
 
 	private AsyncResultSet select(final String table) {
