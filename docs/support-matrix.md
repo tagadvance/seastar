@@ -137,6 +137,13 @@ Everything else a node keeps in `system` is absent, and a `WHERE` clause on one 
 matched and then ignored - `system.local` has one row, so restricting it would be a predicate that
 is always true.
 
+**A DDL-heavy schema setup costs a second per statement, and it is the driver, not SeaStar.** The
+driver holds a DDL statement's answer until the metadata refresh it triggered has finished, and
+debounces that refresh by `advanced.metadata.schema.debouncer.window`, one second by default. Every
+statement is answered from memory here, so that window is the whole of the wait. A harness seeding
+a large schema should shorten it - the fidelity suite's own wire backend went from 190 s to under
+7 s doing exactly that - or turn schema metadata off if it does not read `getMetadata()`.
+
 ## Known gaps within supported statements
 
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ
