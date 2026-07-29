@@ -19,9 +19,19 @@ wherever your code already takes a `CqlSession`.
 Not yet published — the artifact coordinates below are what `1.0.0-alpha` will resolve to once it
 ships; `publishToMavenLocal` works today for local use.
 
+There are two artifacts, and **most people need only the first**. Take `seastar-server` only if the
+code under test builds its own `CqlSession` from a host and a port and cannot be handed one — because
+it is another process, another language, or a framework that owns the connection.
+
+| Artifact | What it is |
+| --- | --- |
+| `com.tagadvance:seastar` | the in-memory `CqlSession`. This is SeaStar. |
+| `com.tagadvance:seastar-server` | an optional listener that serves one of those sessions over Cassandra's native protocol on a socket. Depends on `seastar`; versioned in lockstep with it. |
+
 **Gradle**
 ```kotlin
 testImplementation("com.tagadvance:seastar:1.0.0-alpha")
+testImplementation("com.tagadvance:seastar-server:1.0.0-alpha") // only if you need a socket
 ```
 
 **Maven**
@@ -29,6 +39,14 @@ testImplementation("com.tagadvance:seastar:1.0.0-alpha")
 <dependency>
     <groupId>com.tagadvance</groupId>
     <artifactId>seastar</artifactId>
+    <version>1.0.0-alpha</version>
+    <scope>test</scope>
+</dependency>
+
+<!-- Only if you need a socket. -->
+<dependency>
+    <groupId>com.tagadvance</groupId>
+    <artifactId>seastar-server</artifactId>
     <version>1.0.0-alpha</version>
     <scope>test</scope>
 </dependency>
@@ -70,6 +88,50 @@ try (var session = SeaStarCqlSession.builder().build()) {
 }
 ```
 
+## On a socket
+
+When the code under test cannot be given a `CqlSession`, `seastar-server` puts the same in-memory
+session behind Cassandra's native protocol. That is the whole harness:
+
+```java
+try (var session = SeaStarCqlSession.builder().withSchemaResource("/schema.cql").build();
+     var server = SeaStarProtocolServer.builder().session(session).build().start()) {
+
+    var contactPoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), server.port());
+    // hand contactPoint to whatever builds its own driver
+}
+```
+
+The port is ephemeral and the bind address is loopback, so nothing collides with a real local
+Cassandra; `port()` after `start()` is the one that was granted, and `close()` releases the socket
+without closing the session you built. `port(int)`, `bindAddress(InetAddress)`, `clusterName`,
+`datacenter` and `rack` are all on the builder.
+
+An ordinary, unconfigured driver connects to it — no pinned protocol version, no metadata switched
+off. Only the datacenter has to match, and the driver demands one of everybody:
+
+```java
+try (var connected = CqlSession.builder()
+        .addContactPoint(contactPoint)
+        .withLocalDatacenter("datacenter1")   // SeaStar's default
+        .build()) {
+    connected.execute("INSERT INTO shop.products (id, name) VALUES (2, 'Sprocket')");
+}
+```
+
+It negotiates protocol v5 with segment framing, reads `system.local` and builds its schema metadata
+out of `system_schema` exactly as it would against a node. The same fidelity suite that runs in
+process and against a real container also runs over this socket.
+
+**If your harness seeds a large schema, shorten the driver's schema debouncer.** The driver holds a
+DDL statement's answer until the metadata refresh it triggered finishes, and debounces that by
+`advanced.metadata.schema.debouncer.window` — one second by default, which is the whole of the wait,
+since SeaStar answers from memory. SeaStar's own wire suite went from 190 s to under 7 s by setting
+it to 1 ms. Nothing on the server's side can shorten it.
+
+[docs/support-matrix.md](docs/support-matrix.md) has a section on the protocol itself: what is
+answered, what is refused by name, and what differs from a node on purpose.
+
 ## Benchmarks
 
 Full numbers, environment and reproduction steps live in [benchmarks.md](benchmarks.md); this is
@@ -94,9 +156,26 @@ than one is applied instead of suppressed), a `BATCH` is not atomic or isolated,
 materialized views, UDFs/aggregates, auth, roles, or a token map. Each is a considered trade-off for
 an in-memory fake, not an oversight — the matrix says why.
 
+On a socket, `seastar-server` adds its own short list. Compression, TLS and a paging state in a
+request are each refused by name rather than ignored. Consistency, serial consistency, the request's
+timestamp and tracing are accepted and have no effect, there being one replica in one process.
+`TOPOLOGY_CHANGE` and `STATUS_CHANGE` never fire, there being one node. `system.local` describes that
+node, `system_schema` is projected live from the model, and everything else a real node keeps in
+`system` — `system_auth`, `system_traces`, `system_distributed` — answers `InvalidQueryException`.
+Table options read back over the wire as Cassandra 5.0.8 defaults rather than as what you set, so
+`comment` is always empty.
+
 ## Roadmap
 
-* `SchemaChangeListener` support is not implemented.
+* Table options are not stored. `TableMetadata#getOptions()` is empty in process, and over the wire
+  the same table reads back with 5.0.8 defaults — the two disagree until the model holds them.
+* `SchemaChangeListener` is not implemented for an in-process session. A driver connected to
+  `seastar-server` does get its listeners called, because the listener publishes real
+  `SCHEMA_CHANGE` events.
+* Over the wire, `skip_metadata` is ignored and a prepared statement's result metadata id never
+  changes. Both are the same piece of work, and honouring the first is what makes the second matter.
+* Compression is refused rather than implemented. It buys nothing on loopback, which is the only
+  place this listens.
 * Rows are stored through the driver's own codecs (deserialize on write, re-serialize on read)
   rather than natively, which is unnecessary overhead this could shed by overriding the default
   getters on the row model.
