@@ -15,14 +15,25 @@ description = "A native-protocol listener that serves an in-memory SeaStar CqlSe
 // native-protocol arrives transitively via java-driver-core and is already on the core's runtime
 // classpath. It is declared anyway - the whole module is built against it, and an implicit
 // transitive is not a contract.
+// java-driver-core is `implementation` in :seastar rather than `api`, so it does not reach this
+// module's compile classpath on its own. It is declared here instead of being promoted there:
+// b_plan's brief is a listener, not a change to what every consumer of the core gets, and a_plan A7
+// asks for the core's published surface to be protected.
 dependencies {
     implementation(project(":seastar"))
+    implementation("org.apache.cassandra:java-driver-core:4.19.3")
     implementation("io.netty:netty-handler:4.1.130.Final")
     implementation("com.datastax.oss:native-protocol:1.5.2")
+    // Annotations are documentation only; nothing reads them reflectively at runtime.
+    compileOnly("net.jcip:jcip-annotations:1.0")
 }
 
-// javadoc fails outright on a package holding nothing but package-info.java. Delete this once the
-// listener has its first public type.
-tasks.named<Javadoc>("javadoc") {
-    onlyIf { task -> (task as Javadoc).source.any { it.name != "package-info.java" } }
+testing {
+    suites {
+        val test by getting(JvmTestSuite::class) {
+            dependencies {
+                implementation(testFixtures(project(":seastar")))
+            }
+        }
+    }
 }
