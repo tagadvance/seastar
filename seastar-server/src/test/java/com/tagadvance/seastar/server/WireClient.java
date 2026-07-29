@@ -60,6 +60,23 @@ final class WireClient implements AutoCloseable {
 	 */
 	Frame send(final int protocolVersion, final int streamId, final boolean tracing,
 		final Message request) throws IOException {
+		write(protocolVersion, streamId, tracing, request);
+
+		return read();
+	}
+
+	/**
+	 * Sends one request and does <em>not</em> wait for it, so that a caller can put several in flight
+	 * at once and read the answers afterwards.
+	 *
+	 * @param protocolVersion the version to put in the header
+	 * @param streamId        the stream id to send it on
+	 * @param tracing         whether to set the tracing flag
+	 * @param request         the message to send
+	 * @throws IOException if the socket fails
+	 */
+	void write(final int protocolVersion, final int streamId, final boolean tracing,
+		final Message request) throws IOException {
 		final var encoded = codec.encode(
 			Frame.forRequest(protocolVersion, streamId, tracing, Frame.NO_PAYLOAD, request));
 		try {
@@ -70,8 +87,6 @@ final class WireClient implements AutoCloseable {
 		} finally {
 			encoded.release();
 		}
-
-		return receive();
 	}
 
 	/**
@@ -97,10 +112,16 @@ final class WireClient implements AutoCloseable {
 		socket.getOutputStream().write(header);
 		socket.getOutputStream().flush();
 
-		return receive();
+		return read();
 	}
 
-	private Frame receive() throws IOException {
+	/**
+	 * Blocks for one response, whatever stream id it is on.
+	 *
+	 * @return the decoded response
+	 * @throws IOException if the socket fails, or the peer hangs up before answering
+	 */
+	Frame read() throws IOException {
 		final var in = new DataInputStream(socket.getInputStream());
 		final var header = new byte[9];
 		in.readFully(header);
