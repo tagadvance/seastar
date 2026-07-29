@@ -4,4 +4,4 @@ plugins {
 }
 
 rootProject.name = "SeaStar"
-include("lib")
+include("seastar")

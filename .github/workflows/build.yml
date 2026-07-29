@@ -40,4 +40,4 @@ jobs:
         if: failure()
         with:
           name: test-results-jdk${{ matrix.java }}
-          path: lib/build/reports/tests/
+          path: seastar/build/reports/tests/
