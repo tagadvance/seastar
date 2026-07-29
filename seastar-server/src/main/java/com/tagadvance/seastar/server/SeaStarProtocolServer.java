@@ -34,8 +34,8 @@ import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Serves a {@link CqlSession} over Cassandra's native protocol, so a client that cannot swap its
- * own session for SeaStar's in-process can still talk to one.
+ * Serves a {@link SeaStarCqlSession} over Cassandra's native protocol, so a client that cannot swap
+ * its own {@link CqlSession} for SeaStar's in-process can still talk to one.
  *
  * <pre>{@code
  * final var session = SeaStarCqlSession.builder().build();
@@ -77,6 +77,12 @@ import org.jspecify.annotations.Nullable;
  *   <li><strong>Authentication</strong> - {@code STARTUP} is always answered {@code READY}, which
  *       means "none required". Credentials, if a client offers them anyway, are accepted
  *       unexamined.</li>
+ *   <li><strong>Paging</strong> - every answer is one page, which is protocol-legal: a node may
+ *       always return everything, and result metadata with no paging state is what says so. A page
+ *       size in a request is ignored; a paging state is refused, since none was ever issued.</li>
+ *   <li><strong>The system tables</strong> - not answered yet, so a full {@code CqlSession} does
+ *       not open against this server. Its control connection queries {@code system.local} before
+ *       it will finish connecting.</li>
  *   <li><strong>TLS</strong> - not implemented. This is a loopback test socket.</li>
  * </ul>
  */
