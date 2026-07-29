@@ -40,4 +40,8 @@ jobs:
         if: failure()
         with:
           name: test-results-jdk${{ matrix.java }}
-          path: seastar/build/reports/tests/
+          # Both modules. :seastar-server holds the wire fidelity suite, so a failure there is the
+          # one most likely to need the report rather than the console.
+          path: |
+            seastar/build/reports/tests/
+            seastar-server/build/reports/tests/
