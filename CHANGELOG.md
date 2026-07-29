@@ -12,6 +12,15 @@ UserDefinedType,UdtValue}` model interfaces, `SystemSchema` and `CqlStatementSum
 else is internal - see [AGENTS.md](AGENTS.md) for the architecture and
 [docs/support-matrix.md](docs/support-matrix.md) for what CQL is and isn't supported.
 
+**The build produces two artifacts rather than one.** `com.tagadvance:seastar` is the library this
+has always been; the listener is a separate `com.tagadvance:seastar-server`, so that the common case
+- swapping a `CqlSession` in process - does not drag Netty and a protocol codec in behind it. The
+two are versioned in lockstep from one line, and `seastar-server` depends on `seastar`, so a build
+file that already names the core adds the second coordinate only if it needs a socket. Nothing has
+been published, so the split cost no existing consumer a build-file edit. That is exactly why it was
+done now, and it is recorded here because a later reader will want to know it was free at the time
+rather than a break that was waved through.
+
 The `seastar-server` artifact ships one public type, `SeaStarProtocolServer`, which serves a
 session over Cassandra's native protocol for clients that cannot be pointed at an in-process one.
 It speaks protocol v4 and v5 - a driver that was never told which to use negotiates its way to v5,
