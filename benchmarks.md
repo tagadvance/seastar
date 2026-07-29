@@ -12,7 +12,7 @@ Both have since landed. Their measurements are the last two sections:
 apart between sittings, so each section pairs its own before and after taken back to back.
 
 Measured at commit `1145dae`. No library code changed for this run: everything under
-`lib/src/main` is identical to `3708bfa`, and the only additions are the benchmark source sets,
+`seastar/src/main` is identical to `3708bfa`, and the only additions are the benchmark source sets,
 which are not on the default build and not in the published jar.
 
 ## Environment
@@ -220,7 +220,7 @@ That brackets the answer:
 public. `parseStatement` *is* that call plus exception translation, so this is not a
 reimplementation.
 
-Verified equivalent: `./gradlew :lib:parserEquivalenceCheck` parses 14 statements covering every
+Verified equivalent: `./gradlew :seastar:parserEquivalenceCheck` parses 14 statements covering every
 type SeaStar handles - CREATE KEYSPACE/TYPE/TABLE/INDEX, ALTER TYPE, USE, INSERT, UPDATE ... IF
 EXISTS, DELETE, SELECT DISTINCT ... ALLOW FILTERING, TRUNCATE, DROP TABLE/KEYSPACE and BEGIN BATCH -
 both ways and compares the parse tree types. **0 mismatches out of 14.**
@@ -410,7 +410,7 @@ left alone deliberately, so the scaling benchmarks keep measuring what they meas
 
 ### Startup
 
-`:lib:startupBenchmark`, 20 cold JVMs per variant, before and after in the same sitting.
+`:seastar:startupBenchmark`, 20 cold JVMs per variant, before and after in the same sitting.
 Milliseconds, median.
 
 | metric | before | after |
@@ -433,26 +433,26 @@ Benchmarks are not on the default build and their classes are not in the publish
 
 ```bash
 # Per-statement and scaling benchmarks (JMH). ~3 minutes.
-./gradlew :lib:jmh
+./gradlew :seastar:jmh
 
 # A single benchmark class or method.
-./gradlew :lib:jmh -PjmhIncludes='com.tagadvance.seastar.bench.StatementBenchmark.selectPoint'
+./gradlew :seastar:jmh -PjmhIncludes='com.tagadvance.seastar.bench.StatementBenchmark.selectPoint'
 
 # Cold and warm startup, plus the in-situ parser split. 20 forked JVMs per variant. ~1 minute.
-./gradlew :lib:startupBenchmark
+./gradlew :seastar:startupBenchmark
 
 # Startup with a 75-statement fixture schema. ~30 seconds.
-./gradlew :lib:startupSchemaBenchmark
+./gradlew :seastar:startupSchemaBenchmark
 
 # Standalone parser cost attribution. ~1 minute.
-./gradlew :lib:parserCostBenchmark
+./gradlew :seastar:parserCostBenchmark
 
 # Proof the two parser entry points return the same parse tree types. ~5 seconds.
-./gradlew :lib:parserEquivalenceCheck
+./gradlew :seastar:parserEquivalenceCheck
 
 # TestContainers comparison. Needs Docker. ~1 and ~2 minutes respectively.
-./gradlew :lib:containerWarmBenchmark
-./gradlew :lib:containerColdBenchmark
+./gradlew :seastar:containerWarmBenchmark
+./gradlew :seastar:containerColdBenchmark
 ```
 
 `containerColdBenchmark` removes every local tag of `cassandra:5.0.8` so that the pull is real, then

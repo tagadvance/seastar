@@ -12,7 +12,7 @@ SeaStar mirrors real Cassandra: a query that fails against Cassandra must fail w
 Never guess the `CQLStatement.Raw` class or its field names. Run the inspector:
 
 ```bash
-./gradlew :lib:inspectRaw -Pquery="<the CQL>" --console=plain -q 2>/dev/null
+./gradlew :seastar:inspectRaw -Pquery="<the CQL>" --console=plain -q 2>/dev/null
 ```
 
 It prints the fully qualified `Raw` class and a recursive dump of its fields with the concrete values for that query. Read it to learn:
@@ -33,14 +33,14 @@ For `javap` on a type: the classes are in the `cassandra-all` sources/binary jar
 For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to `AbstractCqlSessionTest` asserting the behavior, then run it against the real server:
 
 ```bash
-./gradlew :lib:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest.<method>'
+./gradlew :seastar:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest.<method>'
 ```
 
 `ContainerCqlSessionTest` needs Docker (Testcontainers). Note the exception **type** (`AlreadyExistsException`, `InvalidQueryException`, `InvalidQueryException` subtypes, ...) and roughly the message. Existing handlers show the pattern: construct with `executionInfo.getCoordinator()`.
 
 ## 3. Write the handler
 
-Create `lib/src/main/java/com/tagadvance/seastar/handlers/<Name>Handler.java` implementing `CqlHandler<TheRawType>`:
+Create `seastar/src/main/java/com/tagadvance/seastar/handlers/<Name>Handler.java` implementing `CqlHandler<TheRawType>`:
 - `canProcess(raw)` -> `raw instanceof TheRawType`.
 - `processCql(context, executionInfo, raw, bindings)` -> mutate/read the `Volatile*` model, return `CompletableFuture.completedStage(newAsyncResultSet(...))` or `failedStage(new SomeException(...))`.
 - Read package-private fields through `FieldBindings`: add a `FieldBinding` constant there, then call `FieldBindings.MY_FIELD.require(raw)` (state the statement always carries) or `.find(raw)` (genuinely optional, e.g. an unnamed index). Never default a missing required field. Wrap a parsed type with `new SeaStarRawType(...)` when you need the driver `DataType`.
@@ -60,7 +60,7 @@ Register the handler in the `CqlHandlerRegistry` constructor call inside
 Run the fast SeaStar test, which must now pass with the same assertions the container test passed:
 
 ```bash
-./gradlew :lib:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.<method>'
+./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.<method>'
 ```
 
 Both `SeaStarCqlSessionTest` and `ContainerCqlSessionTest` extend `AbstractCqlSessionTest`, so one test method runs against both the fake and real Cassandra. Green on both = parity achieved.
