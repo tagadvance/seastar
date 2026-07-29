@@ -29,7 +29,8 @@ import java.util.stream.Collectors;
  *       primitive only in v5, and a vector has no protocol id at all, so a real node sends both as
  *       a Cassandra marshaller class name. The driver's {@code DataTypes#custom} names each of them
  *       explicitly on the way back in, which is the proof this is the shape it expects rather than
- *       a shape it merely tolerates.</li>
+ *       a shape it merely tolerates. At v5 {@code duration} takes its own id and only the vector
+ *       is still a class name, {@code native-protocol} having no {@code RawVector} at all.</li>
  * </ul>
  */
 final class RawTypes {
@@ -69,36 +70,41 @@ final class RawTypes {
 	}
 
 	/**
-	 * @param type the column type to describe
+	 * @param type            the column type to describe
+	 * @param protocolVersion the version of the connection the description is going out on
 	 * @return the same type as the protocol writes it
-	 * @throws UnsupportedOperationException if the type has no representation at protocol v4
+	 * @throws UnsupportedOperationException if the type has no representation at that version
 	 */
-	static RawType of(final DataType type) {
+	static RawType of(final DataType type, final int protocolVersion) {
 		// VectorType extends CustomType, so it has to be asked about first.
 		if (type instanceof VectorType vector) {
 			return new RawType.RawCustom(MARSHAL + "VectorType(" + marshaller(vector.getElementType())
 				+ ", " + vector.getDimensions() + ")");
 		}
 		if (type instanceof ListType list) {
-			return new RawType.RawList(of(list.getElementType()));
+			return new RawType.RawList(of(list.getElementType(), protocolVersion));
 		}
 		if (type instanceof SetType set) {
-			return new RawType.RawSet(of(set.getElementType()));
+			return new RawType.RawSet(of(set.getElementType(), protocolVersion));
 		}
 		if (type instanceof MapType map) {
-			return new RawType.RawMap(of(map.getKeyType()), of(map.getValueType()));
+			return new RawType.RawMap(of(map.getKeyType(), protocolVersion),
+				of(map.getValueType(), protocolVersion));
 		}
 		if (type instanceof TupleType tuple) {
-			return new RawType.RawTuple(
-				tuple.getComponentTypes().stream().map(RawTypes::of).collect(Collectors.toList()));
+			return new RawType.RawTuple(tuple.getComponentTypes()
+				.stream()
+				.map(component -> of(component, protocolVersion))
+				.collect(Collectors.toList()));
 		}
 		if (type instanceof UserDefinedType udt) {
-			return udt(udt);
+			return udt(udt, protocolVersion);
 		}
 		if (type instanceof CustomType custom) {
 			return new RawType.RawCustom(custom.getClassName());
 		}
-		if (type.getProtocolCode() == ProtocolConstants.DataType.DURATION) {
+		if (type.getProtocolCode() == ProtocolConstants.DataType.DURATION
+			&& protocolVersion < ProtocolConstants.Version.V5) {
 			return new RawType.RawCustom(MARSHAL + "DurationType");
 		}
 
@@ -106,7 +112,7 @@ final class RawTypes {
 		if (primitive == null) {
 			throw new UnsupportedOperationException(
 				"SeaStar's listener cannot describe the type " + type.asCql(true, false)
-					+ " over protocol v4");
+					+ " over protocol v" + protocolVersion);
 		}
 
 		return primitive;
@@ -118,12 +124,12 @@ final class RawTypes {
 	 * is load-bearing - the driver rebuilds the type from this map's iteration order - so the map has
 	 * to keep it.
 	 */
-	private static RawType udt(final UserDefinedType type) {
+	private static RawType udt(final UserDefinedType type, final int protocolVersion) {
 		final var fields = new LinkedHashMap<String, RawType>();
 		final var names = type.getFieldNames();
 		final var types = type.getFieldTypes();
 		for (int i = 0; i < names.size(); i++) {
-			fields.put(names.get(i).asInternal(), of(types.get(i)));
+			fields.put(names.get(i).asInternal(), of(types.get(i), protocolVersion));
 		}
 		final var keyspace = type.getKeyspace();
 

@@ -42,6 +42,11 @@ final class SeaStarConnection {
 	// free to replace its thread if one dies, and the resulting visibility bug would be invisible.
 	private volatile @Nullable CqlIdentifier keyspace;
 
+	// Written once by ProtocolVersionGate on the event loop, read from the funnel when an event is
+	// published. Until the first header has been read there is nothing to write, so the initial
+	// value is never the one used.
+	private volatile int version = Protocol.HIGHEST;
+
 	// Registered from the funnel and read from the funnel, but a concurrent set rather than a
 	// plain one: REGISTER may arrive more than once and is cumulative, and a publish walks every
 	// connection rather than only the one being registered.
@@ -62,6 +67,18 @@ final class SeaStarConnection {
 
 	void keyspace(final @Nullable CqlIdentifier keyspace) {
 		this.keyspace = keyspace;
+	}
+
+	/**
+	 * @return the protocol version this connection opened at, settled from its first header and
+	 *     unchanged afterwards
+	 */
+	int version() {
+		return version;
+	}
+
+	void version(final int version) {
+		this.version = version;
 	}
 
 	/**
@@ -88,7 +105,7 @@ final class SeaStarConnection {
 			return;
 		}
 
-		channel.writeAndFlush(Frame.forResponse(Protocol.VERSION, EVENT_STREAM_ID, null,
-			Frame.NO_PAYLOAD, List.of(), event));
+		channel.writeAndFlush(Frame.forResponse(version, EVENT_STREAM_ID, null, Frame.NO_PAYLOAD,
+			List.of(), event));
 	}
 }

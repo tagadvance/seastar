@@ -4,13 +4,7 @@ import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.tagadvance.seastar.SeaStarCqlSession;
-import com.datastax.oss.driver.internal.core.protocol.ByteBufPrimitiveCodec;
-import com.datastax.oss.driver.internal.core.protocol.FrameDecoder;
-import com.datastax.oss.driver.internal.core.protocol.FrameEncoder;
-import com.datastax.oss.protocol.internal.Compressor;
-import com.datastax.oss.protocol.internal.FrameCodec;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -55,9 +49,11 @@ import org.jspecify.annotations.Nullable;
  * <p>{@link #close()} does not close the wrapped session. Ownership stays with whoever built it,
  * and a caller may well be using the same session in-process at the same time.
  *
- * <p><strong>Protocol v4 only.</strong> A request at any other version is answered with the
- * {@code PROTOCOL_ERROR} that makes a driver retry one version lower, which is what lets a driver
- * that was never told which version to use reach this server at all.
+ * <p><strong>Protocol v4 and v5.</strong> A connection that opens at either is served at that
+ * version, with v5's CRC-checked segment framing taking over from the message after {@code READY}.
+ * Anything else - v3, the v6 beta, or one of the DSE versions a driver with no configured version
+ * tries first - is answered with the {@code PROTOCOL_ERROR} that makes a driver retry one version
+ * lower, which is what lets such a driver reach this server at all.
  *
  * <p><strong>Every request is answered on one thread.</strong> A Netty worker decodes the frame
  * and hands it to a single-threaded executor owned by this server; nothing else touches the
@@ -152,12 +148,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 		final var funnel = Executors.newSingleThreadExecutor(threads("funnel"));
 		final var connections = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
 
-		// FrameCodec and ByteBufPrimitiveCodec are both stateless and thread-safe, and FrameEncoder
-		// is @Sharable, so all three are built once and shared by every connection. FrameDecoder
-		// extends LengthFieldBasedFrameDecoder and holds reassembly state, so it is per channel.
-		final var frameCodec = FrameCodec.defaultServer(
-			new ByteBufPrimitiveCodec(ByteBufAllocator.DEFAULT), Compressor.none());
-		final var encoder = new FrameEncoder(frameCodec, MAX_FRAME_LENGTH);
+		final var framing = new Framing(MAX_FRAME_LENGTH);
 		// Every connection currently open, for the events that are pushed to the ones watching
 		// rather than answered to the one that asked. A connection joins when its channel goes
 		// active and leaves when it goes inactive, both on that channel's own event loop.
@@ -175,11 +166,11 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 					// The version gate goes ahead of the decoder because the versions worth turning
 					// away include ones the decoder cannot read at all - see ProtocolVersionGate.
 					channel.pipeline()
-						.addLast("frameEncoder", encoder)
-						.addLast("versionGate", new ProtocolVersionGate())
-						.addLast("frameDecoder", new FrameDecoder(frameCodec, MAX_FRAME_LENGTH))
+						.addLast(Framing.FRAME_ENCODER, framing.frameEncoder())
+						.addLast("versionGate", new ProtocolVersionGate(connection))
+						.addLast(Framing.FRAME_DECODER, framing.frameDecoder())
 						.addLast("dispatch",
-							new SeaStarProtocolHandler(dispatcher, funnel, connection, open));
+							new SeaStarProtocolHandler(dispatcher, funnel, connection, open, framing));
 				}
 			});
 

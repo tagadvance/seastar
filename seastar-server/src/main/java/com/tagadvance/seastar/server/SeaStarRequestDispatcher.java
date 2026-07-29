@@ -90,8 +90,9 @@ final class SeaStarRequestDispatcher {
 	}
 
 	/**
-	 * @param request    the decoded request frame, always at protocol v4
-	 * @param connection the state of the connection it arrived on
+	 * @param request    the decoded request frame
+	 * @param connection the state of the connection it arrived on, which is where the protocol
+	 *                   version every answer is described with comes from
 	 * @return the message to send back, on the request's own stream id
 	 */
 	Message dispatch(final Frame request, final SeaStarConnection connection) {
@@ -119,14 +120,14 @@ final class SeaStarRequestDispatcher {
 			return refusal;
 		}
 
-		final var system = system(request.query);
+		final var system = system(request.query, connection.version());
 		if (system != null) {
 			return system;
 		}
 
 		CqlStatementSummary summary = null;
 		try {
-			selectKeyspace(connection);
+			selectKeyspace(connection, request.options.keyspace);
 			summary = summarize(request.query);
 
 			return answer(summary, run(statement(request.query, request.options)), connection);
@@ -136,23 +137,44 @@ final class SeaStarRequestDispatcher {
 	}
 
 	private Message prepare(final Prepare request, final SeaStarConnection connection) {
+		final var version = connection.version();
 		final var select = SystemQuery.of(request.cqlQuery);
 		if (select != null && isSystem(select)) {
-			return prepareSystem(request.cqlQuery);
+			return prepareSystem(request.cqlQuery, version);
 		}
 
 		try {
-			selectKeyspace(connection);
+			selectKeyspace(connection, request.keyspace);
 			final var statement = session.prepare(request.cqlQuery);
 
-			// resultMetadataId is a v5 field; the codec does not write it at v4, and a real node sends
-			// null there, so nothing is lost by not inventing one.
-			return new Prepared(prepared.register(statement), null,
-				metadata(statement.getVariableDefinitions(), statement.getPartitionKeyIndices()),
-				metadata(statement.getResultSetDefinitions(), List.of()));
+			return new Prepared(prepared.register(statement), resultMetadataId(statement, version),
+				metadata(statement.getVariableDefinitions(), statement.getPartitionKeyIndices(),
+					version),
+				metadata(statement.getResultSetDefinitions(), List.of(), version));
 		} catch (final RuntimeException e) {
 			return Failures.of(e, null);
 		}
+	}
+
+	/**
+	 * The identifier of a prepared statement's <em>result</em> metadata, which the protocol only
+	 * carries from v5 on - the v4 codec does not write the field, and a real node reached at v4
+	 * sends null.
+	 *
+	 * <p>Duplicated on the way out. The core hands back the same buffer instance every time, exactly
+	 * as the driver's own {@code DefaultPreparedStatement} does, and encoding a frame reads a buffer
+	 * to its limit and leaves the position there - so preparing the same statement twice would send
+	 * an empty id the second time. The duplicate belongs here, where the buffer is written, rather
+	 * than in the core, where the shared instance is the behaviour a caller has to be able to rely
+	 * on (e_plan E4).
+	 */
+	private static byte @Nullable [] resultMetadataId(final PreparedStatement statement,
+		final int version) {
+		if (version < ProtocolConstants.Version.V5) {
+			return null;
+		}
+
+		return Bytes.getArray(statement.getResultMetadataId().duplicate());
 	}
 
 	private Message execute(final Execute request, final SeaStarConnection connection) {
@@ -163,7 +185,7 @@ final class SeaStarRequestDispatcher {
 
 		final var systemQuery = preparedSystem.get(ByteBuffer.wrap(request.queryId));
 		if (systemQuery != null) {
-			return system(systemQuery);
+			return system(systemQuery, connection.version());
 		}
 
 		final var statement = prepared.find(request.queryId);
@@ -173,7 +195,7 @@ final class SeaStarRequestDispatcher {
 
 		CqlStatementSummary summary = null;
 		try {
-			selectKeyspace(connection);
+			selectKeyspace(connection, request.options.keyspace);
 			summary = summarize(statement.get().getQuery());
 			final var bound = bind(statement.get(), request.options.positionalValues,
 				request.options.namedValues);
@@ -186,7 +208,7 @@ final class SeaStarRequestDispatcher {
 
 	private Message batch(final Batch request, final SeaStarConnection connection) {
 		try {
-			selectKeyspace(connection);
+			selectKeyspace(connection, request.keyspace);
 			final var builder = BatchStatement.builder(batchType(request.type));
 			for (int i = 0; i < request.queriesOrIds.size(); i++) {
 				final var queryOrId = request.queriesOrIds.get(i);
@@ -206,7 +228,7 @@ final class SeaStarRequestDispatcher {
 
 			// A batch is modifications only - the core rejects anything else in one - so it never
 			// selects a keyspace and never changes the schema.
-			return Results.of(run(builder.build()));
+			return Results.of(run(builder.build()), connection.version());
 		} catch (final RuntimeException e) {
 			return Failures.of(e, null);
 		}
@@ -219,7 +241,7 @@ final class SeaStarRequestDispatcher {
 	 */
 	private Message answer(final CqlStatementSummary summary, final AsyncResultSet resultSet,
 		final SeaStarConnection connection) {
-		final var response = Results.of(summary, resultSet);
+		final var response = Results.of(summary, resultSet, connection.version());
 		if (summary instanceof CqlStatementSummary.KeyspaceSelected selected) {
 			connection.keyspace(CqlIdentifier.fromInternal(selected.keyspace()));
 		}
@@ -263,21 +285,22 @@ final class SeaStarRequestDispatcher {
 	 * data: an in-process user who never starts a server must not suddenly find invented keyspaces in
 	 * {@code getMetadata().getKeyspaces()}.
 	 *
-	 * @param query the query string, exactly as it arrived
+	 * @param query           the query string, exactly as it arrived
+	 * @param protocolVersion the version of the connection it is going out on
 	 * @return the answer, or {@code null} if this is not a query the server answers itself - which is
 	 * everything the model should see
 	 */
-	private @Nullable Message system(final String query) {
+	private @Nullable Message system(final String query, final int protocolVersion) {
 		final var select = SystemQuery.of(query);
 		if (select == null || !isSystem(select)) {
 			return null;
 		}
 		if (SystemTables.answers(select.keyspace())) {
-			return systemTables.select(select);
+			return systemTables.select(select, protocolVersion);
 		}
 
 		return SystemSchema.select(session.getContext(), select.table())
-			.map(Results::of)
+			.map(resultSet -> Results.of(resultSet, protocolVersion))
 			.map(select::project)
 			.orElseGet(() -> unconfiguredTable(select.table()));
 	}
@@ -290,8 +313,8 @@ final class SeaStarRequestDispatcher {
 	 * id - which is what a real node does. There are no bind variables: none of these queries has
 	 * one, and the {@code WHERE} clause that could have carried one is ignored anyway.
 	 */
-	private Message prepareSystem(final String query) {
-		final var answer = system(query);
+	private Message prepareSystem(final String query, final int protocolVersion) {
+		final var answer = system(query, protocolVersion);
 		if (!(answer instanceof Rows rows)) {
 			// The table does not exist, and that is the same error an EXECUTE of it would give.
 			return answer;
@@ -304,7 +327,12 @@ final class SeaStarRequestDispatcher {
 			.array();
 		preparedSystem.put(ByteBuffer.wrap(id), query);
 
-		return new Prepared(id, null, new RowsMetadata(0, null, null, null), rows.getMetadata());
+		// The result metadata of a system query never changes, so its identifier can be the query's
+		// own id. At v4 the field is not written at all.
+		final var resultMetadataId = protocolVersion < ProtocolConstants.Version.V5 ? null : id;
+
+		return new Prepared(id, resultMetadataId, new RowsMetadata(0, null, null, null),
+			rows.getMetadata());
 	}
 
 	private static boolean isSystem(final SystemQuery select) {
@@ -331,9 +359,19 @@ final class SeaStarRequestDispatcher {
 	 * again. All three were taken off a {@code cassandra:5.0.8} container. A {@code USE} would have
 	 * failed the whole statement instead, and could not express "no keyspace" at all - which is what
 	 * a connection that never ran {@code USE} has to have while another connection has one.
+	 *
+	 * <p>Protocol v5 lets a single request name its own keyspace, which wins for that statement and
+	 * leaves the connection where it was. A v4 request cannot carry one - the driver refuses to send
+	 * it - so the argument is always null there.
+	 *
+	 * @param connection    the connection the request arrived on
+	 * @param perRequest    the keyspace this one request named, or {@code null} for the
+	 *                      connection's own
 	 */
-	private void selectKeyspace(final SeaStarConnection connection) {
-		session.setKeyspace(connection.keyspace());
+	private void selectKeyspace(final SeaStarConnection connection,
+		final @Nullable String perRequest) {
+		session.setKeyspace(
+			perRequest == null ? connection.keyspace() : CqlIdentifier.fromInternal(perRequest));
 	}
 
 	private CqlStatementSummary summarize(final String query) {
@@ -429,11 +467,11 @@ final class SeaStarRequestDispatcher {
 	 * rather than as an empty column list, which is what a real node sends.
 	 */
 	private static RowsMetadata metadata(final ColumnDefinitions definitions,
-		final List<Integer> partitionKeyIndices) {
+		final List<Integer> partitionKeyIndices, final int protocolVersion) {
 		final var pkIndices = partitionKeyIndices.stream().mapToInt(Integer::intValue).toArray();
 
 		return definitions.size() == 0 ? new RowsMetadata(0, null, pkIndices, null)
-			: new RowsMetadata(Results.specs(definitions), null, pkIndices, null);
+			: new RowsMetadata(Results.specs(definitions, protocolVersion), null, pkIndices, null);
 	}
 
 	private static DefaultBatchType batchType(final byte type) {

@@ -2,6 +2,7 @@ package com.tagadvance.seastar.server;
 
 import static java.util.Objects.requireNonNull;
 
+import com.datastax.oss.driver.api.core.connection.CrcMismatchException;
 import com.datastax.oss.driver.internal.core.protocol.FrameDecodingException;
 import com.datastax.oss.protocol.internal.Frame;
 import com.datastax.oss.protocol.internal.Message;
@@ -22,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import net.jcip.annotations.ThreadSafe;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +56,7 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 	private static final Map<String, List<String>> SUPPORTED_OPTIONS = Map.of(
 		Startup.CQL_VERSION_KEY, List.of("3.4.7"),
 		Startup.COMPRESSION_KEY, List.of(),
-		"PROTOCOL_VERSIONS", List.of("4/v4"));
+		"PROTOCOL_VERSIONS", Protocol.VERSIONS);
 
 	/**
 	 * The event types a {@code REGISTER} may name. A node rejects anything else rather than
@@ -68,13 +70,16 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 	private final Executor funnel;
 	private final SeaStarConnection connection;
 	private final Collection<SeaStarConnection> connections;
+	private final Framing framing;
 
 	SeaStarProtocolHandler(final SeaStarRequestDispatcher dispatcher, final Executor funnel,
-		final SeaStarConnection connection, final Collection<SeaStarConnection> connections) {
+		final SeaStarConnection connection, final Collection<SeaStarConnection> connections,
+		final Framing framing) {
 		this.dispatcher = requireNonNull(dispatcher, "dispatcher must not be null");
 		this.funnel = requireNonNull(funnel, "funnel must not be null");
 		this.connection = requireNonNull(connection, "connection must not be null");
 		this.connections = requireNonNull(connections, "connections must not be null");
+		this.framing = requireNonNull(framing, "framing must not be null");
 	}
 
 	@Override
@@ -109,11 +114,34 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		// A frame that will not decode leaves the stream unreadable, so answer and hang up. The
 		// stream id survives even a failed decode - the driver's FrameDecoder reads it off the
 		// header before giving up - which is what lets the client fail one request instead of all
-		// of them.
+		// of them. A segment that fails its CRC has no readable stream id at all: the corruption is
+		// in the framing rather than in a message, so the answer goes out on stream 0 and the
+		// connection ends, which is the only honest thing to do once the byte stream is in doubt.
 		final var streamId = cause instanceof FrameDecodingException e ? e.streamId : 0;
 		log.debug("closing {} after a frame error", ctx.channel(), cause);
-		Protocol.write(ctx, streamId, new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
-			"Malformed or undecodable frame: " + cause)).addListener(ChannelFutureListener.CLOSE);
+		Protocol.write(ctx, connection.version(), streamId,
+				new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, describe(cause)))
+			.addListener(ChannelFutureListener.CLOSE);
+	}
+
+	/**
+	 * Names a CRC mismatch for what it is rather than leaving it inside a decoder exception's
+	 * {@code toString}, because "the bytes on this connection are not the bytes that were sent" is
+	 * a different problem from "this message will not parse" and wants a different investigation.
+	 */
+	private static String describe(final Throwable cause) {
+		final var crcMismatch = crcMismatch(cause);
+
+		return crcMismatch == null ? "Malformed or undecodable frame: " + cause
+			: "CRC mismatch on a protocol v5 segment: " + crcMismatch.getMessage();
+	}
+
+	private static @Nullable Throwable crcMismatch(final @Nullable Throwable cause) {
+		if (cause == null) {
+			return null;
+		}
+
+		return cause instanceof CrcMismatchException ? cause : crcMismatch(cause.getCause());
 	}
 
 	private void respond(final ChannelHandlerContext ctx, final Frame request) {
@@ -124,11 +152,28 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 			log.warn("failed to answer {}", request.message, e);
 			response = new Error(ProtocolConstants.ErrorCode.SERVER_ERROR, String.valueOf(e));
 		}
-		Protocol.write(ctx, request.streamId, response);
+		Protocol.write(ctx, request.protocolVersion, request.streamId, response);
+		if (startsSegmentFraming(request, response)) {
+			// Not on the write's future, and not from here: both tasks are submitted to the channel's
+			// event loop from the funnel, in this order, so the READY is encoded in the legacy format
+			// before the pipeline changes underneath it. A future's listener could run inline on this
+			// thread instead, which would rearrange the pipeline from off the event loop.
+			ctx.channel().eventLoop().execute(() -> framing.segmented(ctx.pipeline()));
+		}
+	}
+
+	/**
+	 * Whether this exchange is the one after which protocol v5 stops using legacy frames. The
+	 * driver switches on receiving the {@code READY}; a server has to switch on having sent it.
+	 */
+	private static boolean startsSegmentFraming(final Frame request, final Message response) {
+		return request.message.opcode == ProtocolConstants.Opcode.STARTUP
+			&& response instanceof Ready
+			&& Protocol.isSegmented(request.protocolVersion);
 	}
 
 	private Message answer(final Frame request) {
-		if (request.protocolVersion != Protocol.VERSION) {
+		if (!Protocol.speaks(request.protocolVersion)) {
 			// ProtocolVersionGate has already turned away anything that opened at another version, so
 			// this is only reachable if a client changes version mid-connection. It also covers the
 			// one client-shaped corner of the driver's FrameDecoder: a v1 or v2 header makes it

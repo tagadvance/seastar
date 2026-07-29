@@ -144,6 +144,30 @@ statement is answered from memory here, so that window is the whole of the wait.
 a large schema should shorten it - the fidelity suite's own wire backend went from 190 s to under
 7 s doing exactly that - or turn schema metadata off if it does not read `getMetadata()`.
 
+## Protocol versions (`seastar-server`)
+
+| Version | What the listener does |
+| --- | --- |
+| v5 | served, with segment framing from the message after `READY` |
+| v4 | served, legacy framing throughout |
+| v3, v6-beta, DSE v1/v2 | refused with the `PROTOCOL_ERROR` that makes a driver retry one version lower |
+
+A driver that was never told which version to use starts at DSE v2 and walks down; it is refused
+three times and settles on v5. One that is pinned to v4 is served at v4, and one pinned to v3 or v6
+fails with `UnsupportedProtocolVersionException` after the refusal, exactly as it would against a
+node that does not speak them. `OPTIONS` advertises `4/v4, 5/v5`.
+
+What v5 changes, and it is only these three things: everything after `READY` travels in
+self-contained segments with a CRC24 over the header and a CRC32 over the payload, which are
+checked - a mismatch is a `PROTOCOL_ERROR` naming it, and the connection ends, because a byte
+stream that has been corrupted once cannot be resynchronized; `PREPARE` answers with a result
+metadata id where v4 sends none; and `duration` is described by its own protocol code rather than as
+a Cassandra marshaller class name. A request may also name its own keyspace, which is honoured for
+that statement and leaves the connection's own selection alone.
+
+Compression is refused at both versions - `STARTUP` asking for one is a `PROTOCOL_ERROR` naming it
+rather than a silent fallback. It buys nothing on a loopback socket.
+
 ## Server events (`seastar-server`)
 
 `REGISTER` is honoured, and a DDL statement produces both halves of what a driver expects: the
@@ -196,7 +220,9 @@ from a cluster's.
 - **Over the wire, a prepared statement is never evicted.** A node has a bounded cache and answers
   an id it has forgotten with `UNPREPARED` so the client re-prepares. `seastar-server` remembers
   every id for the life of the session, so that path is never exercised against it.
-- **Over the wire, `PreparedStatement#getResultMetadataId()` is null.** The listener speaks native
-  protocol v4, and the identifier arrived with v5; the driver documents the method as returning null
-  at v4 or lower whatever it is talking to, so a real node reached at v4 answers the same way. In
-  process there is no protocol and SeaStar computes a digest, so the two disagree.
+- **Over the wire, a prepared statement's result metadata id never changes.** A node reached at v5
+  answers an `EXECUTE` run after `ALTER TABLE` with a new identifier and the `METADATA_CHANGED`
+  flag, so the client can update its copy. SeaStar sends the same identifier throughout. Nothing is
+  lost by it, because `skip_metadata` is ignored and full column metadata is sent on every answer -
+  which the driver prefers over anything it holds locally - so a prepared `SELECT *` run after a
+  column is added still describes and returns the new column.

@@ -55,9 +55,9 @@ class RequestFunnelTest {
 				new SeaStarRequestDispatcher(session, systemTables, open), task -> funnel.execute(() -> {
 					answering.add(Thread.currentThread().getName());
 					task.run();
-				}), new SeaStarConnection(channel), open);
+				}), new SeaStarConnection(channel), open, new Framing(1024));
 			channel.pipeline().addLast(handler);
-			channel.writeInbound(Frame.forRequest(Protocol.VERSION, 1, false, Frame.NO_PAYLOAD,
+			channel.writeInbound(Frame.forRequest(Protocol.HIGHEST, 1, false, Frame.NO_PAYLOAD,
 				new Query("SELECT * FROM system.local")));
 
 			assertEquals("test-funnel", answering.poll(10, TimeUnit.SECONDS));

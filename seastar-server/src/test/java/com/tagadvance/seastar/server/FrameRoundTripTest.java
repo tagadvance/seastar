@@ -172,6 +172,33 @@ class FrameRoundTripTest {
 		assertEquals("SELECT * FROM ks.t", query.query, DECODER_HAZARD);
 	}
 
+	@Test
+	@DisplayName("the v5 switch leaves the pipeline in the order segments have to travel through")
+	void testSegmentedPipelineOrder() {
+		// The surgery itself, which nothing else can inspect: SegmentFramingTest proves segments work
+		// over a socket, but a pipeline assembled in the wrong order fails there as a hang rather than
+		// as anything legible. Outbound runs from the tail toward the head, so a frame has to meet the
+		// segment encoder before the byte encoder; inbound runs the other way.
+		final var framing = new Framing(MAX_FRAME_LENGTH);
+		final var channel = new EmbeddedChannel();
+		try {
+			channel.pipeline()
+				.addLast(Framing.FRAME_ENCODER, framing.frameEncoder())
+				.addLast(Framing.FRAME_DECODER, framing.frameDecoder());
+
+			framing.segmented(channel.pipeline());
+
+			assertEquals(List.of(Framing.BYTES_ENCODER, Framing.SEGMENT_ENCODER,
+					Framing.SEGMENT_DECODER, Framing.FRAME_FROM_SEGMENT_DECODER),
+				channel.pipeline().names().stream().filter(name -> !name.startsWith("DefaultChannel"))
+					.toList(),
+				"com.datastax.oss.driver.internal.core.protocol's segment handlers are used in the "
+					+ "server direction; a driver bump that renames or reorders them breaks v5.");
+		} finally {
+			channel.finishAndReleaseAll();
+		}
+	}
+
 	/**
 	 * Encodes a response through the listener's own encoder and reads it back with the driver's
 	 * client codec, which is what a connected driver does with it.

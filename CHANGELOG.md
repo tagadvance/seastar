@@ -14,7 +14,9 @@ else is internal - see [AGENTS.md](AGENTS.md) for the architecture and
 
 The `seastar-server` artifact ships one public type, `SeaStarProtocolServer`, which serves a
 session over Cassandra's native protocol for clients that cannot be pointed at an in-process one.
-It speaks protocol v4 and answers `QUERY`, `PREPARE`, `EXECUTE` and `BATCH`: rows and their column
+It speaks protocol v4 and v5 - a driver that was never told which to use negotiates its way to v5,
+with the CRC-checked segment framing that introduced - and answers `QUERY`, `PREPARE`, `EXECUTE` and
+`BATCH`: rows and their column
 metadata, `SET_KEYSPACE` for `USE`, `SCHEMA_CHANGE` for DDL, and the error code that rebuilds the
 same driver exception an in-process caller would have caught. The keyspace is tracked per
 connection, as on a real node. Paging is not implemented - deliberately, and legally: every answer

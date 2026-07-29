@@ -93,8 +93,11 @@ final class SystemTables {
 	/** What {@code OPTIONS} already advertises; captured from {@code cassandra:5.0.8}. */
 	private static final String CQL_VERSION = "3.4.7";
 
-	/** The one version this server serves. */
-	private static final String NATIVE_PROTOCOL_VERSION = "4";
+	/**
+	 * The highest version this server serves, which is what a node reports here - it also serves
+	 * v4, and a connection reading this row may well be on v4.
+	 */
+	private static final String NATIVE_PROTOCOL_VERSION = String.valueOf(Protocol.HIGHEST);
 
 	/**
 	 * The storage port a real node gossips on. SeaStar has no storage port and nothing listens here;
@@ -199,10 +202,11 @@ final class SystemTables {
 	}
 
 	/**
-	 * @param query a select against one of the keyspaces {@link #answers} claims
+	 * @param query           a select against one of the keyspaces {@link #answers} claims
+	 * @param protocolVersion the version of the connection it is going out on
 	 * @return the rows it asked for, or the error a node answers a table it does not have with
 	 */
-	Message select(final SystemQuery query) {
+	Message select(final SystemQuery query, final int protocolVersion) {
 		final var table = query.table();
 		final var columns = columns(query.keyspace(), table);
 		if (columns == null) {
@@ -215,7 +219,7 @@ final class SystemTables {
 		final var rows = KEYSPACE_NAME.equals(query.keyspace()) && "local".equals(table)
 			? List.of(local()) : List.<List<Object>>of();
 
-		return query.project(rows(query.keyspace(), table, columns, rows));
+		return query.project(rows(query.keyspace(), table, columns, rows, protocolVersion));
 	}
 
 	private static @Nullable List<Column> columns(final String keyspace, final String table) {
@@ -252,11 +256,12 @@ final class SystemTables {
 	 * opinion about the encoding anywhere in this module.
 	 */
 	private static Message rows(final String keyspace, final String table,
-		final List<Column> columns, final List<List<Object>> values) {
+		final List<Column> columns, final List<List<Object>> values, final int protocolVersion) {
 		final var specs = new ArrayList<ColumnSpec>(columns.size());
 		for (int i = 0; i < columns.size(); i++) {
 			final var column = columns.get(i);
-			specs.add(new ColumnSpec(keyspace, table, column.name(), i, RawTypes.of(column.type())));
+			specs.add(new ColumnSpec(keyspace, table, column.name(), i,
+				RawTypes.of(column.type(), protocolVersion)));
 		}
 
 		final var data = new ArrayDeque<List<ByteBuffer>>(values.size());
@@ -279,6 +284,9 @@ final class SystemTables {
 
 		final TypeCodec<Object> codec = CodecRegistry.DEFAULT.codecFor(type);
 
+		// The version is a formality here and V4 is the floor this server serves: every type these
+		// tables use - text, int, uuid, inet, set<text>, map<uuid,blob> - has encoded identically
+		// since v3, so a row written at V4 is byte-for-byte what a v5 connection expects.
 		return codec.encode(value, DefaultProtocolVersion.V4);
 	}
 

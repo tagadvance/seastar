@@ -15,16 +15,40 @@ import java.util.List;
 final class Protocol {
 
 	/**
-	 * The one version this server speaks. v5 wraps everything after the handshake in CRC-checked
-	 * segments, which is deferred (f_plan F1), and v3 predates several things the core relies on.
+	 * The versions this server speaks. v3 predates several things the core relies on, and v6 is a
+	 * beta a driver only reaches for when it is told to.
 	 */
-	static final int VERSION = ProtocolConstants.Version.V4;
+	static final int LOWEST = ProtocolConstants.Version.V4;
+	static final int HIGHEST = ProtocolConstants.Version.V5;
+
+	/** What {@code SUPPORTED} advertises, in the shape a node writes it. */
+	static final List<String> VERSIONS = List.of("4/v4", "5/v5");
 
 	/** version, flags, stream id, opcode, body length. Unchanged across v3 to v6. */
 	static final int HEADER_LENGTH = FrameCodec.V3_ENCODED_HEADER_SIZE;
 
 	private Protocol() {
 
+	}
+
+	/**
+	 * @param version the version byte a connection opened with
+	 * @return whether this server serves it
+	 */
+	static boolean speaks(final int version) {
+		return version >= LOWEST && version <= HIGHEST;
+	}
+
+	/**
+	 * Whether everything after the handshake is wrapped in CRC-checked segments. The
+	 * {@code OPTIONS}/{@code STARTUP} exchange is in the legacy format at every version; modern
+	 * framing begins with the message after {@code READY}.
+	 *
+	 * @param version the version this connection opened with
+	 * @return whether this connection uses segments
+	 */
+	static boolean isSegmented(final int version) {
+		return version >= ProtocolConstants.Version.V5;
 	}
 
 	/**
@@ -46,8 +70,8 @@ final class Protocol {
 	 */
 	static Error unsupportedVersion(final int version) {
 		return new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
-			"Invalid or unsupported protocol version (" + version
-				+ "); supported versions are (4/v4)");
+			"Invalid or unsupported protocol version (" + version + "); supported versions are ("
+				+ String.join(", ", VERSIONS) + ")");
 	}
 
 	/**
@@ -57,13 +81,15 @@ final class Protocol {
 	 * by nothing here, so all three are empty on every response (b_plan B7).
 	 *
 	 * @param ctx      the context to write from
+	 * @param version  the protocol version to write the header with, which is the version of the
+	 *                 request being answered
 	 * @param streamId the stream id of the request being answered
 	 * @param message  the message to send
 	 * @return the write's future, so that a caller can hang up once it has flushed
 	 */
-	static ChannelFuture write(final ChannelHandlerContext ctx, final int streamId,
-		final Message message) {
+	static ChannelFuture write(final ChannelHandlerContext ctx, final int version,
+		final int streamId, final Message message) {
 		return ctx.writeAndFlush(
-			Frame.forResponse(VERSION, streamId, null, Frame.NO_PAYLOAD, List.of(), message));
+			Frame.forResponse(version, streamId, null, Frame.NO_PAYLOAD, List.of(), message));
 	}
 }
