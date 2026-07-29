@@ -151,7 +151,21 @@ public class SeaStarCqlSession implements CqlSession {
 		return Optional.ofNullable(keyspace.get());
 	}
 
-	void setKeyspace(final CqlIdentifier identifier) {
+	/**
+	 * Selects the keyspace an unqualified statement resolves against, exactly as {@code USE} does but
+	 * without a statement, and without requiring that the keyspace exists.
+	 *
+	 * <p>This is public for one reason: Cassandra's native protocol keeps the selected keyspace
+	 * <em>per connection</em>, and a driver opens several connections to the same node, while a
+	 * session has only one. A server serving this session over the wire has to point it at the
+	 * keyspace the connection in hand selected, and it has to be able to point it at nothing.
+	 * {@code USE} cannot express "nothing", and it validates - where a real node remembers the name
+	 * a connection asked for whether or not the keyspace is still there, so that dropping a keyspace
+	 * and recreating it leaves the connection working.
+	 *
+	 * @param identifier the keyspace to select, or {@code null} to select none
+	 */
+	public void setKeyspace(final @Nullable CqlIdentifier identifier) {
 		keyspace.set(identifier);
 	}
 
