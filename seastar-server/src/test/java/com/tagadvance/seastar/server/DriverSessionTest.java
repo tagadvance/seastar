@@ -9,12 +9,15 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
+import com.datastax.oss.driver.api.core.cql.BatchStatement;
+import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.jspecify.annotations.NullMarked;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -163,19 +166,40 @@ class DriverSessionTest {
 	@Test
 	@DisplayName("a driver with no configuration at all connects and works")
 	void testStockConfiguration() {
-		// No config loader, no pinned protocol version, no metadata switched off - only the contact
-		// point and the datacenter, which a driver requires of everybody. This is the v2 target: a
-		// service's own production driver, unmodified, talking to SeaStar.
+		// No config loader, no pinned protocol version, no metadata switched off, no raised timeouts -
+		// only the contact point and the datacenter, which a driver requires of everybody. This is the
+		// v2 target: a service's own production driver, unmodified, talking to SeaStar. The sequence
+		// is deliberately every shape a harness uses rather than the shortest thing that proves a
+		// connection: a prepare, an execute, a batch, a select, a schema change, and a select after it.
 		try (final var connected = CqlSession.builder()
 			.addContactPoint(new InetSocketAddress(InetAddress.getLoopbackAddress(), server.port()))
 			.withLocalDatacenter("datacenter1")
 			.build()) {
 			connected.execute(KEYSPACE);
 			connected.execute(TABLE);
-			connected.execute("INSERT INTO harness.t (id, name) VALUES (3, 'three')");
 
-			assertEquals("three",
-				connected.execute("SELECT name FROM harness.t WHERE id = 3").one().getString("name"));
+			final var insert = connected.prepare("INSERT INTO harness.t (id, name) VALUES (?, ?)");
+			connected.execute(insert.bind(3, "three"));
+			connected.execute(BatchStatement.newInstance(DefaultBatchType.LOGGED, insert.bind(4, "four"),
+				insert.bind(5, "five")));
+
+			// By name rather than in order: rows come back in partition-token order, which is not
+			// insertion order and is not something a caller should be asserting on.
+			assertEquals(Set.of("three", "four", "five"),
+				connected.execute("SELECT name FROM harness.t")
+					.all()
+					.stream()
+					.map(row -> row.getString("name"))
+					.collect(Collectors.toSet()));
+
+			connected.execute("ALTER TABLE harness.t ADD extra text");
+			connected.execute("UPDATE harness.t SET extra = 'added' WHERE id = 3");
+
+			final var row = connected.execute("SELECT name, extra FROM harness.t WHERE id = 3").one();
+			assertNotNull(row);
+			assertEquals("three", row.getString("name"));
+			assertEquals("added", row.getString("extra"));
+
 			assertTrue(connected.getMetadata()
 				.getKeyspace(CqlIdentifier.fromInternal("harness"))
 				.isPresent());
