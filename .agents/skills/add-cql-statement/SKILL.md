@@ -30,7 +30,7 @@ For `javap` on a type: the classes are in the `cassandra-all` sources/binary jar
 
 ## 2. Determine real Cassandra failure behavior
 
-For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to `AbstractCqlSessionTest` asserting the behavior, then run it against the real server:
+For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to `AbstractCqlSessionTest` (`seastar/src/testFixtures`, so every backend runs it) asserting the behavior, then run it against the real server:
 
 ```bash
 ./gradlew :seastar:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest.<method>'
@@ -53,9 +53,21 @@ Reference the storage model in `CLAUDE.md`: `VolatileDriverContext` (keyspaces) 
 ## 4. Wire it up
 
 Register the handler in the `CqlHandlerRegistry` constructor call inside
-`SeaStarCqlRequestHandler` (the `new CqlHandlerRegistry(...)` list). Order matters only if two handlers' `canProcess` overlap; they normally don't.
+`SeaStarCqlSession#buildHandlerRegistry` (the `new CqlHandlerRegistry(...)` list). Order matters only if two handlers' `canProcess` overlap; they normally don't.
 
-## 5. Verify parity
+## 5. Say what it does to the schema, for the wire
+
+`:seastar-server` has to answer a statement with the right *protocol message*, and an `AsyncResultSet` cannot say which. `CqlStatementSummary.of(metadata, keyspace, query)` is what decides, and it is computed in `StatementSummaries` from the same parse tree - **before** the statement runs, because `DROP INDEX` names only the index and the table a driver must refresh can only be found while the index still exists.
+
+So if the new statement changes the schema or selects a keyspace, add a branch to `StatementSummaries.of(...)`:
+
+- schema change -> `SchemaChanged(CREATED|UPDATED|DROPPED, KEYSPACE|TABLE|TYPE, keyspace, object)`, which becomes a `SCHEMA_CHANGE` result to the connection that ran it, a `SCHEMA_CHANGE` event to every registered connection, and a bump of `system.local.schema_version`.
+- `USE`-like -> `KeyspaceSelected`, which becomes `SET_KEYSPACE`.
+- anything else -> `Result`, the default, where rows mean `ROWS` and no columns mean `VOID`.
+
+An index statement reports the **table** it indexes, not the index. Miss this step and a DDL statement answers `VOID` over the wire, and a connected driver keeps stale metadata for it while working perfectly in process - which is why it is a step rather than a note. `WireStatementTest` is where a case gets pinned.
+
+## 6. Verify parity
 
 Run the fast SeaStar test, which must now pass with the same assertions the container test passed:
 
@@ -63,7 +75,15 @@ Run the fast SeaStar test, which must now pass with the same assertions the cont
 ./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.<method>'
 ```
 
-Both `SeaStarCqlSessionTest` and `ContainerCqlSessionTest` extend `AbstractCqlSessionTest`, so one test method runs against both the fake and real Cassandra. Green on both = parity achieved.
+`SeaStarCqlSessionTest`, `ContainerCqlSessionTest` and `:seastar-server`'s `WireCqlSessionTest` all extend `AbstractCqlSessionTest`, so one test method runs in process, against real Cassandra, and over a socket. Green on all three = parity achieved. The wire backend needs no Docker and is on the default build:
+
+```bash
+./gradlew :seastar-server:test --tests 'com.tagadvance.seastar.server.WireCqlSessionTest'
+```
+
+## 7. Update the matrix
+
+Add or move the statement's row in `docs/support-matrix.md`, and delete it from `UnsupportedStatements` if it was being rejected by name. Supporting a feature is deleting a row; rejecting one is adding a row.
 
 ## Notes
 

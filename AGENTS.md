@@ -360,7 +360,8 @@ SeaStar currently deserializes and re-serializes row data rather than storing it
 3. Register it in the `CqlHandlerRegistry` construction inside `SeaStarCqlSession#buildHandlerRegistry`.
 4. Match real Cassandra's failure behavior — throw the same driver exception type (`AlreadyExistsException`, `InvalidQueryException`, …) that a live cluster would.
 5. If the statement changes a table or a type, announce it through `SchemaChanges` so cached prepared statements naming it are re-resolved.
-6. Update [docs/support-matrix.md](docs/support-matrix.md), and remove the statement from `UnsupportedStatements` if it was being rejected.
+6. If it changes the schema or selects a keyspace, add a branch to `StatementSummaries` so `CqlStatementSummary` says so. That is the only thing telling `:seastar-server` to answer `SCHEMA_CHANGE` or `SET_KEYSPACE` rather than `VOID`; miss it and the statement works in process and leaves a connected driver holding stale metadata. An index statement reports the table it indexes.
+7. Update [docs/support-matrix.md](docs/support-matrix.md), and remove the statement from `UnsupportedStatements` if it was being rejected.
 
 ## Code Style
 
