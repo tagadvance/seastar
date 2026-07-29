@@ -160,7 +160,7 @@ class FrameRoundTripTest {
 	}
 
 	@Test
-	@DisplayName("a request split across two reads is reassembled rather than lost")
+	@DisplayName("a request split across four reads is reassembled rather than lost")
 	void testRequestSplitAcrossReads() {
 		// The reassembly is the half of FrameDecoder that is not FrameCodec: it is a
 		// LengthFieldBasedFrameDecoder, and a socket is free to deliver a frame in as many pieces as
