@@ -106,6 +106,37 @@ driver reads the answer as complete and stops asking. Two consequences:
   come from this server and this server never issues one; ignoring it would answer page one forever,
   which is an infinite loop in the client rather than a slow answer.
 
+## The system keyspaces (`seastar-server`)
+
+A driver queries the node about itself before `CqlSession.builder().build()` returns, and again on
+every schema change. `seastar-server` answers those queries itself rather than from the model, so
+**an in-process user who never starts a server sees no system keyspaces at all** - `getKeyspaces()`
+holds only what was created.
+
+| Keyspace | Over the wire | In process |
+| --- | --- | --- |
+| `system.local` | one row describing the listener | not present |
+| `system.peers`, `system.peers_v2` | empty, with full column metadata - one node has no peers | not present |
+| `system_schema.*` | all eight tables, projected live from the model | not present; `SystemSchema.select` is a projection, not a keyspace |
+| `system_virtual_schema.*` | all three tables, empty - SeaStar has no virtual tables | not present |
+| `system_auth`, `system_traces`, `system_distributed`, anything else | `InvalidQueryException` naming the table | not present |
+
+What `system.local` reports: `partitioner` is Murmur3, which is what the core actually hashes
+partition keys with; `release_version` is `5.0.8`, matching the `cassandra-all` pin; `tokens` is the
+single token that owns the whole ring; `host_id` is generated once per server. The datacenter, the
+rack and the cluster name default to `datacenter1`, `rack1` and `SeaStar`, and are settable on
+`SeaStarProtocolServer.builder()`. **The datacenter has to match the driver's
+`withLocalDatacenter(...)`**: a mismatch leaves the node `IGNORED`, the session still builds, and
+the first statement fails saying only that no node was available.
+
+`schema_version` is a real UUID that changes when a DDL statement runs, which is what lets the
+driver's schema-agreement check pass immediately instead of waiting out its ten-second timeout on
+every DDL statement.
+
+Everything else a node keeps in `system` is absent, and a `WHERE` clause on one of these tables is
+matched and then ignored - `system.local` has one row, so restricting it would be a predicate that
+is always true.
+
 ## Known gaps within supported statements
 
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ

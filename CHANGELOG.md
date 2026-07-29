@@ -18,6 +18,11 @@ It speaks protocol v4 and answers `QUERY`, `PREPARE`, `EXECUTE` and `BATCH`: row
 metadata, `SET_KEYSPACE` for `USE`, `SCHEMA_CHANGE` for DDL, and the error code that rebuilds the
 same driver exception an in-process caller would have caught. The keyspace is tracked per
 connection, as on a real node. Paging is not implemented - deliberately, and legally: every answer
-is one page, `page_size` is ignored and a paging state in a request is refused. The system tables a
-driver queries while connecting are not answered yet, so a full `CqlSession` does not open against
-it.
+is one page, `page_size` is ignored and a paging state in a request is refused.
+
+It answers the system keyspaces a driver reads on its way in - `system.local`, `system.peers`,
+`system.peers_v2`, all of `system_schema` and all of `system_virtual_schema` - so an ordinary
+`CqlSession` connects to it with no configuration beyond the contact point and the datacenter, and
+builds its own schema metadata. None of them exist in the model: an in-process user who never starts
+a server sees no system keyspaces. The datacenter, the rack and the cluster name the listener
+reports are settable on its builder.
