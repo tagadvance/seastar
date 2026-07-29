@@ -202,6 +202,26 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 		return new NoopNodeStateListener(this);
 	}
 
+	/**
+	 * The version this session's codecs encode and decode values with. It is deliberately
+	 * <strong>not</strong> the version of any socket, and must not be made to track one.
+	 *
+	 * <p>An in-process session is on no protocol at all: nothing here is ever framed. What the value
+	 * is used for is choosing a codec's serialization format, and every type SeaStar supports has
+	 * encoded identically since v3 - which is what lets {@code seastar-server} re-serve these bytes
+	 * unchanged to a client on any version it speaks.
+	 *
+	 * <p>Nor could it name a wire version even if it wanted to. One session can back a listener
+	 * serving a v4 connection and a v5 connection at the same time, so there is no single version
+	 * that would be true of it; the version is per connection and lives there. A client reached over
+	 * the wire reads its own driver context, never this one.
+	 *
+	 * <p>Raising it would therefore change no encoding, but it would start claiming protocol
+	 * features - per-request keyspaces, {@code now_in_seconds}, modern framing - that the in-process
+	 * path does not implement and that driver code gates on the version to decide about.
+	 * {@link ProtocolVersion#DEFAULT} is also what the real driver uses for a detached value, so a
+	 * detached {@code UdtValue} compares like for like.
+	 */
 	@Override
 	@NonNull
 	public ProtocolVersion getProtocolVersion() {
