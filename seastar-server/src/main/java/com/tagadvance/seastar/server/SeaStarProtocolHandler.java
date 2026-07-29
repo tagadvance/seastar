@@ -6,6 +6,7 @@ import com.datastax.oss.driver.internal.core.protocol.FrameDecodingException;
 import com.datastax.oss.protocol.internal.Frame;
 import com.datastax.oss.protocol.internal.Message;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
+import com.datastax.oss.protocol.internal.request.Register;
 import com.datastax.oss.protocol.internal.request.Startup;
 import com.datastax.oss.protocol.internal.response.AuthSuccess;
 import com.datastax.oss.protocol.internal.response.Error;
@@ -14,8 +15,10 @@ import com.datastax.oss.protocol.internal.response.Supported;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import net.jcip.annotations.ThreadSafe;
@@ -53,13 +56,39 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		Startup.COMPRESSION_KEY, List.of(),
 		"PROTOCOL_VERSIONS", List.of("4/v4"));
 
+	/**
+	 * The event types a {@code REGISTER} may name. A node rejects anything else rather than
+	 * accepting a subscription it will never honour, and so does this.
+	 */
+	private static final Set<String> EVENT_TYPES = Set.of(
+		ProtocolConstants.EventType.TOPOLOGY_CHANGE, ProtocolConstants.EventType.STATUS_CHANGE,
+		ProtocolConstants.EventType.SCHEMA_CHANGE);
+
 	private final SeaStarRequestDispatcher dispatcher;
 	private final Executor funnel;
-	private final SeaStarConnection connection = new SeaStarConnection();
+	private final SeaStarConnection connection;
+	private final Collection<SeaStarConnection> connections;
 
-	SeaStarProtocolHandler(final SeaStarRequestDispatcher dispatcher, final Executor funnel) {
+	SeaStarProtocolHandler(final SeaStarRequestDispatcher dispatcher, final Executor funnel,
+		final SeaStarConnection connection, final Collection<SeaStarConnection> connections) {
 		this.dispatcher = requireNonNull(dispatcher, "dispatcher must not be null");
 		this.funnel = requireNonNull(funnel, "funnel must not be null");
+		this.connection = requireNonNull(connection, "connection must not be null");
+		this.connections = requireNonNull(connections, "connections must not be null");
+	}
+
+	@Override
+	public void channelActive(final ChannelHandlerContext ctx) throws Exception {
+		// Joining the roll of open connections here rather than at construction, so that a
+		// connection is only ever published to once there is a channel able to carry the write.
+		connections.add(connection);
+		super.channelActive(ctx);
+	}
+
+	@Override
+	public void channelInactive(final ChannelHandlerContext ctx) throws Exception {
+		connections.remove(connection);
+		super.channelInactive(ctx);
 	}
 
 	@Override
@@ -111,9 +140,7 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		return switch (request.message.opcode) {
 			case ProtocolConstants.Opcode.OPTIONS -> new Supported(SUPPORTED_OPTIONS);
 			case ProtocolConstants.Opcode.STARTUP -> startup((Startup) request.message);
-			// Events are not published at all yet (f_plan F2), so registering for them records
-			// nothing. Answering READY is what a node does and what the driver's init expects.
-			case ProtocolConstants.Opcode.REGISTER -> new Ready();
+			case ProtocolConstants.Opcode.REGISTER -> register((Register) request.message);
 			// Never sent unprompted by this server: replying READY to STARTUP means "no
 			// authentication required", which a driver without credentials expects and a driver
 			// with them tolerates. Handled anyway, in case one offers a token regardless.
@@ -124,6 +151,25 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 			default -> new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
 				"Unsupported request opcode: " + request.message.opcode);
 		};
+	}
+
+	/**
+	 * Records what this connection wants to be told about, and answers {@code READY}.
+	 *
+	 * <p>Only {@code SCHEMA_CHANGE} is ever published. A single node that is up for as long as the
+	 * server is bound has no topology or status change to report, so registering for those two is
+	 * accepted and correctly produces nothing.
+	 */
+	private Message register(final Register request) {
+		for (final var eventType : request.eventTypes) {
+			if (!EVENT_TYPES.contains(eventType)) {
+				return new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
+					"Invalid value '" + eventType + "' for Type");
+			}
+		}
+		connection.register(request.eventTypes);
+
+		return new Ready();
 	}
 
 	private static Message startup(final Startup request) {

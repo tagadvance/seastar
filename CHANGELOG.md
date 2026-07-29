@@ -20,6 +20,11 @@ same driver exception an in-process caller would have caught. The keyspace is tr
 connection, as on a real node. Paging is not implemented - deliberately, and legally: every answer
 is one page, `page_size` is ignored and a paging state in a request is refused.
 
+`REGISTER` is honoured: a DDL statement produces a `SCHEMA_CHANGE` result on the connection that ran
+it and a `SCHEMA_CHANGE` event on every connection registered for one, so a second client watching
+the same server keeps its metadata current. `TOPOLOGY_CHANGE` and `STATUS_CHANGE` never fire, there
+being one node that is up for as long as the server is bound.
+
 It answers the system keyspaces a driver reads on its way in - `system.local`, `system.peers`,
 `system.peers_v2`, all of `system_schema` and all of `system_virtual_schema` - so an ordinary
 `CqlSession` connects to it with no configuration beyond the contact point and the datacenter, and

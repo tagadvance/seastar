@@ -10,9 +10,11 @@ import com.tagadvance.seastar.SeaStarCqlSession;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -47,12 +49,14 @@ class RequestFunnelTest {
 		try {
 			final var systemTables = new SystemTables("SeaStar", "datacenter1", "rack1",
 				InetAddress.getLoopbackAddress(), () -> 9042);
+			final Collection<SeaStarConnection> open = ConcurrentHashMap.newKeySet();
+			final var channel = new EmbeddedChannel();
 			final var handler = new SeaStarProtocolHandler(
-				new SeaStarRequestDispatcher(session, systemTables), task -> funnel.execute(() -> {
+				new SeaStarRequestDispatcher(session, systemTables, open), task -> funnel.execute(() -> {
 					answering.add(Thread.currentThread().getName());
 					task.run();
-				}));
-			final var channel = new EmbeddedChannel(handler);
+				}), new SeaStarConnection(channel), open);
+			channel.pipeline().addLast(handler);
 			channel.writeInbound(Frame.forRequest(Protocol.VERSION, 1, false, Frame.NO_PAYLOAD,
 				new Query("SELECT * FROM system.local")));
 
