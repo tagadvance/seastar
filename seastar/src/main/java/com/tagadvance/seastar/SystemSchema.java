@@ -90,6 +90,11 @@ public final class SystemSchema {
 	 * {@code NullPointerException}.
 	 */
 	private static final Set<String> TABLE_FLAGS = Set.of("compound");
+	/**
+	 * The same, for a table holding a counter column. A node writes {@code counter} beside
+	 * {@code compound} there; nothing in the driver reads it, but it is what the row says.
+	 */
+	private static final Set<String> COUNTER_TABLE_FLAGS = Set.of("compound", "counter");
 
 	private static final DataType MAP_OF_TEXT_TO_TEXT = DataTypes.frozenMapOf(DataTypes.TEXT,
 		DataTypes.TEXT);
@@ -225,7 +230,7 @@ public final class SystemSchema {
 		keyspaces(context).forEach(keyspace -> tables(keyspace).forEach(
 			table -> rows.add(row(keyspace.name().asInternal(), table.getName().asInternal(), "99p",
 				null, 0.01d, DEFAULT_CACHING, null, "", DEFAULT_COMPACTION, DEFAULT_COMPRESSION, 1.0d,
-				0.0d, 0, Map.<String, ByteBuffer>of(), TABLE_FLAGS, 864000, table.getId().orElse(null),
+				0.0d, 0, Map.<String, ByteBuffer>of(), flags(table), 864000, table.getId().orElse(null),
 				null, 2048, null, 0, 128, "BLOCKING", 0.0d, "99p"))));
 
 		return rows;
@@ -333,6 +338,19 @@ public final class SystemSchema {
 			.values()
 			.stream()
 			.sorted(comparing(table -> table.getName().asInternal()));
+	}
+
+	/**
+	 * The flags a node writes for a table: {@code compound} always, plus {@code counter} when the
+	 * table holds a counter column.
+	 */
+	private static Set<String> flags(final SeaStarTable table) {
+		final var isCounter = table.getColumns()
+			.values()
+			.stream()
+			.anyMatch(column -> DataTypes.COUNTER.equals(column.getType()));
+
+		return isCounter ? COUNTER_TABLE_FLAGS : TABLE_FLAGS;
 	}
 
 	private static Map<String, String> options(final IndexMetadata index) {
