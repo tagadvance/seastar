@@ -33,8 +33,10 @@ For `javap` on a type: the classes are in the `cassandra-all` sources/binary jar
 For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to `AbstractCqlSessionTest` (`seastar/src/testFixtures`, so every backend runs it) asserting the behavior, then run it against the real server:
 
 ```bash
-./gradlew :seastar:test --tests 'com.tagadvance.seastar.ContainerCqlSessionTest.<method>'
+./gradlew :seastar:containerTest --tests 'com.tagadvance.seastar.ContainerCqlSessionTest'
 ```
+
+Note both halves of that command. The container backend is on the `containerTest` task, not `test`, which excludes it - and the suite is ordered and stateful, so a **single-method** filter fails with *keyspace foo does not exist* instead of running your test. Filter to the class.
 
 `ContainerCqlSessionTest` needs Docker (Testcontainers). Note the exception **type** (`AlreadyExistsException`, `InvalidQueryException`, `InvalidQueryException` subtypes, ...) and roughly the message. Existing handlers show the pattern: construct with `executionInfo.getCoordinator()`.
 
@@ -72,7 +74,7 @@ An index statement reports the **table** it indexes, not the index. Miss this st
 Run the fast SeaStar test, which must now pass with the same assertions the container test passed:
 
 ```bash
-./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.<method>'
+./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'
 ```
 
 `SeaStarCqlSessionTest`, `ContainerCqlSessionTest` and `:seastar-server`'s `WireCqlSessionTest` all extend `AbstractCqlSessionTest`, so one test method runs in process, against real Cassandra, and over a socket. Green on all three = parity achieved. The wire backend needs no Docker and is on the default build:
