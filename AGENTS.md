@@ -63,9 +63,12 @@ JMH is only used for the warm per-statement work. Startup, the parser breakdown 
 
 ## Architecture
 
-### Two dependencies that must not be confused
+### Three dependencies that must not be confused
 - **`java-driver-core` (client side)** — the DataStax driver whose public interfaces (`CqlSession`, `Statement`, `AsyncResultSet`, `KeyspaceMetadata`, `DriverContext`, …) SeaStar implements so existing client code can use it as a drop-in.
 - **`cassandra-all` (server side)** — the actual Cassandra server library. SeaStar borrows its CQL parser: `QueryProcessor.parseStatement(query)` turns a CQL string into a `CQLStatement.Raw` parse tree. SeaStar never runs a Cassandra node; it only uses the parser.
+- **`native-protocol` (neither, and this is the one that gets misfiled)** — `com.datastax.oss:native-protocol`, a standalone codec for Cassandra's binary protocol: `Message` and its subtypes, `Frame`, `FrameCodec`, `Segment`, `RawType`, `ProtocolConstants`. It is not the driver's public API and it is not Cassandra; it is the wire format the two ends share, and it encodes and decodes in **both** directions. `:seastar-server` uses it to read requests and write responses, which is exactly what `FrameCodec.defaultServer(...)` exists for — **serving with it is its intended purpose, not a hack.** It arrives transitively through `java-driver-core` and `:seastar-server` declares it anyway, because an implicit transitive is not a contract.
+
+Only `:seastar-server` sees the third. `:seastar` never names a protocol type: an in-process session has no wire, and `VolatileDriverContext#getProtocolVersion()` returning `ProtocolVersion.DEFAULT` is a codec setting rather than a claim about one (its javadoc says why).
 
 ### Request pipeline
 Each SeaStar class is deliberately **analogous to** a driver-internal class (the Javadoc says so). The flow:
