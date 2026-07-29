@@ -175,6 +175,12 @@ driver API plus two purpose-built additions, `CqlStatementSummary` and
   the selected keyspace leaves unqualified statements failing on it while qualified ones elsewhere
   keep working, and recreating it makes the connection work again. `USE` can express none of that,
   which is why `setKeyspace` exists.
+- **A schema change is announced twice, on purpose.** The `SCHEMA_CHANGE` result goes back to the
+  connection that ran the DDL; a `SCHEMA_CHANGE` event goes to every connection whose `REGISTER`
+  asked for one, on a negative stream id. A driver needs both - the result is how the client that
+  changed the schema finds out, the event is how every other client does. `SeaStarConnection` holds
+  the registration, the dispatcher publishes from the funnel, and the write itself is Netty's, on
+  the target channel's own event loop. `TOPOLOGY_CHANGE` and `STATUS_CHANGE` never fire.
 - **Paging is not implemented and that is protocol-legal.** Rows metadata with no paging state means
   "last page". `page_size` is accepted and ignored; a paging state in a request is a
   `PROTOCOL_ERROR`, because ignoring one is an infinite loop in the client rather than a slow

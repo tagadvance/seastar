@@ -22,6 +22,7 @@ import com.datastax.oss.protocol.internal.request.Prepare;
 import com.datastax.oss.protocol.internal.request.Query;
 import com.datastax.oss.protocol.internal.request.query.QueryOptions;
 import com.datastax.oss.protocol.internal.response.Error;
+import com.datastax.oss.protocol.internal.response.Event;
 import com.datastax.oss.protocol.internal.response.error.Unprepared;
 import com.datastax.oss.protocol.internal.response.result.Prepared;
 import com.datastax.oss.protocol.internal.response.result.Rows;
@@ -32,6 +33,7 @@ import com.tagadvance.seastar.SystemSchema;
 import com.tagadvance.seastar.handlers.CqlStatementSummary;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -70,6 +72,7 @@ final class SeaStarRequestDispatcher {
 
 	private final SeaStarCqlSession session;
 	private final SystemTables systemTables;
+	private final Collection<SeaStarConnection> connections;
 	private final PreparedStatements prepared = new PreparedStatements();
 
 	/**
@@ -79,9 +82,11 @@ final class SeaStarRequestDispatcher {
 	 */
 	private final Map<ByteBuffer, String> preparedSystem = new ConcurrentHashMap<>();
 
-	SeaStarRequestDispatcher(final SeaStarCqlSession session, final SystemTables systemTables) {
+	SeaStarRequestDispatcher(final SeaStarCqlSession session, final SystemTables systemTables,
+		final Collection<SeaStarConnection> connections) {
 		this.session = requireNonNull(session, "session must not be null");
 		this.systemTables = requireNonNull(systemTables, "systemTables must not be null");
+		this.connections = requireNonNull(connections, "connections must not be null");
 	}
 
 	/**
@@ -218,13 +223,35 @@ final class SeaStarRequestDispatcher {
 		if (summary instanceof CqlStatementSummary.KeyspaceSelected selected) {
 			connection.keyspace(CqlIdentifier.fromInternal(selected.keyspace()));
 		}
-		if (summary instanceof CqlStatementSummary.SchemaChanged) {
+		if (summary instanceof CqlStatementSummary.SchemaChanged changed) {
 			// Before the response goes out, so that the schema-agreement check the driver runs on
 			// seeing it already reads the new version.
 			systemTables.schemaChanged();
+			publish(Results.event(changed));
 		}
 
 		return response;
+	}
+
+	/**
+	 * Tells every connection that registered for one that the schema moved (f_plan F2).
+	 *
+	 * <p>The result of a DDL statement goes back to the connection that ran it and nowhere else, so
+	 * without this a second client watching the same server never learns that anything happened -
+	 * which is exactly what a driver registers for {@code SCHEMA_CHANGE} to find out.
+	 *
+	 * <p>An event may be sent at any time, including between a request and its response, so no
+	 * attempt is made to order this against the result of the statement that caused it. On the
+	 * connection that ran the DDL both arrive; the protocol requires neither to be first, and a
+	 * client routes them apart by stream id rather than by order.
+	 *
+	 * @param event the event to publish, or {@code null} if the statement changed nothing after all
+	 */
+	private void publish(final @Nullable Event event) {
+		if (event == null) {
+			return;
+		}
+		connections.forEach(connection -> connection.publish(event));
 	}
 
 	/**

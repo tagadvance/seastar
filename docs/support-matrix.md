@@ -144,6 +144,24 @@ statement is answered from memory here, so that window is the whole of the wait.
 a large schema should shorten it - the fidelity suite's own wire backend went from 190 s to under
 7 s doing exactly that - or turn schema metadata off if it does not read `getMetadata()`.
 
+## Server events (`seastar-server`)
+
+`REGISTER` is honoured, and a DDL statement produces both halves of what a driver expects: the
+`SCHEMA_CHANGE` result on the connection that ran it, and a `SCHEMA_CHANGE` event on every
+connection registered for one. That is what keeps a second client's metadata current when it was
+not the one that changed the schema.
+
+| Event | When it fires |
+| --- | --- |
+| `SCHEMA_CHANGE` | every DDL statement that actually changes something |
+| `TOPOLOGY_CHANGE` | never - there is one node and no membership to change |
+| `STATUS_CHANGE` | never - the node is up for as long as the server is bound |
+
+Registering for the latter two is accepted and correctly produces nothing; naming an event type
+that does not exist is a `PROTOCOL_ERROR`. An event may be sent at any time, so nothing orders it
+against the result of the statement that caused it - a client tells them apart by stream id, which
+is negative on an event.
+
 ## Known gaps within supported statements
 
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ

@@ -23,6 +23,8 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -72,8 +74,10 @@ import org.jspecify.annotations.Nullable;
  *       tracing id. One is never fabricated.</li>
  *   <li><strong>Custom payloads</strong> - carried by the frame, read by nothing here.</li>
  *   <li><strong>Warnings</strong> - always empty.</li>
- *   <li><strong>Server events</strong> - {@code REGISTER} is accepted and recorded nowhere; no
- *       schema, topology or status event is ever published.</li>
+ *   <li><strong>Topology and status events</strong> - {@code REGISTER} is honoured, but only
+ *       {@code SCHEMA_CHANGE} is ever published. There is one node and it is up for as long as the
+ *       server is bound, so a topology or status change would be a lie rather than an omission.
+ *       </li>
  *   <li><strong>Authentication</strong> - {@code STARTUP} is always answered {@code READY}, which
  *       means "none required". Credentials, if a client offers them anyway, are accepted
  *       unexamined.</li>
@@ -154,7 +158,11 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 		final var frameCodec = FrameCodec.defaultServer(
 			new ByteBufPrimitiveCodec(ByteBufAllocator.DEFAULT), Compressor.none());
 		final var encoder = new FrameEncoder(frameCodec, MAX_FRAME_LENGTH);
-		final var dispatcher = new SeaStarRequestDispatcher(session, systemTables);
+		// Every connection currently open, for the events that are pushed to the ones watching
+		// rather than answered to the one that asked. A connection joins when its channel goes
+		// active and leaves when it goes inactive, both on that channel's own event loop.
+		final Collection<SeaStarConnection> open = ConcurrentHashMap.newKeySet();
+		final var dispatcher = new SeaStarRequestDispatcher(session, systemTables, open);
 
 		final var bootstrap = new ServerBootstrap().group(acceptors, workers)
 			.channel(NioServerSocketChannel.class)
@@ -163,13 +171,15 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 				@Override
 				protected void initChannel(final SocketChannel channel) {
 					connections.add(channel);
+					final var connection = new SeaStarConnection(channel);
 					// The version gate goes ahead of the decoder because the versions worth turning
 					// away include ones the decoder cannot read at all - see ProtocolVersionGate.
 					channel.pipeline()
 						.addLast("frameEncoder", encoder)
 						.addLast("versionGate", new ProtocolVersionGate())
 						.addLast("frameDecoder", new FrameDecoder(frameCodec, MAX_FRAME_LENGTH))
-						.addLast("dispatch", new SeaStarProtocolHandler(dispatcher, funnel));
+						.addLast("dispatch",
+							new SeaStarProtocolHandler(dispatcher, funnel, connection, open));
 				}
 			});
 

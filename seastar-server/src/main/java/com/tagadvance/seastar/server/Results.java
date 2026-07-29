@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.protocol.internal.Message;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
 import com.datastax.oss.protocol.internal.response.result.ColumnSpec;
+import com.datastax.oss.protocol.internal.response.event.SchemaChangeEvent;
 import com.datastax.oss.protocol.internal.response.result.DefaultRows;
 import com.datastax.oss.protocol.internal.response.result.RowsMetadata;
 import com.datastax.oss.protocol.internal.response.result.SchemaChange;
@@ -51,10 +52,27 @@ final class Results {
 			return new SetKeyspace(selected.keyspace());
 		}
 		if (summary instanceof CqlStatementSummary.SchemaChanged changed) {
-			return schemaChange(changed);
+			final var change = schemaChange(changed);
+
+			return change == null ? Void.INSTANCE : change;
 		}
 
 		return of(resultSet);
+	}
+
+	/**
+	 * The same schema change again, as the event pushed to every connection that registered for
+	 * one. The driver expects both: the result tells the connection that ran the DDL, the event
+	 * tells every other client watching.
+	 *
+	 * @param changed what the statement changed, as the core summarized it before it ran
+	 * @return the event to publish, or {@code null} if nothing actually changed
+	 */
+	static @Nullable SchemaChangeEvent event(final CqlStatementSummary.SchemaChanged changed) {
+		final var change = schemaChange(changed);
+
+		return change == null ? null : new SchemaChangeEvent(change.changeType, change.target,
+			change.keyspace, change.object, change.arguments);
 	}
 
 	/**
@@ -109,12 +127,17 @@ final class Results {
 		return new DefaultRows(new RowsMetadata(specs(definitions), null, null, null), data);
 	}
 
-	private static Message schemaChange(final CqlStatementSummary.SchemaChanged changed) {
+	/**
+	 * @return the change, or {@code null} if the statement turned out to change nothing - which a
+	 *     node answers {@code VOID} and tells nobody about
+	 */
+	private static @Nullable SchemaChange schemaChange(
+		final CqlStatementSummary.SchemaChanged changed) {
 		if (changed.target() != CqlStatementSummary.Target.KEYSPACE && changed.object() == null) {
 			// Only DROP INDEX can get here, and only when the index was not found - which means an
 			// IF EXISTS that did nothing, since anything else has already failed. There is no table to
 			// name and nothing changed, so VOID is both what can be said and what a node would send.
-			return Void.INSTANCE;
+			return null;
 		}
 
 		final var target = switch (changed.target()) {
