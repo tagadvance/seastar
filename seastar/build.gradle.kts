@@ -1,5 +1,6 @@
 plugins {
     id("seastar.java-conventions")
+    id("seastar.benchmark-conventions")
     `java-test-fixtures`
     id("me.champeau.jmh") version "0.7.3"
 }
@@ -94,14 +95,9 @@ jmh {
     (project.findProperty("jmhIncludes") as String?)?.let { includes = it.split(",") }
 }
 
-// gradle.properties turns on parallel execution, which would let two benchmark tasks share the CPU
-// and quietly ruin both. This service serializes them however they are invoked.
-abstract class BenchmarkExclusivity : BuildService<BuildServiceParameters.None>
-
-val benchmarkExclusivity =
-    gradle.sharedServices.registerIfAbsent("benchmarkExclusivity", BenchmarkExclusivity::class) {
-        maxParallelUsages = 1
-    }
+// Registered by seastar.benchmark-conventions, so that :seastar-server's wire benchmarks are
+// serialized against these ones and not only against each other.
+val benchmarkExclusivity = gradle.sharedServices.registrations["benchmarkExclusivity"].service
 
 tasks.named<me.champeau.jmh.JMHTask>("jmh") {
     usesService(benchmarkExclusivity)
