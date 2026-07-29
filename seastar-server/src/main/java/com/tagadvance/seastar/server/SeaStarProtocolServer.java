@@ -80,9 +80,11 @@ import org.jspecify.annotations.Nullable;
  *   <li><strong>Paging</strong> - every answer is one page, which is protocol-legal: a node may
  *       always return everything, and result metadata with no paging state is what says so. A page
  *       size in a request is ignored; a paging state is refused, since none was ever issued.</li>
- *   <li><strong>The system tables</strong> - not answered yet, so a full {@code CqlSession} does
- *       not open against this server. Its control connection queries {@code system.local} before
- *       it will finish connecting.</li>
+ *   <li><strong>The rest of the system keyspaces</strong> - {@code system.local},
+ *       {@code system.peers}, {@code system.peers_v2} and all of {@code system_schema} are
+ *       answered; {@code system_auth}, {@code system_traces} and {@code system_distributed} are
+ *       not, and neither is any other table of {@code system}. One arriving is an {@code INVALID}
+ *       naming it, which is what a node with the table switched off would say.</li>
  *   <li><strong>TLS</strong> - not implemented. This is a loopback test socket.</li>
  * </ul>
  */
@@ -100,6 +102,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 	private final SeaStarCqlSession session;
 	private final InetAddress bindAddress;
 	private final int requestedPort;
+	private final SystemTables systemTables;
 	private final int id = SERVER_COUNT.incrementAndGet();
 
 	private final AtomicBoolean started = new AtomicBoolean();
@@ -112,6 +115,10 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 			"a session is required to serve one; call Builder#session");
 		this.bindAddress = builder.bindAddress;
 		this.requestedPort = builder.port;
+		// The port is read late rather than captured: with the default ephemeral port there is no
+		// port to describe the node with until the bind has happened.
+		this.systemTables = new SystemTables(builder.clusterName, builder.datacenter, builder.rack,
+			builder.bindAddress, this::port);
 	}
 
 	/**
@@ -147,7 +154,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 		final var frameCodec = FrameCodec.defaultServer(
 			new ByteBufPrimitiveCodec(ByteBufAllocator.DEFAULT), Compressor.none());
 		final var encoder = new FrameEncoder(frameCodec, MAX_FRAME_LENGTH);
-		final var dispatcher = new SeaStarRequestDispatcher(session);
+		final var dispatcher = new SeaStarRequestDispatcher(session, systemTables);
 
 		final var bootstrap = new ServerBootstrap().group(acceptors, workers)
 			.channel(NioServerSocketChannel.class)
@@ -286,9 +293,22 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 	@NotThreadSafe
 	public static final class Builder {
 
+		/**
+		 * The defaults a stock {@code cassandra:5.0.8} reports, because the classic failure they
+		 * prevent is a driver configured with {@code withLocalDatacenter("datacenter1")} - the
+		 * datacenter every getting-started guide names - finding a node in some other datacenter and
+		 * reporting only that no node was available.
+		 */
+		private static final String DEFAULT_DATACENTER = "datacenter1";
+		private static final String DEFAULT_RACK = "rack1";
+		private static final String DEFAULT_CLUSTER_NAME = "SeaStar";
+
 		private @Nullable SeaStarCqlSession session;
 		private InetAddress bindAddress = InetAddress.getLoopbackAddress();
 		private int port;
+		private String clusterName = DEFAULT_CLUSTER_NAME;
+		private String datacenter = DEFAULT_DATACENTER;
+		private String rack = DEFAULT_RACK;
 
 		private Builder() {
 
@@ -337,6 +357,53 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 		 */
 		public Builder bindAddress(final InetAddress bindAddress) {
 			this.bindAddress = requireNonNull(bindAddress, "bindAddress must not be null");
+
+			return this;
+		}
+
+		/**
+		 * Sets the cluster name this server reports in {@code system.local}. Defaults to
+		 * {@code SeaStar}.
+		 *
+		 * <p>It is only ever compared against itself: a driver told to expect a particular cluster
+		 * name refuses to connect to one that reports something else, and a driver told nothing
+		 * remembers whatever the first connection said.
+		 *
+		 * @param clusterName the cluster name to report
+		 * @return this builder
+		 */
+		public Builder clusterName(final String clusterName) {
+			this.clusterName = requireNonNull(clusterName, "clusterName must not be null");
+
+			return this;
+		}
+
+		/**
+		 * Sets the datacenter this server reports in {@code system.local}. Defaults to
+		 * {@code datacenter1}, which is what a stock Cassandra reports.
+		 *
+		 * <p>This has to agree with the driver's {@code withLocalDatacenter(...)}, or its load
+		 * balancing policy treats the only node there is as remote and every request fails with "no
+		 * node was available" - a message that says nothing about the datacenter.
+		 *
+		 * @param datacenter the datacenter to report
+		 * @return this builder
+		 */
+		public Builder datacenter(final String datacenter) {
+			this.datacenter = requireNonNull(datacenter, "datacenter must not be null");
+
+			return this;
+		}
+
+		/**
+		 * Sets the rack this server reports in {@code system.local}. Defaults to {@code rack1}, which
+		 * is what a stock Cassandra reports.
+		 *
+		 * @param rack the rack to report
+		 * @return this builder
+		 */
+		public Builder rack(final String rack) {
+			this.rack = requireNonNull(rack, "rack must not be null");
 
 			return this;
 		}

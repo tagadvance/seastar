@@ -9,6 +9,7 @@ import com.datastax.oss.protocol.internal.request.Startup;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -44,8 +45,10 @@ class RequestFunnelTest {
 		final var funnel = Executors.newSingleThreadExecutor(
 			runnable -> new Thread(runnable, "test-funnel"));
 		try {
-			final var handler = new SeaStarProtocolHandler(new SeaStarRequestDispatcher(session),
-				task -> funnel.execute(() -> {
+			final var systemTables = new SystemTables("SeaStar", "datacenter1", "rack1",
+				InetAddress.getLoopbackAddress(), () -> 9042);
+			final var handler = new SeaStarProtocolHandler(
+				new SeaStarRequestDispatcher(session, systemTables), task -> funnel.execute(() -> {
 					answering.add(Thread.currentThread().getName());
 					task.run();
 				}));
