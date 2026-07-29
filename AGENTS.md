@@ -203,6 +203,25 @@ pins no partition key and has to be answered by a scan; `RestrictionRules#rows` 
 one call. SELECT, UPDATE and DELETE all go through it, and INSERT knows its partition outright. This
 is what makes a point lookup and a bulk load stop being O(rows) - see [benchmarks.md](benchmarks.md).
 
+### The `system_schema` projection
+
+`SystemSchema.select(context, table)` reshapes the live model into the rows
+`system_schema.keyspaces`, `.tables`, `.columns`, `.types` and `.indexes` carry on a real node, and
+returns them as an ordinary `AsyncResultSet`. `.views`, `.functions` and `.aggregates` are always
+empty - they are unsupported by design - but still describe their columns. It exists so that a
+driver connecting over the wire can build its own `Metadata`; the core has no other use for it.
+
+Two things about it are deliberate and easy to undo by accident:
+
+- **It is a projection, not a keyspace.** Nothing is registered with the context, so
+  `session.getMetadata().getKeyspaces()` is unchanged for an in-process user who never starts a
+  server. `SystemSchemaTest` asserts that. Making `system_schema` a real queryable keyspace is a
+  documented change to the core, not a refactor.
+- **The type string is not `DataType#asCql`.** `system_schema` writes a user-defined type
+  unqualified (`frozen<address>`); `asCql` qualifies it with its keyspace, and the driver's schema
+  parser throws on the qualified form. `SystemSchema#cqlType` writes the recursion out for that
+  reason. Every expectation in `SystemSchemaTest` came off a `cassandra:5.0.8` container.
+
 ### Identifiers
 Everything is keyed by `CqlIdentifier`. Most internal APIs use `CqlIdentifier.fromInternal(name)` (case-sensitive, no quoting) — note this differs from `fromCql` (which interprets quoting/case rules). Be deliberate about which you use when adding lookups.
 
