@@ -12,22 +12,35 @@ Requires JDK 17 (configured via Gradle toolchain; foojay resolver auto-downloads
 
 `AbstractCqlSessionTest` is how the fidelity goal is measured: one suite, run twice against the same `CqlSession` API, once on a real Cassandra (`ContainerCqlSessionTest`, TestContainers) and once on SeaStar (`SeaStarCqlSessionTest`). Any behavioral divergence surfaces as a failure in one subclass but not the other.
 
+It lives in `seastar/src/testFixtures` rather than `src/test`, so a backend in another module can extend it. The fixture is for this build only — the test-fixtures variants are skipped in the publishing block. `ContainerCqlSessionTest` stays in `src/test`: it is a backend, not the suite.
+
 So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest` first, expressed only through the public driver API so both subclasses can run it. Add unit tests when appropriate, for what that suite cannot reach (internals, or error paths a live cluster will not produce), not as a substitute for it.
 
 ```bash
-./gradlew build                 # compile + test; no Docker required
-./gradlew :seastar:test             # run all tests except the container suite
-./gradlew :seastar:containerTest    # run ContainerCqlSessionTest; needs Docker, skips without it
+./gradlew build                          # compile + test; no Docker required
+./gradlew :seastar:test                  # run all tests except the container suite
+./gradlew :seastar:containerTest         # run ContainerCqlSessionTest; needs Docker, skips without it
 ./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'          # single class
 ./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest.testSimpleSelect'  # single method
-./gradlew :seastar:publishToMavenLocal   # publish artifact locally
+./gradlew publishToMavenLocal            # publish both artifacts locally
 ./gradlew :seastar:inspectRaw -Pquery="CREATE KEYSPACE foo WITH replication = {...}"
     # parses the CQL string with cassandra-all's own parser and prints its CQLStatement.Raw
     # class plus a reflective dump of its package-private fields - the first thing to run when
     # writing a handler for a new statement type, or investigating a FieldBindings failure
 ```
 
-The library lives in the `seastar` subproject. Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and build caching are enabled in `gradle.properties`.
+### Modules
+
+| Module | What it is |
+| --- | --- |
+| `:seastar` | The in-memory `CqlSession`. Everything below under Architecture is this module. Published as `com.tagadvance:seastar`. |
+| `:seastar-server` | A native-protocol listener that serves a `SeaStarCqlSession` over a socket, for clients that cannot swap their `CqlSession` in-process. Published as `com.tagadvance:seastar-server`. |
+
+The dependency runs one way — `:seastar-server` depends on `:seastar` and never the reverse. Every type the server needs from the core is a deliberate addition to the core's public API, not a visibility bump made in passing; if that list grows past a handful, add a purpose-built accessor (the shape `SeaStarKeyspace#newSeaStarTable` already uses) rather than opening the model.
+
+Both are versioned in lockstep from `build-logic/src/main/kotlin/seastar.java-conventions.gradle.kts`, the convention plugin holding everything the two modules share: toolchain, `-Xlint:all`, doclint, reproducible archives, and the whole publishing and signing block. A module's own build file carries only its description and its dependencies.
+
+Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and build caching are enabled in `gradle.properties`.
 
 ### Benchmarks
 
@@ -115,6 +128,16 @@ Two standing caveats:
 
 - **`setAccessible` works only because `cassandra-all` is a plain classpath jar** (unnamed module), so no `--add-opens` flags are needed. If Cassandra ever modularizes, this breaks.
 - **`Raw#prepare(ClientState)` is not a way out.** It returns fully typed objects with public accessors, but resolves tables through the process-global `Schema.instance` singleton. Spiked against 5.0.8: `CreateTableStatement.parse(...).build()` fails with `InaccessibleObjectException` (`java.base` does not open `java.io` to the unnamed module), `Schema.instance.transform(...)` fails with `NoClassDefFoundError: TimeUUID$Generator`, and `raw.prepare(...)` throws `KeyspaceNotDefinedException`. Making it work means requiring `--add-opens` in every consumer's test JVM, ~300ms+ of forced `DatabaseDescriptor` init, and a mutable global shared by every session - which breaks the "Volatile = lives only for the session" model outright. Rejected; the trigger to revisit is Cassandra shipping an embeddable offline schema API, not a cleverer flag.
+
+### Compilation against driver internals (`:seastar-server`)
+The server module carries a second, different unstable-API exposure. Do not confuse it with the one above:
+
+- `com.datastax.oss.protocol.internal.*` — internal by package name, but server-side use is what native-protocol is *for*; `FrameCodec.defaultServer` says so. Low risk.
+- `com.datastax.oss.driver.internal.core.protocol.*` — `ByteBufPrimitiveCodec`, `FrameDecoder`, `FrameEncoder`. Genuinely internal and genuinely liable to move.
+
+The important difference: this is **ordinary compilation against public classes**, so a driver bump that moves one of them fails the build at `compileJava`. The `cassandra-all` hazard is reflection, which compiles fine and only `FieldBindingsTest` catches. Do not reach for reflection here out of habit — if a driver type is not public, that is a signal, not an obstacle to route around.
+
+The mitigation is the same either way: `java-driver-core` and `native-protocol` are pinned to exact versions.
 
 ### Storage model: `SeaStar*` interfaces vs `Volatile*` implementations
 Two layered abstractions:
