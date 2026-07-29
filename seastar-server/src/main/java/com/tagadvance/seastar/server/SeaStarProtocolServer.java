@@ -126,8 +126,11 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 				@Override
 				protected void initChannel(final SocketChannel channel) {
 					connections.add(channel);
+					// The version gate goes ahead of the decoder because the versions worth turning
+					// away include ones the decoder cannot read at all - see ProtocolVersionGate.
 					channel.pipeline()
 						.addLast("frameEncoder", encoder)
+						.addLast("versionGate", new ProtocolVersionGate())
 						.addLast("frameDecoder", new FrameDecoder(frameCodec, MAX_FRAME_LENGTH))
 						.addLast("dispatch", new SeaStarProtocolHandler(dispatcher, funnel));
 				}
