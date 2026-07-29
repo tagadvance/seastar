@@ -54,7 +54,30 @@ import org.jspecify.annotations.Nullable;
  *
  * <p><strong>Protocol v4 only.</strong> A request at any other version is answered with the
  * {@code PROTOCOL_ERROR} that makes a driver retry one version lower, which is what lets a driver
- * left on its own v5 default reach this server at all.
+ * that was never told which version to use reach this server at all.
+ *
+ * <p><strong>Every request is answered on one thread.</strong> A Netty worker decodes the frame
+ * and hands it to a single-threaded executor owned by this server; nothing else touches the
+ * session. The core's promise that there is no interleaving to reason about between one session's
+ * requests therefore survives the wire, at the cost of a throughput a test does not need.
+ *
+ * <p>What this listener deliberately does not do, so that none of it reads as an oversight:
+ *
+ * <ul>
+ *   <li><strong>Compression</strong> - none is advertised, and a {@code STARTUP} asking for one
+ *       is a {@code PROTOCOL_ERROR} naming it rather than a silent fallback. It buys nothing on a
+ *       loopback socket.</li>
+ *   <li><strong>Tracing</strong> - a request with the tracing flag set is answered with no
+ *       tracing id. One is never fabricated.</li>
+ *   <li><strong>Custom payloads</strong> - carried by the frame, read by nothing here.</li>
+ *   <li><strong>Warnings</strong> - always empty.</li>
+ *   <li><strong>Server events</strong> - {@code REGISTER} is accepted and recorded nowhere; no
+ *       schema, topology or status event is ever published.</li>
+ *   <li><strong>Authentication</strong> - {@code STARTUP} is always answered {@code READY}, which
+ *       means "none required". Credentials, if a client offers them anyway, are accepted
+ *       unexamined.</li>
+ *   <li><strong>TLS</strong> - not implemented. This is a loopback test socket.</li>
+ * </ul>
  */
 @ThreadSafe
 public final class SeaStarProtocolServer implements AutoCloseable {
