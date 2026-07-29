@@ -163,15 +163,18 @@ class ProtocolHandshakeTest {
 	}
 
 	@Test
-	@DisplayName("a statement is refused by name rather than dropped, pending result encoding")
-	void testStatementsAreNotAnsweredYet() throws IOException {
+	@DisplayName("the system tables are not answered yet, and say so as a query error")
+	void testSystemTablesAreNotAnsweredYet() throws IOException {
 		try (final var client = new WireClient(server.port())) {
 			client.send(V4, 1, new Startup());
 			final var response = client.send(V4, 2, new Query("SELECT * FROM system.local"));
 			final var error = assertInstanceOf(Error.class, response.message);
 
-			assertEquals(ProtocolConstants.ErrorCode.SERVER_ERROR, error.code);
-			assertTrue(error.message.contains("SELECT * FROM system.local"), error.message);
+			// The statement reaches the session and is answered by the model, which has no system
+			// keyspace in it - so this is a plain unknown-keyspace error rather than a server one.
+			// It becomes a passing query when the system tables land (d_plan D1-D3).
+			assertEquals(ProtocolConstants.ErrorCode.INVALID, error.code);
+			assertTrue(error.message.contains("system"), error.message);
 		}
 	}
 

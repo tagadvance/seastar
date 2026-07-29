@@ -3,6 +3,7 @@ package com.tagadvance.seastar.server;
 import static java.util.Objects.requireNonNull;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.tagadvance.seastar.SeaStarCqlSession;
 import com.datastax.oss.driver.internal.core.protocol.ByteBufPrimitiveCodec;
 import com.datastax.oss.driver.internal.core.protocol.FrameDecoder;
 import com.datastax.oss.driver.internal.core.protocol.FrameEncoder;
@@ -90,7 +91,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 
 	private static final AtomicInteger SERVER_COUNT = new AtomicInteger();
 
-	private final CqlSession session;
+	private final SeaStarCqlSession session;
 	private final InetAddress bindAddress;
 	private final int requestedPort;
 	private final int id = SERVER_COUNT.incrementAndGet();
@@ -279,7 +280,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 	@NotThreadSafe
 	public static final class Builder {
 
-		private @Nullable CqlSession session;
+		private @Nullable SeaStarCqlSession session;
 		private InetAddress bindAddress = InetAddress.getLoopbackAddress();
 		private int port;
 
@@ -290,10 +291,16 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 		/**
 		 * Sets the session every request is answered from. Required.
 		 *
+		 * <p>It is SeaStar's own session rather than any {@link CqlSession} because two things the
+		 * protocol needs are not on the driver interface: pointing the session at the keyspace a
+		 * connection selected, and reading the schema back out of the model to answer a system-table
+		 * query with. Serving a session that talks to a real cluster would be a proxy, which is a
+		 * different program.
+		 *
 		 * @param session the session to serve
 		 * @return this builder
 		 */
-		public Builder session(final CqlSession session) {
+		public Builder session(final SeaStarCqlSession session) {
 			this.session = requireNonNull(session, "session must not be null");
 
 			return this;
