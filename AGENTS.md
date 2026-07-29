@@ -181,6 +181,42 @@ driver API plus two purpose-built additions, `CqlStatementSummary` and
   answer. Consistency, serial consistency, timestamps, `now_in_seconds` and tracing are all accepted
   and ignored, matching what the in-process statement settings already do with them.
 
+### The system keyspaces (`seastar-server`)
+
+A driver does not just open a socket and send CQL. Before `CqlSession.builder().build()` returns it
+reads the cluster name out of `system.local`, then builds its whole idea of the node - datacenter,
+rack, tokens, host id - from the same row, and with schema metadata on (the default) it assembles
+its `Metadata` from `system_schema` and `system_virtual_schema` as well. `SystemQuery`,
+`SystemTables` and the interception at the top of `SeaStarRequestDispatcher#query` are that, and the
+whole of it is in the server module.
+
+- **Answered here, not in the model, and that is the load-bearing decision.** `system.local` is a
+  fact about the *listener*; making it a keyspace would put invented tables in front of every
+  in-process user, for the benefit of one hardcoded row. `SystemSchemaTest` guards the other half of
+  it: the `system_schema` projection is not registered with the context either.
+- **Matched by query string.** There are six such queries, they are string literals in
+  java-driver-core's own source (`ProtocolInitHandler`, `DefaultTopologyMonitor`,
+  `SchemaAgreementChecker`, `Cassandra3SchemaQueries`), and they do not vary. `SystemQuery` is a
+  regex over `SELECT <columns> FROM <ks>.<table> [WHERE ...]`; a `WHERE` clause is matched and then
+  ignored. It is deliberately grubby and it is what Simulacron effectively does. Parsing it properly
+  would mean putting `cassandra-all` on this module's classpath.
+- **The columns came off a container, the values came from the driver.** `DESCRIBE TABLE` on
+  `cassandra:5.0.8` says which columns exist; `DefaultTopologyMonitor#nodeInfoBuilder` and
+  `PeerRowValidator` say which of them the driver dereferences. A column it reads that is missing is
+  a `NullPointerException` in driver internals rather than a legible error, so the list is the
+  container's in full.
+- **`schema_version` moves on every DDL statement**, driven off the `CqlStatementSummary` the
+  dispatcher already computes. It must be a real UUID and stable *between* changes: the driver
+  compares `system.local`'s against every peer's after DDL and waits ten seconds before giving up,
+  so getting it wrong is a ten-second pause per DDL statement followed by success, which nothing
+  fails on. `DriverSessionTest` asserts DDL is fast for that reason.
+- **`system_virtual_schema` answers empty rather than failing.** The driver runs its three queries in
+  the same batch as the eight `system_schema` ones, and one failure abandons the whole refresh, so
+  an error there costs a stock-configured session its metadata entirely.
+- **`data_center`, `rack` and `cluster_name` are on the builder.** A datacenter that does not match
+  the driver's `withLocalDatacenter(...)` leaves the node `IGNORED` - the session still builds, and
+  the first statement fails saying only that no node was available.
+
 ### Storage model: `SeaStar*` interfaces vs `Volatile*` implementations
 Two layered abstractions:
 - **`SeaStar*` interfaces** (`SeaStarKeyspace`, `SeaStarTable`, `SeaStarColumn`, `SeaStarRow`, `SeaStarUserDefinedType`, `SeaStarUdtValue`, `SeaStarDriverContext`) each extend the corresponding **driver metadata interface** (`KeyspaceMetadata`, `TableMetadata`, `Metadata`, etc.), so the same object serves as both mutable storage and the metadata the driver API exposes.
