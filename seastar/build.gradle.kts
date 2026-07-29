@@ -1,5 +1,6 @@
 plugins {
     id("seastar.java-conventions")
+    `java-test-fixtures`
     id("me.champeau.jmh") version "0.7.3"
 }
 
@@ -19,7 +20,20 @@ dependencies {
     implementation("org.apache.cassandra:cassandra-all:5.0.8")
     implementation("org.apache.cassandra:java-driver-core:4.19.3")
     implementation("org.apache.cassandra:java-driver-query-builder:4.19.3")
+
+    // src/testFixtures holds AbstractCqlSessionTest - the fidelity suite - so that a backend in
+    // another module can run it. It speaks only the driver API and JUnit, and both are part of the
+    // fixture's own surface rather than an implementation detail, hence api rather than
+    // implementation. java-driver-core is `implementation` above, so it does not arrive on its own.
+    testFixturesApi("org.apache.cassandra:java-driver-core:4.19.3")
+    testFixturesApi("org.junit.jupiter:junit-jupiter-api:6.1.2")
 }
+
+// The fixture is for this build's own modules. Publishing it would promise support for a suite that
+// changes whenever SeaStar's expectations do.
+val javaComponent = components["java"] as AdhocComponentWithVariants
+javaComponent.withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+javaComponent.withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
 
 testing {
     suites {

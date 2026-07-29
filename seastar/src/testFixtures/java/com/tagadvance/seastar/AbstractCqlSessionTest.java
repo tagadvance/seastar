@@ -46,9 +46,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
+/**
+ * The fidelity suite: one set of expectations, expressed only through the public driver API, run
+ * against every backend that claims to behave like Cassandra. A divergence shows up as a failure in
+ * one subclass and not another.
+ *
+ * <p>Public so a backend outside this package - another module's, in particular - can extend it.
+ * Published nowhere: the test-fixtures variant is skipped in the publishing block.
+ */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-abstract class AbstractCqlSessionTest {
+public abstract class AbstractCqlSessionTest {
 
 	protected abstract CqlSession createInstance();
 
