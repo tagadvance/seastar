@@ -71,6 +71,11 @@ JMH is only used for the warm per-statement work. Startup, the parser breakdown 
 Only `:seastar-server` sees the third. `:seastar` never names a protocol type: an in-process session has no wire, and `VolatileDriverContext#getProtocolVersion()` returning `ProtocolVersion.DEFAULT` is a codec setting rather than a claim about one (its javadoc says why).
 
 ### Request pipeline
+There are two entry points. An in-process caller reaches `SeaStarCqlSession.execute(...)` directly; a
+client on a socket reaches `SeaStarRequestDispatcher` in `:seastar-server`, which decodes a frame and
+then makes that same `execute(...)` call. Everything in this section is the in-process path, which is
+all of it bar the transport — see "Answering a statement over the wire" for what wraps it.
+
 Each SeaStar class is deliberately **analogous to** a driver-internal class (the Javadoc says so). The flow:
 
 1. `SeaStarCqlSession.execute(request, resultType)` → `SeaStarRequestProcessorRegistry.processorFor(...)` picks a `SeaStarRequestProcessor` by matching the result type (`Statement.SYNC`/`ASYNC`, prepare sync/async). Registered in `SeaStarBuiltInRequestProcessors`.
