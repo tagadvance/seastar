@@ -141,6 +141,46 @@ The important difference: this is **ordinary compilation against public classes*
 
 The mitigation is the same either way: `java-driver-core` and `native-protocol` are pinned to exact versions.
 
+### Answering a statement over the wire (`:seastar-server`)
+
+`SeaStarRequestDispatcher` is the whole of it: a decoded `QUERY`, `PREPARE`, `EXECUTE` or `BATCH`
+in, a response `Message` out, always on the funnel. Everything it needs from the core is public
+driver API plus two purpose-built additions, `CqlStatementSummary` and
+`SeaStarCqlSession#setKeyspace`.
+
+- **A statement is summarized before it runs.** `CqlStatementSummary.of(metadata, keyspace, query)`
+  says whether it selects a keyspace, changes the schema, or does neither - the three things the
+  protocol distinguishes and an `AsyncResultSet` cannot. Before rather than after, because
+  `DROP INDEX` names only the index and the table a driver has to be told about can only be found
+  while the index is still there. It over-reports: a DDL statement that changes nothing is still a
+  schema change, where a node would answer `VOID`, because comparing the schema before and after is
+  not something a summary can do and a redundant metadata refresh is the harmless direction to be
+  wrong in.
+- **Everything else follows from the result set.** Columns means `ROWS`, no columns means `VOID`,
+  and that is already right for `SELECT`, the modifications, `TRUNCATE`, `BATCH` and a lightweight
+  transaction - `[applied]` is a column like any other, so LWTs need no special case. `Results` is
+  where that decision lives.
+- **`RawTypes` is the fiddly part.** Driver `DataType` to protocol `RawType`, recursive. Frozen-ness
+  is not on the wire at all, and two types travel as Cassandra marshaller class names rather than
+  as protocol ids: `duration`, which only became a primitive at v5, and `vector`, which has no id.
+  Both are what the container sends and what the driver's own `DataTypes#custom` names explicitly on
+  the way back in. `RawTypesTest` runs every supported type back through the driver's reader.
+- **`Failures` is the inverse of the handlers.** They throw the driver exception a live cluster
+  would have; this turns it back into the error code that reconstructs it. That is what keeps
+  `assertThrows(InvalidQueryException.class, ...)` passing when a test moves onto a socket, and it
+  is why a statement SeaStar does not implement has to arrive as `INVALID` naming the feature rather
+  than as a `SERVER_ERROR`.
+- **The keyspace is per connection, and the session's is set from it before every statement.** The
+  protocol keeps a *name*, not a keyspace: selecting one that does not exist is allowed, dropping
+  the selected keyspace leaves unqualified statements failing on it while qualified ones elsewhere
+  keep working, and recreating it makes the connection work again. `USE` can express none of that,
+  which is why `setKeyspace` exists.
+- **Paging is not implemented and that is protocol-legal.** Rows metadata with no paging state means
+  "last page". `page_size` is accepted and ignored; a paging state in a request is a
+  `PROTOCOL_ERROR`, because ignoring one is an infinite loop in the client rather than a slow
+  answer. Consistency, serial consistency, timestamps, `now_in_seconds` and tracing are all accepted
+  and ignored, matching what the in-process statement settings already do with them.
+
 ### Storage model: `SeaStar*` interfaces vs `Volatile*` implementations
 Two layered abstractions:
 - **`SeaStar*` interfaces** (`SeaStarKeyspace`, `SeaStarTable`, `SeaStarColumn`, `SeaStarRow`, `SeaStarUserDefinedType`, `SeaStarUdtValue`, `SeaStarDriverContext`) each extend the corresponding **driver metadata interface** (`KeyspaceMetadata`, `TableMetadata`, `Metadata`, etc.), so the same object serves as both mutable storage and the metadata the driver API exposes.
