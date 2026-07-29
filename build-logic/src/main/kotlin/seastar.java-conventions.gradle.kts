@@ -119,6 +119,25 @@ publishing {
         }
     }
 
+    // RELEASE IS BLOCKED HERE, and not by anything this build can fix.
+    //
+    // Both URLs below are dead. Sonatype retired OSSRH on 30 June 2025 and s01.oss.sonatype.org went
+    // with it; the replacement is the Central Portal, which has a different publishing endpoint and
+    // will not accept anything until the com.tagadvance namespace has been verified. That
+    // verification is a manual, external, one-off step only the account holder can perform, and it
+    // is the long pole. It now gates two artifacts rather than one.
+    //
+    // The dead host is left in place deliberately. A guessed replacement endpoint would fail with an
+    // authentication error and read like a credentials problem; this fails as what it is.
+    //
+    // To unblock, in order:
+    //   1. verify the com.tagadvance namespace at https://central.sonatype.com
+    //   2. replace both repositories below with that portal's publishing endpoint
+    //   3. set SONATYPE_USER / SONATYPE_PASSWORD to a portal token, not the old OSSRH login
+    //   4. set GPG_SIGNING_KEY, which is what switches on the signing block at the end of this file
+    //
+    // None of this touches publishToMavenLocal, which works today, with or without a GPG key. Keep
+    // it that way: it is the only publishing path a contributor without credentials can run.
     repositories {
         maven("https://s01.oss.sonatype.org/content/repositories/snapshots/") {
             name = "SonatypeSnapshot"
