@@ -7,7 +7,7 @@ called out explicitly.
 ## [1.0.0-alpha] - Unreleased
 
 Initial alpha release. Public API: `SeaStarCqlSession` (via `.builder()...build()`),
-`SeaStarCqlSessionBuilder`, `SeaStarDriverContext`, and the `SeaStar{Keyspace,Table,Column,Row,
-UserDefinedType,UdtValue}` model interfaces. Everything else is internal - see
+`SeaStarCqlSessionBuilder`, `SeaStarDriverContext`, the `SeaStar{Keyspace,Table,Column,Row,
+UserDefinedType,UdtValue}` model interfaces, and `SystemSchema`. Everything else is internal - see
 [AGENTS.md](AGENTS.md) for the architecture and [docs/support-matrix.md](docs/support-matrix.md)
 for what CQL is and isn't supported.
