@@ -22,6 +22,8 @@ import com.tagadvance.seastar.SeaStarCqlSession;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -416,6 +418,24 @@ class WireStatementTest {
 	}
 
 	@Test
+	@DisplayName("the prepared id is an MD5 of the keyspace and the query, as a node's is")
+	void testPreparedIdIsAnMd5() throws IOException {
+		schema();
+		final var qualified = "SELECT * FROM ks.t WHERE id = ?";
+
+		// What QueryProcessor.computeId does: no keyspace selected means the digest is over the query
+		// alone. Deriving the id makes it stable across restarts and a captured trace comparable.
+		assertArrayEquals(md5(qualified),
+			assertInstanceOf(Prepared.class, send(new Prepare(qualified))).preparedQueryId);
+
+		send("USE ks");
+		final var unqualified = "SELECT * FROM t WHERE id = ?";
+
+		assertArrayEquals(md5("ks" + unqualified),
+			assertInstanceOf(Prepared.class, send(new Prepare(unqualified))).preparedQueryId);
+	}
+
+	@Test
 	@DisplayName("preparing the same query twice hands back the same id")
 	void testPreparingTwice() throws IOException {
 		schema();
@@ -594,5 +614,12 @@ class WireStatementTest {
 		return StandardCharsets.UTF_8.decode(value.duplicate()).toString();
 	}
 
+	private static byte[] md5(final String text) {
+		try {
+			return MessageDigest.getInstance("MD5").digest(text.getBytes(StandardCharsets.UTF_8));
+		} catch (final NoSuchAlgorithmException e) {
+			throw new AssertionError("MD5 is required of every JRE", e);
+		}
+	}
 
 }

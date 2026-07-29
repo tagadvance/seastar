@@ -15,13 +15,16 @@ import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
 import com.tagadvance.seastar.handlers.BindMarkers;
 import com.tagadvance.seastar.handlers.CqlParsers;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.stream.IntStream;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Safe for concurrent use: {@code definitions}, {@code resultMetadataId} and
@@ -58,9 +61,26 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	protected SeaStarPreparedStatement(final SeaStarDriverContext context,
 		final PrepareRequest request, final CqlIdentifier keyspace) {
 		this.context = requireNonNull(context, "context must not be null");
-		this.id = ByteBuffer.wrap(UUID.randomUUID().toString().getBytes());
 		this.prepareRequest = requireNonNull(request, "request must not be null");
 		this.keyspace = keyspace;
+		this.id = id(Optional.ofNullable(request.getKeyspace()).orElse(keyspace), request.getQuery());
+	}
+
+	/**
+	 * The id a real node hands out for a statement: an MD5 of the keyspace it was prepared against
+	 * followed by the query, which is what {@code QueryProcessor#computeId} computes. Derived rather
+	 * than invented, so that the same query prepared against the same keyspace has the same id in
+	 * every session - which is what makes a wire trace comparable with a node's, and what lets a
+	 * client that reconnects go on using an id it already holds.
+	 */
+	private static ByteBuffer id(final @Nullable CqlIdentifier keyspace, final String query) {
+		final var text = keyspace == null ? query : keyspace.asInternal() + query;
+		try {
+			return ByteBuffer.wrap(
+				MessageDigest.getInstance("MD5").digest(text.getBytes(StandardCharsets.UTF_8)));
+		} catch (final NoSuchAlgorithmException e) {
+			throw new IllegalStateException("MD5 is required of every JRE", e);
+		}
 	}
 
 	/**
