@@ -46,7 +46,9 @@ Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and bui
 
 Goal 2 — "minimize startup time to act as a viable alternative to TestContainers" — is measured, not asserted. The numbers, the hardware they were taken on, and the versions they pin to live in [benchmarks.md](benchmarks.md); it is the baseline against which the locking and query-engine changes are compared, so re-run these and update it when either lands.
 
-Benchmarks live in their own source sets (`seastar/src/jmh`, `seastar/src/containerBench`). They are **not** on the default build and their classes are **not** in the published jar. All benchmark tasks are serialized against each other by a Gradle shared service, so listing several in one invocation is safe despite `org.gradle.parallel=true`.
+Benchmarks live in their own source sets (`seastar/src/jmh`, `seastar/src/containerBench`, `seastar-server/src/wireBench`). They are **not** on the default build and their classes are **not** in the published jar. All benchmark tasks are serialized against each other by a Gradle shared service, so listing several in one invocation is safe despite `org.gradle.parallel=true`. The service is registered by the `seastar.benchmark-conventions` plugin in `build-logic` rather than by a module, because a shared service is keyed by name across the whole build and two modules declaring their own would be two types under one name.
+
+`ColdJvmBenchmark` and `Metrics` are a generic harness - fork a probe class N times, report the distribution of whatever it printed - and `:seastar-server`'s wire probe runs under them, reached through a `benchHarness` consumable configuration on `:seastar`. So a wire startup number and an in-process one are produced by the same code and are comparable, which is the whole point of measuring the wire at all.
 
 ```bash
 ./gradlew :seastar:jmh                       # per-statement and scaling benchmarks (JMH), ~3 min
@@ -57,6 +59,10 @@ Benchmarks live in their own source sets (`seastar/src/jmh`, `seastar/src/contai
 ./gradlew :seastar:parserEquivalenceCheck    # proves both parser entry points agree
 ./gradlew :seastar:containerWarmBenchmark    # TestContainers baseline, cached image; needs Docker
 ./gradlew :seastar:containerColdBenchmark    # same, but removes and re-pulls the image first
+./gradlew :seastar-server:wireStartupBenchmark
+    # a stock driver connecting over the listener, and what a statement costs on a loopback socket
+    # against the same statement in process. Run it with :seastar:startupBenchmark in one
+    # invocation - they are compared against each other and must come from one sitting.
 ```
 
 JMH is only used for the warm per-statement work. Startup, the parser breakdown and the container comparison fork a fresh JVM per sample instead (`ColdJvmBenchmark`): class loading is most of what they measure, so JMH's warmup would erase the very thing under test.

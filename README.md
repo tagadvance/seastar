@@ -147,6 +147,12 @@ the ratios are the interesting part.
 Roughly **18x faster than a warm container** and **25x faster than a cold one** to first query, and
 roughly **1 700x faster** for every session after the first in the same JVM.
 
+Serving the same session over a socket costs about half a second of startup and roughly 0.8 ms per
+statement, and both are the driver and the round trip rather than SeaStar. Measured three ways in one
+sitting: **690 ms** to first query in process, **1 266 ms** over `seastar-server`, **9 729 ms** for a
+warm TestContainers Cassandra — so even through the whole native protocol it is still 7.7x faster to
+a usable session. A statement then costs 0.32 ms in process and 1.09 ms over the socket.
+
 ## Known limitations
 
 Every deliberate divergence from real Cassandra is catalogued in
