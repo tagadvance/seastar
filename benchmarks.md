@@ -11,6 +11,10 @@ Both have since landed. Their measurements are the last two sections:
 **Compare within a section, not across them** - this laptop throttles, and the same code measures 2-3x
 apart between sittings, so each section pairs its own before and after taken back to back.
 
+[What the wire costs](#what-the-wire-costs) is later still, and is the one section that was taken on
+**different hardware and a different JDK**. It carries its own environment table and re-measures every
+figure it compares, including ones that already had numbers above.
+
 Measured at commit `1145dae`. No library code changed for this run: everything under
 `seastar/src/main` is identical to `3708bfa`, and the only additions are the benchmark source sets,
 which are not on the default build and not in the published jar.
@@ -426,6 +430,101 @@ The check was worth running because b_plan B2's cost note asked for it - the fou
 proposed would have added two or three uncontended acquisitions per row mutation. One lock per
 keyspace adds none.
 
+## What the wire costs
+
+`seastar-server` puts a socket, Netty and a real driver between the caller and the same in-memory
+session. This is the third point on the startup axis, and it comes with the per-statement number that
+goes with it.
+
+**Nothing in this section may be compared with anything above it, and this time it is not only the
+throttling.** Every table above was taken on the 15 W laptop described at the top of this file, on
+Oracle JDK 17. This section was taken on a different machine and a different JDK, inside a container:
+
+| | |
+| --- | --- |
+| CPU | AMD Ryzen 9 5900XT, 16 cores / 32 threads |
+| RAM | 62 GiB |
+| OS | Debian GNU/Linux 13 (trixie) in a container, kernel 6.12.96+deb13-amd64 |
+| JDK | Temurin 25.0.3+9-LTS |
+| Gradle | 9.4.1 |
+| Container image | `cassandra:5.0.8` |
+
+So all three points below were re-measured in **one sitting on one machine**, including the two that
+already had numbers. That is the whole discipline this file has: the comparison is only meaningful
+within a section.
+
+### The three-way comparison
+
+Median, milliseconds. SeaStar's two columns are 20 cold JVMs each; the container is 3.
+
+| | in process | over a socket | TestContainers Cassandra |
+| --- | ---: | ---: | ---: |
+| Ready for the first query | **690** | **1 266** | **9 729** |
+
+Putting the whole native protocol in the middle costs **576 ms and roughly doubles the number** —
+and still leaves it **7.7x faster than a warm container**, against 14x for the in-process session.
+The comparison is conservative in the same direction it always was: both SeaStar columns are measured
+from JVM start and include their own class loading, while the container column is measured from
+`container.start()` and excludes the JVM start a test pays anyway.
+
+### Where the 1 266 ms goes
+
+The probe measures its own phases, so the split is not an estimate. Median, milliseconds, from
+`./gradlew :seastar-server:wireStartupBenchmark`:
+
+| phase | ms |
+| --- | ---: |
+| JVM start to a built `SeaStarCqlSession` (`jvm.to.listening` minus the bind) | 435 |
+| `SeaStarProtocolServer...build().start()` — Netty, the bootstrap, the bind | 110 |
+| an unconfigured `CqlSession` connecting — handshake, `system.local`, schema metadata | 535 |
+| the first statement over the socket (a `CREATE KEYSPACE`, so a DDL round trip) | 184 |
+| **JVM start to the first query returning** | **1 266** |
+
+The listener itself is the cheap part. **The driver is the expensive part**: 535 ms to connect is
+more than the whole of SeaStar's own startup, and it is the driver's class loading, its Netty event
+loops, its four-attempt version negotiation from `DSE_V2` down to v5, and the eleven schema queries
+it runs before `build()` returns. A second `CqlSession` to the same listener in the same JVM costs
+**77 ms**, which is what that figure looks like once nothing is being loaded.
+
+Note that `seastar.build` inside the wire probe (387 ms) is not the same as `build.cold` in the
+in-process one (465 ms). The two probes have different classpaths — the wire one has no JMH and no
+`me.champeau.jmh` shading, the in-process one has no Netty or driver — and class loading is most of
+what a cold build costs, so only the within-probe split above and the `jvm.to.first.query` row are
+worth reading across the two.
+
+### Per statement, warm: the round trip is the cost
+
+Both figures below come from the **same JVM in the same sample**, against the same session — one
+through the socket, one through the in-process handle the listener is serving. That pairing is the
+point. SeaStar does identical work either way, so the difference is the loopback round trip and the
+driver's request pipeline, and nothing else.
+
+| `SELECT name FROM probe.t WHERE id = 1` | ms |
+| --- | ---: |
+| in process | **0.32** |
+| over the socket, as a query string | **1.09** |
+| over the socket, prepared and bound | **0.79** |
+
+- **The wire costs about 0.77 ms per statement**, which is more than twice what answering the
+  statement costs. A harness should size its expectations off the round trip, not off SeaStar.
+- **Preparing is worth 0.30 ms of that**, because the server does not re-parse a prepared statement's
+  CQL. It is the one optimisation available on this path and it is the same one that helps against a
+  real node.
+- For scale: a warm container answers the same query in about a millisecond too, over the same kind
+  of loopback socket. Once both are warm the protocol dominates and SeaStar's advantage is startup,
+  which is exactly what goal 2 claims and nothing more.
+
+### What was not measured
+
+- **A DDL-heavy seeding run.** The driver's schema debouncer, not SeaStar, decides that number — one
+  second per statement by default, which the probe sets to 1 ms exactly as the wire fidelity suite
+  does. Measuring the default would be measuring `advanced.metadata.schema.debouncer.window`.
+- **Concurrent connections.** Every request is answered on one funnel thread by design, so
+  throughput under concurrency is a deliberate non-goal and a benchmark of it would only restate the
+  design.
+- **A cold container over the wire.** The cold container column above the fold is still the right
+  order of magnitude for that; nothing about SeaStar changes it.
+
 ## Reproducing
 
 Requires JDK 17 (Gradle toolchain downloads it) and, for the container comparison only, Docker.
@@ -449,6 +548,12 @@ Benchmarks are not on the default build and their classes are not in the publish
 
 # Proof the two parser entry points return the same parse tree types. ~5 seconds.
 ./gradlew :seastar:parserEquivalenceCheck
+
+# What the wire costs: a stock driver over seastar-server, and a statement through the socket
+# against the same statement in process. 20 forked JVMs. ~2 minutes.
+# Run it together with :seastar:startupBenchmark - the two are compared against each other and
+# must come from one sitting.
+./gradlew :seastar:startupBenchmark :seastar-server:wireStartupBenchmark
 
 # TestContainers comparison. Needs Docker. ~1 and ~2 minutes respectively.
 ./gradlew :seastar:containerWarmBenchmark
