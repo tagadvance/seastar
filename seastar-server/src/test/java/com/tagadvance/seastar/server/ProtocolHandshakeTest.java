@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.datastax.dse.driver.api.core.DseProtocolVersion;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
 import com.datastax.oss.protocol.internal.request.AuthResponse;
 import com.datastax.oss.protocol.internal.request.Options;
@@ -138,6 +139,26 @@ class ProtocolHandshakeTest {
 			assertEquals(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, error.code);
 			assertTrue(error.message.contains("Invalid or unsupported protocol version"),
 				error.message);
+		}
+	}
+
+	@Test
+	@DisplayName("a version the frame codec cannot decode at all is still refused, not dropped")
+	void testUndecodableVersionIsRejected() throws IOException {
+		// DSE_V2 is version byte 66, and it is what a driver with no configured protocol version
+		// opens with - its registry covers the DSE versions, so highestNonBeta() is not v5.
+		// FrameCodec has codecs for v3 to v6 only, so nothing behind ProtocolVersionGate could
+		// have produced an answer to this.
+		try (final var client = new WireClient(server.port())) {
+			final var response = client.sendHeader(DseProtocolVersion.DSE_V2.getCode(), 3,
+				ProtocolConstants.Opcode.OPTIONS);
+			final var error = assertInstanceOf(Error.class, response.message);
+
+			assertEquals(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, error.code);
+			assertTrue(error.message.contains("Invalid or unsupported protocol version"),
+				error.message);
+			assertEquals(3, response.streamId);
+			assertEquals(V4, response.protocolVersion);
 		}
 	}
 

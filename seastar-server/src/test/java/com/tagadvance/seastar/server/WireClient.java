@@ -74,6 +74,32 @@ final class WireClient implements AutoCloseable {
 		return receive();
 	}
 
+	/**
+	 * Writes a bare header with an empty body and blocks for the response, for versions
+	 * {@link FrameCodec} has no encoder for and which therefore cannot be built as a
+	 * {@link Frame} at all.
+	 *
+	 * @param protocolVersion the version to put in the header
+	 * @param streamId        the stream id to send it on
+	 * @param opcode          the opcode to claim
+	 * @return the decoded response
+	 * @throws IOException if the socket fails, or the peer hangs up before answering
+	 */
+	Frame sendHeader(final int protocolVersion, final int streamId, final int opcode)
+		throws IOException {
+		final var header = ByteBuffer.allocate(Protocol.HEADER_LENGTH)
+			.put((byte) protocolVersion)
+			.put((byte) 0)
+			.putShort((short) streamId)
+			.put((byte) opcode)
+			.putInt(0)
+			.array();
+		socket.getOutputStream().write(header);
+		socket.getOutputStream().flush();
+
+		return receive();
+	}
+
 	private Frame receive() throws IOException {
 		final var in = new DataInputStream(socket.getInputStream());
 		final var header = new byte[9];

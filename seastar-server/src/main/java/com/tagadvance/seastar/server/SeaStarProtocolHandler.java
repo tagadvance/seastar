@@ -11,7 +11,6 @@ import com.datastax.oss.protocol.internal.response.AuthSuccess;
 import com.datastax.oss.protocol.internal.response.Error;
 import com.datastax.oss.protocol.internal.response.Ready;
 import com.datastax.oss.protocol.internal.response.Supported;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -43,13 +42,6 @@ import org.slf4j.LoggerFactory;
 final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 
 	private static final Logger log = LoggerFactory.getLogger(SeaStarProtocolHandler.class);
-
-	/**
-	 * The one protocol version this server speaks. v5 wraps everything after the handshake in
-	 * CRC-checked segments, which is deferred (f_plan F1); {@link #unsupportedVersion(int)} is how
-	 * a driver on its v5 default still gets here.
-	 */
-	static final int PROTOCOL_VERSION = ProtocolConstants.Version.V4;
 
 	/**
 	 * What {@code OPTIONS} is answered with. {@code CQL_VERSION} is the value cassandra:5.0.8
@@ -91,7 +83,7 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		// of them.
 		final var streamId = cause instanceof FrameDecodingException e ? e.streamId : 0;
 		log.debug("closing {} after a frame error", ctx.channel(), cause);
-		write(ctx, streamId, new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
+		Protocol.write(ctx, streamId, new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
 			"Malformed or undecodable frame: " + cause)).addListener(ChannelFutureListener.CLOSE);
 	}
 
@@ -103,15 +95,17 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 			log.warn("failed to answer {}", request.message, e);
 			response = new Error(ProtocolConstants.ErrorCode.SERVER_ERROR, String.valueOf(e));
 		}
-		write(ctx, request.streamId, response);
+		Protocol.write(ctx, request.streamId, response);
 	}
 
 	private Message answer(final Frame request) {
-		if (request.protocolVersion != PROTOCOL_VERSION) {
-			// This also covers the one client-shaped corner of the driver's FrameDecoder: a v1 or
-			// v2 header makes it synthesize an Error *response* and pass it up as though it were a
-			// request. The version check runs first, so nothing ever reads that message.
-			return unsupportedVersion(request.protocolVersion);
+		if (request.protocolVersion != Protocol.VERSION) {
+			// ProtocolVersionGate has already turned away anything that opened at another version, so
+			// this is only reachable if a client changes version mid-connection. It also covers the
+			// one client-shaped corner of the driver's FrameDecoder: a v1 or v2 header makes it
+			// synthesize an Error *response* and pass it up as though it were a request, and the
+			// version check running first is what stops anything from reading that message.
+			return Protocol.unsupportedVersion(request.protocolVersion);
 		}
 
 		return switch (request.message.opcode) {
@@ -144,32 +138,5 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		}
 
 		return new Ready();
-	}
-
-	/**
-	 * The refusal that makes a driver step down a version instead of giving up.
-	 *
-	 * <p>The wording is load-bearing. {@code ProtocolInitHandler} looks for a {@code PROTOCOL_ERROR}
-	 * or {@code SERVER_ERROR} on the first request of a channel whose message <em>contains</em>
-	 * {@code "Invalid or unsupported protocol version"}, and only then does {@code ChannelFactory}
-	 * retry one version lower. Paraphrase it and a driver left on its v5 default fails outright -
-	 * or, worse, hangs with nothing in the log to explain why.
-	 *
-	 * <p>The surrounding shape is what cassandra:5.0.8 sends, captured rather than guessed: the
-	 * error carries the version the <em>server</em> speaks in its header, not the one that was
-	 * asked for.
-	 */
-	private static Error unsupportedVersion(final int version) {
-		return new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
-			"Invalid or unsupported protocol version (" + version
-				+ "); supported versions are (4/v4)");
-	}
-
-	private static ChannelFuture write(final ChannelHandlerContext ctx, final int streamId,
-		final Message message) {
-		// No tracing id is ever fabricated, no warning is ever raised, and custom payloads are read
-		// by nothing here, so all three are empty on every response (b_plan B7).
-		return ctx.writeAndFlush(Frame.forResponse(PROTOCOL_VERSION, streamId, null,
-			Frame.NO_PAYLOAD, List.of(), message));
 	}
 }
