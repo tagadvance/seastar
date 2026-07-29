@@ -5,9 +5,10 @@ category: a statement is either handled or it fails with a driver exception that
 SeaStar does not implement, so "SeaStar is broken" and "SeaStar does not do that" are never the same
 answer.
 
-Verified against `cassandra:5.0.8`. `AbstractCqlSessionTest` runs the same assertions against SeaStar
-and against a real node in a container, so anything marked **yes** below agrees with a cluster on the
-cases that suite covers.
+Verified against `cassandra:5.0.8`. `AbstractCqlSessionTest` runs the same assertions three ways -
+against SeaStar in process, against a real node in a container, and against SeaStar over a socket
+through `seastar-server` - so anything marked **yes** below agrees with a cluster on the cases that
+suite covers, and agrees with itself across the wire.
 
 ## Data
 
@@ -81,6 +82,103 @@ second it stops being readable. Both read back through `writetime()` and `ttl()`
   them, a static-only `INSERT` may leave the clustering key out and reads back with a null one, and
   a partition-wide `DELETE` takes the static cells with it. An `UPDATE` that writes only static
   columns may not restrict a clustering column, as on a cluster.
+
+## The native protocol (`seastar-server`)
+
+Everything above is CQL, and it answers the same whether a statement arrives in process or over a
+socket. This section is the **transport**, which is a separate set of trade-offs with its own
+supported list, its own refusals and its own deliberate divergences. A reader who only ever swaps a
+`CqlSession` in process can skip it. A reader who points a driver at the listener should not: the
+interesting limits down here are not the ones in the CQL tables above.
+
+```java
+final var session = SeaStarCqlSession.builder().build();
+try (final var server = SeaStarProtocolServer.builder().session(session).build().start()) {
+    // server.port() is an ephemeral port on the loopback address
+}
+```
+
+A stock `CqlSession` connects to it with no configuration but a contact point and
+`withLocalDatacenter("datacenter1")`, negotiating its way to protocol v5.
+
+### Handled
+
+Every client-to-server message the protocol defines, and nothing is left over.
+
+| Message | What it does |
+| --- | --- |
+| `STARTUP` | always answered `READY`. No authentication is required and none is offered. |
+| `OPTIONS` | `SUPPORTED` with `CQL_VERSION=3.4.7`, `PROTOCOL_VERSIONS=[4/v4, 5/v5]` and an empty compression list. |
+| `AUTH_RESPONSE` | `AUTH_SUCCESS`. Credentials a client sends anyway are accepted unexamined. |
+| `QUERY` | the statement, run against the session. Positional, named and null values all work. `USE` comes back as `SET_KEYSPACE`, DDL as `SCHEMA_CHANGE`, a `SELECT` or an LWT as `ROWS`, everything else as `VOID`. |
+| `PREPARE` | `PREPARED` carrying bind and result metadata. The id is `MD5(keyspace + query)`, the digest a real node computes, so preparing the same statement twice - or against a node - gives the same id. |
+| `EXECUTE` | the bound statement. An id this server never issued is `UNPREPARED` carrying the id back. |
+| `BATCH` | children applied in order; prepared ids and query strings may be mixed in one batch. |
+| `REGISTER` | recorded per connection. See [Server events](#server-events-seastar-server). |
+
+### Rejected by name
+
+Each of these fails loudly rather than being quietly dropped, so a client that needs one finds out.
+
+| Feature | What the client gets |
+| --- | --- |
+| Compression | `STARTUP` naming `snappy` or `lz4` is a `PROTOCOL_ERROR` naming it, not a silent fallback to none. It buys nothing on a loopback socket. |
+| A paging state in a request | `PROTOCOL_ERROR`, with a node's own wording. This server never issues one, and ignoring it would answer page one for ever. |
+| An event type `REGISTER` does not define | `PROTOCOL_ERROR`. Accepting a subscription that can never be honoured is worse. |
+| Protocol v3, v6-beta, DSE v1 and v2 | the `PROTOCOL_ERROR` that makes a driver retry one version lower. See [Protocol versions](#protocol-versions-seastar-server). |
+| TLS | not implemented at all - there is no `STARTTLS`-style negotiation to refuse, and a client configured for SSL fails in its own handshake. This is a loopback test socket. |
+
+### Accepted and ignored
+
+Present in a request, read, and deliberately without effect. Nothing here changes an answer, because
+there is one replica in one process and no I/O to bound.
+
+`consistency`, `serial_consistency`, the request's `default_timestamp` and `now_in_seconds`, the
+tracing flag (no tracing id is ever fabricated), `skip_metadata` (full column metadata is always
+sent), `page_size`, custom payloads, and a `WHERE` clause on a system table. Response warnings are
+always empty.
+
+Note that this is the protocol's timestamp, not CQL's: `INSERT ... USING TIMESTAMP` is implemented
+and does resolve writes, as the [Data](#data) table says.
+
+### Fidelity trades
+
+Deliberate, and each is expanded in the section named.
+
+- **Every answer is one page.** `page_size` is ignored - see [Paging](#paging).
+- **`TOPOLOGY_CHANGE` and `STATUS_CHANGE` never fire.** One node, up for as long as the server is
+  bound - see [Server events](#server-events-seastar-server).
+- **One node, no peers, one synthetic token.** `system.peers` and `system.peers_v2` are empty, and
+  `system.local` reports the single minimum token so this node owns the whole ring - see
+  [The system keyspaces](#the-system-keyspaces-seastar-server).
+- **`system_schema` is a projection, not a stored keyspace.** It is generated from the model on every
+  query, so an in-process user sees no system keyspaces at all.
+- **Table options over the wire are Cassandra 5.0.8 defaults, not stored state.** SeaStar models no
+  table options, so the projection writes what a plain `CREATE TABLE` would have written - which
+  means **`system_schema.tables.comment` is always the empty string**, whatever `WITH comment = '...'`
+  said, and a client reading table options over the wire disagrees with in-process `getOptions()`,
+  which is empty. Fixing it is a change to the model, not to the projection.
+- **A `BATCH` is not atomic or isolated.** Inherited from the core and restated here, because a
+  client on a socket has no reason to read the CQL tables: a child that fails partway through leaves
+  the earlier ones applied, where a node rejects the whole batch first.
+- **A DDL statement is answered from memory, and the wait is the driver's.** One second per statement
+  by default - see the note at the end of
+  [The system keyspaces](#the-system-keyspaces-seastar-server).
+- **`system_auth`, `system_traces` and `system_distributed` answer `INVALID`.** Nothing on a driver's
+  connect path reads them; a harness that queries one notices.
+
+### Not proven
+
+Honest gaps in the evidence rather than in the behaviour. Recorded so that "tested" is not assumed.
+
+- **A frame split across several segments has never been exercised.** At v5 a payload over
+  128 KiB - 1 is split, and nothing this server answers comes close, so only the self-contained path
+  has been run. The reassembly is the driver's own `SegmentToFrameDecoder` and is covered by the
+  driver's tests, but not by anything here.
+- **A frame over the 64 MiB ceiling is untested.** Proving it means allocating one.
+- **The wording of the `REGISTER` unknown-event-type refusal was not taken from a container.** The
+  error code is right; the message is modelled on Cassandra's `RegisterMessage` from memory. No
+  driver sends a bad type, so nothing depends on it.
 
 ## Paging
 
@@ -191,7 +289,9 @@ is negative on an event.
 These are fidelity gaps rather than missing statements; a query runs but SeaStar's answer can differ
 from a cluster's.
 
-- **Table options are not modelled.** `TableMetadata#getOptions()` is always empty.
+- **Table options are not modelled.** `TableMetadata#getOptions()` is always empty. Over the wire the
+  same tables read back as Cassandra 5.0.8 defaults instead, and `comment` is always empty - see
+  [The native protocol](#the-native-protocol-seastar-server).
 - **A tombstone is not stored.** A delete resolves against what is there at the time; it leaves
   nothing behind, so a write stamped older than a delete that already happened is applied rather than
   suppressed.
