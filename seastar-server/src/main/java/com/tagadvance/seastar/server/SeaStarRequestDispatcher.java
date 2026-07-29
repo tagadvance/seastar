@@ -23,16 +23,19 @@ import com.datastax.oss.protocol.internal.request.Query;
 import com.datastax.oss.protocol.internal.request.query.QueryOptions;
 import com.datastax.oss.protocol.internal.response.Error;
 import com.datastax.oss.protocol.internal.response.error.Unprepared;
-import com.datastax.oss.protocol.internal.response.result.ColumnSpec;
 import com.datastax.oss.protocol.internal.response.result.Prepared;
+import com.datastax.oss.protocol.internal.response.result.Rows;
 import com.datastax.oss.protocol.internal.response.result.RowsMetadata;
 import com.datastax.oss.protocol.internal.util.Bytes;
 import com.tagadvance.seastar.SeaStarCqlSession;
+import com.tagadvance.seastar.SystemSchema;
 import com.tagadvance.seastar.handlers.CqlStatementSummary;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.Nullable;
 
@@ -66,10 +69,19 @@ import org.jspecify.annotations.Nullable;
 final class SeaStarRequestDispatcher {
 
 	private final SeaStarCqlSession session;
+	private final SystemTables systemTables;
 	private final PreparedStatements prepared = new PreparedStatements();
 
-	SeaStarRequestDispatcher(final SeaStarCqlSession session) {
+	/**
+	 * The system queries this server has prepared, by id. Separate from {@link #prepared} because a
+	 * system query never reaches the session, so there is no {@link PreparedStatement} to remember -
+	 * only the text to answer again.
+	 */
+	private final Map<ByteBuffer, String> preparedSystem = new ConcurrentHashMap<>();
+
+	SeaStarRequestDispatcher(final SeaStarCqlSession session, final SystemTables systemTables) {
 		this.session = requireNonNull(session, "session must not be null");
+		this.systemTables = requireNonNull(systemTables, "systemTables must not be null");
 	}
 
 	/**
@@ -102,6 +114,11 @@ final class SeaStarRequestDispatcher {
 			return refusal;
 		}
 
+		final var system = system(request.query);
+		if (system != null) {
+			return system;
+		}
+
 		CqlStatementSummary summary = null;
 		try {
 			selectKeyspace(connection);
@@ -114,6 +131,11 @@ final class SeaStarRequestDispatcher {
 	}
 
 	private Message prepare(final Prepare request, final SeaStarConnection connection) {
+		final var select = SystemQuery.of(request.cqlQuery);
+		if (select != null && isSystem(select)) {
+			return prepareSystem(request.cqlQuery);
+		}
+
 		try {
 			selectKeyspace(connection);
 			final var statement = session.prepare(request.cqlQuery);
@@ -132,6 +154,11 @@ final class SeaStarRequestDispatcher {
 		final var refusal = refusePagingState(request.options);
 		if (refusal != null) {
 			return refusal;
+		}
+
+		final var systemQuery = preparedSystem.get(ByteBuffer.wrap(request.queryId));
+		if (systemQuery != null) {
+			return system(systemQuery);
 		}
 
 		final var statement = prepared.find(request.queryId);
@@ -191,8 +218,75 @@ final class SeaStarRequestDispatcher {
 		if (summary instanceof CqlStatementSummary.KeyspaceSelected selected) {
 			connection.keyspace(CqlIdentifier.fromInternal(selected.keyspace()));
 		}
+		if (summary instanceof CqlStatementSummary.SchemaChanged) {
+			// Before the response goes out, so that the schema-agreement check the driver runs on
+			// seeing it already reads the new version.
+			systemTables.schemaChanged();
+		}
 
 		return response;
+	}
+
+	/**
+	 * Answers the keyspaces a real node keeps to describe itself, which the model has no idea about:
+	 * {@code system} from {@link SystemTables}, {@code system_schema} from the core's projection.
+	 *
+	 * <p>This is the whole of {@code d_plan D1}, and it is on purpose that it happens here rather
+	 * than in the core's handler registry. These tables are a property of the listener, not of the
+	 * data: an in-process user who never starts a server must not suddenly find invented keyspaces in
+	 * {@code getMetadata().getKeyspaces()}.
+	 *
+	 * @param query the query string, exactly as it arrived
+	 * @return the answer, or {@code null} if this is not a query the server answers itself - which is
+	 * everything the model should see
+	 */
+	private @Nullable Message system(final String query) {
+		final var select = SystemQuery.of(query);
+		if (select == null || !isSystem(select)) {
+			return null;
+		}
+		if (SystemTables.answers(select.keyspace())) {
+			return systemTables.select(select);
+		}
+
+		return SystemSchema.select(session.getContext(), select.table())
+			.map(Results::of)
+			.map(select::project)
+			.orElseGet(() -> unconfiguredTable(select.table()));
+	}
+
+	/**
+	 * Answers a {@code PREPARE} of a system query without going near the session, which has no such
+	 * tables to resolve the statement against.
+	 *
+	 * <p>The id is derived from the query text, so preparing the same string twice returns the same
+	 * id - which is what a real node does. There are no bind variables: none of these queries has
+	 * one, and the {@code WHERE} clause that could have carried one is ignored anyway.
+	 */
+	private Message prepareSystem(final String query) {
+		final var answer = system(query);
+		if (!(answer instanceof Rows rows)) {
+			// The table does not exist, and that is the same error an EXECUTE of it would give.
+			return answer;
+		}
+
+		final var uuid = UUID.nameUUIDFromBytes(query.getBytes(StandardCharsets.UTF_8));
+		final var id = ByteBuffer.allocate(2 * Long.BYTES)
+			.putLong(uuid.getMostSignificantBits())
+			.putLong(uuid.getLeastSignificantBits())
+			.array();
+		preparedSystem.put(ByteBuffer.wrap(id), query);
+
+		return new Prepared(id, null, new RowsMetadata(0, null, null, null), rows.getMetadata());
+	}
+
+	private static boolean isSystem(final SystemQuery select) {
+		return SystemTables.answers(select.keyspace())
+			|| SystemSchema.KEYSPACE_NAME.equals(select.keyspace());
+	}
+
+	private static Message unconfiguredTable(final String table) {
+		return new Error(ProtocolConstants.ErrorCode.INVALID, "table " + table + " does not exist");
 	}
 
 	/**

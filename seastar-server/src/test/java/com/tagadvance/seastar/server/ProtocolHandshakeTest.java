@@ -16,6 +16,7 @@ import com.datastax.oss.protocol.internal.response.AuthSuccess;
 import com.datastax.oss.protocol.internal.response.Error;
 import com.datastax.oss.protocol.internal.response.Ready;
 import com.datastax.oss.protocol.internal.response.Supported;
+import com.datastax.oss.protocol.internal.response.result.Rows;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import java.io.IOException;
 import java.util.List;
@@ -163,18 +164,18 @@ class ProtocolHandshakeTest {
 	}
 
 	@Test
-	@DisplayName("the system tables are not answered yet, and say so as a query error")
-	void testSystemTablesAreNotAnsweredYet() throws IOException {
+	@DisplayName("the query straight after READY is answered, which is what opens a session")
+	void testTheStepAfterReady() throws IOException {
 		try (final var client = new WireClient(server.port())) {
 			client.send(V4, 1, new Startup());
-			final var response = client.send(V4, 2, new Query("SELECT * FROM system.local"));
-			final var error = assertInstanceOf(Error.class, response.message);
+			// ProtocolInitHandler's GET_CLUSTER_NAME step. It requires ROWS with at least one row -
+			// it passes the first one to Objects.requireNonNull - so anything else here is a
+			// connection that never finishes initializing. See WireSystemTableTest for the contents.
+			final var response = client.send(V4, 2,
+				new Query("SELECT cluster_name FROM system.local"));
+			final var rows = assertInstanceOf(Rows.class, response.message);
 
-			// The statement reaches the session and is answered by the model, which has no system
-			// keyspace in it - so this is a plain unknown-keyspace error rather than a server one.
-			// It becomes a passing query when the system tables land (d_plan D1-D3).
-			assertEquals(ProtocolConstants.ErrorCode.INVALID, error.code);
-			assertTrue(error.message.contains("system"), error.message);
+			assertEquals(1, rows.getData().size());
 		}
 	}
 
