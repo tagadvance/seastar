@@ -70,6 +70,9 @@ tasks.register<JavaExec>("wireStartupBenchmark") {
     group = "benchmark"
     mainClass = "com.tagadvance.seastar.bench.ColdJvmBenchmark"
     classpath = wireBench.runtimeClasspath
+    // ColdJvmBenchmark passes this on to each forked probe.
+    systemProperty("logback.configurationFile",
+        layout.projectDirectory.file("logback-bench.xml").asFile.absolutePath)
     args("com.tagadvance.seastar.bench.WireStartupProbe", "20")
     usesService(gradle.sharedServices.registrations["benchmarkExclusivity"].service)
 }

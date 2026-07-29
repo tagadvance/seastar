@@ -1,0 +1,6 @@
+<!-- Benchmarks only. Console I/O is not part of what a startup number is measuring, and the driver
+     logs at INFO on its way up. The core's equivalent is seastar/logback-tools.xml; it is duplicated
+     rather than shared because reaching into another project's directory is worse than four lines. -->
+<configuration>
+    <root level="OFF"/>
+</configuration>
