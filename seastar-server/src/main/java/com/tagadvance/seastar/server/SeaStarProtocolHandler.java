@@ -16,8 +16,10 @@ import com.datastax.oss.protocol.internal.response.Supported;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -59,8 +61,10 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 		"PROTOCOL_VERSIONS", Protocol.VERSIONS);
 
 	/**
-	 * The event types a {@code REGISTER} may name. A node rejects anything else rather than
-	 * accepting a subscription it will never honour, and so does this.
+	 * The event types a {@code REGISTER} may name, in the case they are written on the wire. A node
+	 * rejects anything else rather than accepting a subscription it will never honour, and so does
+	 * this - but it resolves the name case-insensitively, so the lookup is against the upper-cased
+	 * form. See {@link #register(Register)}.
 	 */
 	private static final Set<String> EVENT_TYPES = Set.of(
 		ProtocolConstants.EventType.TOPOLOGY_CHANGE, ProtocolConstants.EventType.STATUS_CHANGE,
@@ -204,15 +208,27 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 	 * <p>Only {@code SCHEMA_CHANGE} is ever published. A single node that is up for as long as the
 	 * server is bound has no topology or status change to report, so registering for those two is
 	 * accepted and correctly produces nothing.
+	 *
+	 * <p>Three things here were captured from a {@code cassandra:5.0.8} container rather than
+	 * reasoned about, and all three are things a reasonable implementation would get wrong. A node
+	 * upper-cases the name before resolving it, so {@code schema_change} registers and is then
+	 * honoured - refusing it would leave this server stricter than the thing it imitates. The refusal
+	 * quotes the name <em>as it was sent</em>, not the upper-cased form. And one bad name rejects the
+	 * whole message: a {@code REGISTER} naming {@code SCHEMA_CHANGE} alongside a type that does not
+	 * exist registers nothing at all, which is why nothing is recorded until every name has been
+	 * checked.
 	 */
 	private Message register(final Register request) {
+		final var eventTypes = new ArrayList<String>(request.eventTypes.size());
 		for (final var eventType : request.eventTypes) {
-			if (!EVENT_TYPES.contains(eventType)) {
+			final var resolved = eventType.toUpperCase(Locale.ROOT);
+			if (!EVENT_TYPES.contains(resolved)) {
 				return new Error(ProtocolConstants.ErrorCode.PROTOCOL_ERROR,
 					"Invalid value '" + eventType + "' for Type");
 			}
+			eventTypes.add(resolved);
 		}
-		connection.register(request.eventTypes);
+		connection.register(eventTypes);
 
 		return new Ready();
 	}
