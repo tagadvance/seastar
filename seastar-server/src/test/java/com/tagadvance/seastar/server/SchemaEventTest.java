@@ -33,6 +33,11 @@ import org.junit.jupiter.api.Test;
  * event is how everybody else does.
  *
  * <p>Two connections throughout, because one connection cannot tell the two apart.
+ *
+ * <p>What a {@code REGISTER} accepts and how it refuses came off a {@code cassandra:5.0.8} container
+ * over a raw socket - the error's exact wording, that the name is resolved case-insensitively, and
+ * that one bad name rejects the whole message. No driver sends a bad type, so nothing here would have
+ * been caught by using one.
  */
 class SchemaEventTest {
 
@@ -209,7 +214,48 @@ class SchemaEventTest {
 			final var error = assertInstanceOf(Error.class, response.message);
 
 			assertEquals(ProtocolConstants.ErrorCode.PROTOCOL_ERROR, error.code);
-			assertTrue(error.message.contains("MOON_PHASE_CHANGE"), error.message);
+			// The whole message, not a substring: this is what cassandra:5.0.8 answers, verbatim.
+			assertEquals("Invalid value 'MOON_PHASE_CHANGE' for Type", error.message);
+		}
+	}
+
+	@Test
+	@DisplayName("the refusal quotes the event type as it was sent, whatever case that was")
+	void testTheRefusalQuotesWhatWasSent() throws IOException {
+		try (final var client = connect()) {
+			final var error = assertInstanceOf(Error.class,
+				client.send(V4, 2, new Register(List.of("moon_phase_change"))).message);
+
+			assertEquals("Invalid value 'moon_phase_change' for Type", error.message);
+		}
+	}
+
+	@Test
+	@DisplayName("an event type is resolved case-insensitively, and is then honoured")
+	void testTheEventTypeIsCaseInsensitive() throws IOException {
+		try (final var watcher = connect(); final var other = connect()) {
+			// A node upper-cases the name before looking it up, so this registers rather than being
+			// refused. Captured from cassandra:5.0.8, which then pushes the event to it.
+			assertInstanceOf(Ready.class,
+				watcher.send(V4, 2, new Register(List.of("schema_change"))).message);
+
+			other.send(V4, 2, new Query(CREATE_KEYSPACE));
+
+			assertEvent(watcher, ProtocolConstants.SchemaChangeType.CREATED,
+				ProtocolConstants.SchemaChangeTarget.KEYSPACE, null);
+		}
+	}
+
+	@Test
+	@DisplayName("one unknown event type rejects the whole REGISTER, including the names beside it")
+	void testOneBadNameRejectsTheRest() throws IOException {
+		try (final var watcher = connect(); final var other = connect()) {
+			assertInstanceOf(Error.class, watcher.send(V4, 2, new Register(
+				List.of(ProtocolConstants.EventType.SCHEMA_CHANGE, "MOON_PHASE_CHANGE"))).message);
+
+			other.send(V4, 2, new Query(CREATE_KEYSPACE));
+
+			assertNothingPending(watcher);
 		}
 	}
 
