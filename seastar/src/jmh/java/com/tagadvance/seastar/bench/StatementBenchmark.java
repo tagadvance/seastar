@@ -154,7 +154,9 @@ public class StatementBenchmark {
 	}
 
 	/**
-	 * A distinct query string per invocation, so the prepared statement cache always misses.
+	 * A distinct query string per invocation, so the prepared statement cache always misses. That is
+	 * a full parse: {@code SeaStarCqlPrepareHandler} resolves the bind variable metadata inside
+	 * {@code prepare()}, so that a statement this session rejects is rejected there.
 	 */
 	@Benchmark
 	public PreparedStatement prepareUncached() {
@@ -162,9 +164,9 @@ public class StatementBenchmark {
 	}
 
 	/**
-	 * SeaStar's {@code prepare} is lazy - it parses on first access to the bind variable metadata,
-	 * not in {@code prepare} itself - so the two benchmarks above measure only the cache lookup and
-	 * the statement object. This one forces the parse that a caller pays on the first bind.
+	 * Reading the metadata the benchmark above has already resolved, which is why the two now measure
+	 * the same thing. Kept as the pair: it is what says the resolution is not deferred to first bind,
+	 * and a divergence between them would say it had become so again.
 	 */
 	@Benchmark
 	public ColumnDefinitions prepareUncachedResolved() {
