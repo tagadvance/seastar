@@ -119,6 +119,14 @@ class SeaStarPreparedStatement implements PreparedStatement {
 		return BindMarkers.resolve(context, explicit, raw);
 	}
 
+	/**
+	 * The statement's prepared id, as a buffer positioned to be read.
+	 *
+	 * <p>The same writable instance is returned on every call, which is what the driver's
+	 * {@code DefaultPreparedStatement} does - not even read-only, unlike
+	 * {@link #getResultMetadataId()}. Duplicate it before reading: a caller that consumes it in place
+	 * leaves it drained for the next one.
+	 */
 	@Override
 	@NonNull
 	public ByteBuffer getId() {
