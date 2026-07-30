@@ -10,6 +10,9 @@ import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.ListType;
+import com.datastax.oss.driver.api.core.type.MapType;
+import com.datastax.oss.driver.api.core.type.SetType;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.cql.DefaultColumnDefinitions;
 import com.datastax.oss.driver.internal.core.cql.EmptyColumnDefinitions;
@@ -26,6 +29,8 @@ import java.util.stream.Collectors;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.cql3.FieldIdentifier;
+import org.apache.cassandra.cql3.Json;
 import org.apache.cassandra.cql3.MultiColumnRelation;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
@@ -40,6 +45,7 @@ import org.apache.cassandra.cql3.statements.DeleteStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.QualifiedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
+import org.apache.cassandra.cql3.statements.UpdateStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
 import org.apache.cassandra.utils.Pair;
@@ -196,7 +202,13 @@ public final class BindMarkers {
 			collectUpdate(table, update, markers, coordinator);
 			collectModification(table, update, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
+		} else if (raw instanceof UpdateStatement.ParsedInsertJson json) {
+			collectInsertJson(table, json, markers);
+			collectModification(table, json, markers, coordinator);
+			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof DeleteStatement.Parsed delete) {
+			collectDeletions(table, FieldBindings.DELETE_DELETIONS.require(delete), markers,
+				coordinator);
 			collectWhere(table, FieldBindings.DELETE_WHERE_CLAUSE.require(delete).relations, markers,
 				coordinator);
 			collectModification(table, delete, markers, coordinator);
@@ -280,39 +292,124 @@ public final class BindMarkers {
 		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var update : FieldBindings.UPDATE_UPDATES.require(raw)) {
 			final var column = requireColumn(table, update.left.toString(), coordinator);
-			updateTerms(update.right).forEach(term -> putIfMarker(term, column, markers));
+			collectUpdateOperation(table, column, update.right, markers);
 		}
 		collectWhere(table, FieldBindings.UPDATE_WHERE_CLAUSE.require(raw).relations, markers,
 			coordinator);
 	}
 
 	/**
-	 * The terms one {@code SET} item is written with. A marker inside a collection or element form
-	 * is typed as the whole column, which is coarser than a cluster types it, but leaving it out
-	 * would put a gap in the bind indices and cost the statement its variable definitions entirely.
+	 * The markers one {@code SET} item is written with. An item that writes the whole column types
+	 * its marker as the column; the element and field forms address something narrower, and a node
+	 * types and names their markers by what they address rather than by the column.
 	 */
-	private static List<Term.Raw> updateTerms(final Operation.RawUpdate raw) {
+	private static void collectUpdateOperation(final SeaStarTable table,
+		final ColumnDefinition column, final Operation.RawUpdate raw,
+		final NavigableMap<Integer, ColumnDefinition> markers) {
 		if (raw instanceof Operation.SetValue setValue) {
-			return List.of(FieldBindings.SET_VALUE.require(setValue));
+			putIfMarker(FieldBindings.SET_VALUE.require(setValue), column, markers);
+		} else if (raw instanceof Operation.Addition addition) {
+			putIfMarker(FieldBindings.ADDITION_VALUE.require(addition), column, markers);
+		} else if (raw instanceof Operation.Substraction subtraction) {
+			putIfMarker(FieldBindings.SUBTRACTION_VALUE.require(subtraction), column, markers);
+		} else if (raw instanceof Operation.Prepend prepend) {
+			putIfMarker(FieldBindings.PREPEND_VALUE.require(prepend), column, markers);
+		} else if (raw instanceof Operation.SetElement setElement) {
+			putIfMarker(FieldBindings.SET_ELEMENT_SELECTOR.require(setElement),
+				selectorDefinition(table, column), markers);
+			putIfMarker(FieldBindings.SET_ELEMENT_VALUE.require(setElement),
+				elementDefinition(table, column), markers);
+		} else if (raw instanceof Operation.SetField setField) {
+			putIfMarker(FieldBindings.SET_FIELD_VALUE.require(setField),
+				fieldDefinition(table, column, FieldBindings.SET_FIELD_FIELD.require(setField)),
+				markers);
 		}
-		if (raw instanceof Operation.Addition addition) {
-			return List.of(FieldBindings.ADDITION_VALUE.require(addition));
+	}
+
+	/**
+	 * The markers a {@code DELETE}'s column list carries. Only the element form has one, and it
+	 * selects rather than supplies: {@code DELETE m[?]} binds a map key.
+	 */
+	private static void collectDeletions(final SeaStarTable table,
+		final List<Operation.RawDeletion> deletions,
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
+		for (final var deletion : deletions) {
+			if (deletion instanceof Operation.ElementDeletion element) {
+				final var column = requireColumn(table, deletion.affectedColumn().toString(),
+					coordinator);
+				putIfMarker(FieldBindings.ELEMENT_DELETION_ELEMENT.require(element),
+					selectorDefinition(table, column), markers);
+			}
 		}
-		if (raw instanceof Operation.Substraction subtraction) {
-			return List.of(FieldBindings.SUBTRACTION_VALUE.require(subtraction));
+	}
+
+	/**
+	 * The single marker an {@code INSERT ... JSON} carries, which a node names {@code [json]} and
+	 * types as text - the document is one string whatever the table looks like.
+	 */
+	private static void collectInsertJson(final SeaStarTable table,
+		final UpdateStatement.ParsedInsertJson raw,
+		final NavigableMap<Integer, ColumnDefinition> markers) {
+		if (FieldBindings.INSERT_JSON_VALUE.require(raw) instanceof Json.Marker marker) {
+			markers.put(FieldBindings.JSON_MARKER_BIND_INDEX.require(marker),
+				syntheticDefinition(table, "[json]", DataTypes.TEXT));
 		}
-		if (raw instanceof Operation.Prepend prepend) {
-			return List.of(FieldBindings.PREPEND_VALUE.require(prepend));
+	}
+
+	/**
+	 * The definition of a marker that selects into a collection rather than supplying a value: a
+	 * list index, a set element or a map key. A node calls these {@code idx(l)}, {@code value(s)} and
+	 * {@code key(m)}.
+	 */
+	private static ColumnDefinition selectorDefinition(final SeaStarTable table,
+		final ColumnDefinition column) {
+		final var name = column.getName().asInternal();
+		if (column.getType() instanceof ListType) {
+			return syntheticDefinition(table, "idx(%s)".formatted(name), DataTypes.INT);
 		}
-		if (raw instanceof Operation.SetElement setElement) {
-			return List.of(FieldBindings.SET_ELEMENT_SELECTOR.require(setElement),
-				FieldBindings.SET_ELEMENT_VALUE.require(setElement));
+		if (column.getType() instanceof SetType set) {
+			return syntheticDefinition(table, "value(%s)".formatted(name), set.getElementType());
 		}
-		if (raw instanceof Operation.SetField setField) {
-			return List.of(FieldBindings.SET_FIELD_VALUE.require(setField));
+		if (column.getType() instanceof MapType map) {
+			return syntheticDefinition(table, "key(%s)".formatted(name), map.getKeyType());
 		}
 
-		return List.of();
+		return column;
+	}
+
+	/**
+	 * The definition of a marker supplying the value at a selected position, which a node calls
+	 * {@code value(l)} or {@code value(m)}.
+	 */
+	private static ColumnDefinition elementDefinition(final SeaStarTable table,
+		final ColumnDefinition column) {
+		final var name = "value(%s)".formatted(column.getName().asInternal());
+		if (column.getType() instanceof ListType list) {
+			return syntheticDefinition(table, name, list.getElementType());
+		}
+		if (column.getType() instanceof MapType map) {
+			return syntheticDefinition(table, name, map.getValueType());
+		}
+
+		return column;
+	}
+
+	/**
+	 * The definition of a marker supplying one field of a user-defined type column, which a node
+	 * names {@code column.field} - the same shape {@link #collectInsertValue} builds for a UDT
+	 * literal.
+	 */
+	private static ColumnDefinition fieldDefinition(final SeaStarTable table,
+		final ColumnDefinition column, final FieldIdentifier field) {
+		if (!(column.getType() instanceof UserDefinedType udt)) {
+			return column;
+		}
+		final var name = CqlIdentifier.fromInternal(field.toString());
+		final var index = udt.firstIndexOf(name);
+
+		return index < 0 ? column : syntheticDefinition(table,
+			"%s.%s".formatted(column.getName().asInternal(), name.asInternal()),
+			udt.getFieldTypes().get(index));
 	}
 
 	/**
@@ -338,24 +435,32 @@ public final class BindMarkers {
 	}
 
 	/**
-	 * The markers of an {@code IF} clause, each typed as the column it compares. A marker the clause
-	 * carries somewhere this does not reach - {@code IF v IN ?} binds the whole list to one - is left
-	 * out, and the total count in {@link #toDefinitions} turns that into empty metadata rather than
-	 * into short metadata.
+	 * The markers of an {@code IF} clause, typed by what the condition compares: the column, one
+	 * element of it, or one field of it. A marker the clause carries somewhere this does not reach -
+	 * {@code IF v IN ?} binds the whole list to one - is left out, and the total count in
+	 * {@link #toDefinitions} turns that into empty metadata rather than into short metadata.
 	 */
 	private static void collectConditions(final SeaStarTable table,
 		final List<Pair<ColumnIdentifier, ColumnCondition.Raw>> conditions,
 		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
 		for (final var condition : conditions) {
+			final var raw = condition.right;
 			final var column = requireColumn(table, condition.left.toString(), coordinator);
-			final var value = condition.right.getValue();
+			final var element = FieldBindings.CONDITION_COLLECTION_ELEMENT.find(raw);
+			element.ifPresent(
+				term -> putIfMarker(term, selectorDefinition(table, column), markers));
+			final var compared = element.map(term -> elementDefinition(table, column))
+				.or(() -> FieldBindings.CONDITION_UDT_FIELD.find(raw)
+					.map(field -> fieldDefinition(table, column, field)))
+				.orElse(column);
+			final var value = raw.getValue();
 			if (value != null) {
-				putIfMarker(value, column, markers);
+				putIfMarker(value, compared, markers);
 			}
-			FieldBindings.CONDITION_IN_VALUES.find(condition.right)
+			FieldBindings.CONDITION_IN_VALUES.find(raw)
 				.stream()
 				.flatMap(List::stream)
-				.forEach(term -> putIfMarker(term, column, markers));
+				.forEach(term -> putIfMarker(term, compared, markers));
 		}
 	}
 

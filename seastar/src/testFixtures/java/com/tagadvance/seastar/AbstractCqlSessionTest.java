@@ -3459,6 +3459,75 @@ public abstract class AbstractCqlSessionTest {
 			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ?", 26, 1, "short"));
 	}
 
+	private void createElementTable() {
+		session.execute("CREATE TYPE IF NOT EXISTS foo.mark_addr (street text)");
+		session.execute("CREATE TABLE IF NOT EXISTS foo.elems (pk int PRIMARY KEY, l list<text>, "
+			+ "s set<text>, m map<text, text>, u mark_addr)");
+	}
+
+	@Test
+	@Order(241)
+	@DisplayName("A marker addressing one element or field is typed by what it addresses")
+	void testElementAndFieldVariables() {
+		createElementTable();
+
+		// A selector is not the column: a list index is an int, a map key is the key type.
+		assertVariableNames(List.of("idx(l)", "pk"), "DELETE l[?] FROM foo.elems WHERE pk = ?");
+		assertVariableNames(List.of("value(s)", "pk"), "DELETE s[?] FROM foo.elems WHERE pk = ?");
+		assertVariableNames(List.of("key(m)", "pk"), "DELETE m[?] FROM foo.elems WHERE pk = ?");
+		assertVariableNames(List.of("idx(l)", "value(l)", "pk"),
+			"UPDATE foo.elems SET l[?] = ? WHERE pk = ?");
+		assertVariableNames(List.of("key(m)", "value(m)", "pk"),
+			"UPDATE foo.elems SET m[?] = ? WHERE pk = ?");
+		assertVariableNames(List.of("u.street", "pk"),
+			"UPDATE foo.elems SET u.street = ? WHERE pk = ?");
+		assertVariableNames(List.of("value(m)", "pk", "value(m)"),
+			"UPDATE foo.elems SET m['a'] = ? WHERE pk = ? IF m['b'] = ?");
+		assertVariableNames(List.of("l", "pk"), "UPDATE foo.elems SET l = l + ? WHERE pk = ?");
+
+		final var prepared = session.prepare("UPDATE foo.elems SET m[?] = ? WHERE pk = ?");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(DataTypes.TEXT, variables.get(0).getType());
+		assertEquals(DataTypes.TEXT, variables.get(1).getType());
+		assertEquals(DataTypes.INT,
+			session.prepare("DELETE l[?] FROM foo.elems WHERE pk = ?").getVariableDefinitions()
+				.get(0).getType());
+	}
+
+	@Test
+	@Order(242)
+	@DisplayName("An INSERT ... JSON document is a single text variable, named [json]")
+	void testJsonVariables() {
+		createElementTable();
+
+		assertVariableNames(List.of("[json]"), "INSERT INTO foo.elems JSON ?");
+		assertVariableNames(List.of("doc"), "INSERT INTO foo.elems JSON :doc");
+		assertVariableNames(List.of("[json]"), "INSERT INTO foo.elems JSON ? DEFAULT UNSET");
+		assertVariableNames(List.of("[json]", "[ttl]"),
+			"INSERT INTO foo.elems JSON ? USING TTL ?");
+		assertEquals(DataTypes.TEXT,
+			session.prepare("INSERT INTO foo.elems JSON ?").getVariableDefinitions().get(0).getType());
+
+		session.execute(session.prepare("INSERT INTO foo.elems JSON ?")
+			.bind("{\"pk\": 30, \"m\": {\"a\": \"x\", \"b\": \"y\"}}"));
+		final var stored = only("SELECT m FROM foo.elems WHERE pk = 30");
+		assertEquals(Map.of("a", "x", "b", "y"), stored.getMap(0, String.class, String.class));
+
+		// The selector and the value are bound separately, and to the narrower type each addresses.
+		session.execute(session.prepare("UPDATE foo.elems SET m[?] = ? WHERE pk = ?")
+			.bind("a", "z", 30));
+		session.execute(session.prepare("DELETE m[?] FROM foo.elems WHERE pk = ?").bind("b", 30));
+		assertEquals(Map.of("a", "z"),
+			only("SELECT m FROM foo.elems WHERE pk = 30").getMap(0, String.class, String.class));
+
+		session.execute("UPDATE foo.elems SET u = {street: 'Old'} WHERE pk = 30");
+		session.execute(session.prepare("UPDATE foo.elems SET u.street = ? WHERE pk = ?")
+			.bind("Main", 30));
+		final var udt = only("SELECT u FROM foo.elems WHERE pk = 30").getUdtValue(0);
+		assertNotNull(udt);
+		assertEquals("Main", udt.getString("street"));
+	}
+
 	private void assertVariableNames(final List<String> expected, final String cql) {
 		final var variables = session.prepare(cql).getVariableDefinitions();
 		final var names = StreamSupport.stream(variables.spliterator(), false)
