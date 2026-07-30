@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.datastax.oss.protocol.internal.ProtocolConstants;
+import com.datastax.oss.protocol.internal.Segment;
 import com.datastax.oss.protocol.internal.request.Options;
 import com.datastax.oss.protocol.internal.request.Prepare;
 import com.datastax.oss.protocol.internal.request.Query;
@@ -19,8 +20,12 @@ import com.datastax.oss.protocol.internal.response.result.Prepared;
 import com.datastax.oss.protocol.internal.response.result.RawType;
 import com.datastax.oss.protocol.internal.response.result.Rows;
 import com.datastax.oss.protocol.internal.response.result.SchemaChange;
+import com.datastax.oss.protocol.internal.response.result.Void;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,11 +40,26 @@ import org.junit.jupiter.api.Test;
  * <p>{@link WireClient} drives {@code SegmentCodec} by hand for this, which is what lets a test send
  * a segment whose checksum is wrong on purpose. Nothing else can produce one: the loopback socket
  * does not corrupt anything, which is the argument for checking rather than the argument against.
+ *
+ * <p>It is also what lets a test reach the <em>other</em> shape a segment takes. A frame longer than
+ * {@link Segment#MAX_PAYLOAD_LENGTH} travels as a run of slices that only mean anything once they are
+ * all in, and the two directions get there for different reasons: a server answers with more than
+ * 128 KiB long before a client asks with it, because paging is deliberately not implemented and a
+ * node may legally return everything. Both are exercised below, and both assert on the reassembled
+ * content rather than on the absence of an exception - a silently truncated or reordered payload is
+ * the failure worth catching.
  */
 class SegmentFramingTest {
 
 	private static final int V4 = ProtocolConstants.Version.V4;
 	private static final int V5 = ProtocolConstants.Version.V5;
+
+	/**
+	 * Enough rows of {@link #value(int)} to put the answer well past {@link Segment#MAX_PAYLOAD_LENGTH}
+	 * - four slices' worth rather than two, so that reassembly is exercised in the middle of a run and
+	 * not only at its ends.
+	 */
+	private static final int ROWS = 1_200;
 
 	private SeaStarCqlSession session;
 	private SeaStarProtocolServer server;
@@ -172,6 +192,73 @@ class SegmentFramingTest {
 	}
 
 	@Test
+	@DisplayName("a result set too large for one segment comes back whole, across several slices")
+	void testAResponseSplitAcrossSegments() throws IOException {
+		try (final var client = connect()) {
+			client.send(V5, 1, new Query("CREATE KEYSPACE ks WITH replication = "
+				+ "{'class':'SimpleStrategy','replication_factor':1}"));
+			client.send(V5, 2, new Query("CREATE TABLE ks.t (id int PRIMARY KEY, v text)"));
+			// Seeded in process so that this test says something about one direction only. Every row is
+			// far short of a segment on its own; it is the answer as a whole that does not fit, which is
+			// the case a server reaches long before a client does.
+			final var insert = session.prepare("INSERT INTO ks.t (id, v) VALUES (?, ?)");
+			for (int id = 0; id < ROWS; id++) {
+				session.execute(insert.bind(id, value(id)));
+			}
+
+			final var rows = assertInstanceOf(Rows.class,
+				client.send(V5, 3, new Query("SELECT id, v FROM ks.t")).message);
+
+			assertEquals(ROWS, rows.getData().size());
+			assertTrue(client.slicesRead() >= 4, "expected the answer to be split across several "
+				+ "segments, got " + client.slicesRead() + " slices in " + client.segmentsRead()
+				+ " segments");
+			// Every value is a function of its own row's id, so a slice dropped, duplicated or put back
+			// in the wrong order shows up as a value that does not belong to the row it arrived in -
+			// which is what a length check alone would miss.
+			final var seen = new HashSet<Integer>();
+			for (final var row : rows.getData()) {
+				final var id = row.get(0).duplicate().getInt();
+				assertEquals(value(id), text(row.get(1)), "row " + id + " came back mangled");
+				assertTrue(seen.add(id), "row " + id + " came back twice");
+			}
+			assertEquals(ROWS, seen.size());
+
+			// The client's accumulation has to reset, and so does the listener's encoder.
+			assertInstanceOf(Supported.class, client.send(V5, 4, Options.INSTANCE).message);
+		}
+	}
+
+	@Test
+	@DisplayName("a statement too large for one segment is reassembled before it is run")
+	void testARequestSplitAcrossSegments() throws IOException {
+		// Three slices' worth. A text literal rather than a bound value because the frame is the frame:
+		// what is under test is the far side putting the slices back in order, not how they were filled.
+		final var value = "the quick brown fox-".repeat(15_000);
+		try (final var client = connect()) {
+			client.send(V5, 1, new Query("CREATE KEYSPACE ks WITH replication = "
+				+ "{'class':'SimpleStrategy','replication_factor':1}"));
+			client.send(V5, 2, new Query("CREATE TABLE ks.t (id int PRIMARY KEY, v text)"));
+
+			assertInstanceOf(Void.class, client.send(V5, 3,
+				new Query("INSERT INTO ks.t (id, v) VALUES (1, '" + value + "')")).message);
+
+			assertTrue(client.slicesWritten() >= 3, "expected the request to be split across several "
+				+ "segments, got " + client.slicesWritten() + " slices");
+			// Read back in process, so that a mangled answer cannot be mistaken for a mangled request. A
+			// statement whose slices arrived out of order would not have parsed at all; one whose last
+			// slice was lost would never have run; a truncated value would have inserted quietly.
+			final var row = session.execute("SELECT v FROM ks.t WHERE id = 1").one();
+			assertNotNull(row);
+			assertEquals(value, row.getString("v"));
+
+			// The listener's decoder has to have reset its accumulation, or this hangs.
+			assertEquals(1, assertInstanceOf(Rows.class,
+				client.send(V5, 4, new Query("SELECT id FROM ks.t")).message).getData().size());
+		}
+	}
+
+	@Test
 	@DisplayName("PREPARE carries a result metadata id at v5, and none at v4")
 	void testResultMetadataId() throws IOException {
 		try (final var client = connect()) {
@@ -223,6 +310,19 @@ class SegmentFramingTest {
 			assertEquals(RawType.PRIMITIVES.get(ProtocolConstants.DataType.DURATION),
 				rows.getMetadata().columnSpecs.get(0).type);
 		}
+	}
+
+	/**
+	 * @param id the row the value belongs to
+	 * @return half a kilobyte that says which row it came from, so that a value arriving in the wrong
+	 *     row is a failure rather than a coincidence
+	 */
+	private static String value(final int id) {
+		return ("row-" + id + "-").repeat(48);
+	}
+
+	private static String text(final ByteBuffer value) {
+		return StandardCharsets.UTF_8.decode(value.duplicate()).toString();
 	}
 
 	/**

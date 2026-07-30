@@ -1,5 +1,6 @@
 package com.tagadvance.seastar.server;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -14,8 +15,10 @@ import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
 import com.tagadvance.seastar.SeaStarCqlSession;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.jspecify.annotations.NullMarked;
@@ -160,6 +163,35 @@ class DriverSessionTest {
 					.toList());
 			assertEquals("id", table.getPartitionKey().get(0).getName().asInternal());
 			assertNotNull(keyspace.getReplication().get("class"));
+		}
+	}
+
+	@Test
+	@DisplayName("a value too big for one v5 segment survives both legs of the round trip")
+	void testAFrameSplitAcrossSegments() {
+		// A protocol v5 segment carries at most 128 KiB - 1, so this blob is split by the driver on its
+		// way out and by the listener on its way back, and reassembled by the other end each time. Both
+		// halves are the driver's own SegmentBuilder and SegmentToFrameDecoder rather than code written
+		// here, which is the reason to prove they are wired up rather than to trust them.
+		final var payload = new byte[384 * 1024];
+		new Random(20260730L).nextBytes(payload);
+		try (final var connected = connect(false)) {
+			// Load-bearing: at v4 there are no segments at all, and this test would pass having proved
+			// nothing. The session is unpinned, so it negotiates.
+			assertEquals("V5", connected.getContext().getProtocolVersion().name());
+			connected.execute(KEYSPACE);
+			connected.execute("CREATE TABLE harness.big (id int PRIMARY KEY, payload blob)");
+			connected.execute(connected.prepare("INSERT INTO harness.big (id, payload) VALUES (?, ?)")
+				.bind(1, ByteBuffer.wrap(payload)));
+
+			final var row = connected.execute("SELECT payload FROM harness.big WHERE id = 1").one();
+
+			assertNotNull(row);
+			final var returned = row.getByteBuffer("payload");
+			assertNotNull(returned);
+			final var bytes = new byte[returned.remaining()];
+			returned.duplicate().get(bytes);
+			assertArrayEquals(payload, bytes);
 		}
 	}
 
