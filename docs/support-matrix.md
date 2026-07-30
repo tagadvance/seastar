@@ -124,7 +124,7 @@ Each of these fails loudly rather than being quietly dropped, so a client that n
 | --- | --- |
 | Compression | `STARTUP` naming `snappy` or `lz4` is a `PROTOCOL_ERROR` naming it, not a silent fallback to none. It buys nothing on a loopback socket. |
 | A paging state in a request | `PROTOCOL_ERROR`, with a node's own wording. This server never issues one, and ignoring it would answer page one for ever. |
-| An event type `REGISTER` does not define | `PROTOCOL_ERROR`. Accepting a subscription that can never be honoured is worse. |
+| An event type `REGISTER` does not define | `PROTOCOL_ERROR` reading *Invalid value '&lt;name&gt;' for Type*, which is a node's own wording. Accepting a subscription that can never be honoured is worse. A name is resolved case-insensitively, as on a node, and one unknown name rejects the whole message. |
 | Protocol v3, v6-beta, DSE v1 and v2 | the `PROTOCOL_ERROR` that makes a driver retry one version lower. See [Protocol versions](#protocol-versions-seastar-server). |
 | TLS | not implemented at all - there is no `STARTTLS`-style negotiation to refuse, and a client configured for SSL fails in its own handshake. This is a loopback test socket. |
 
@@ -171,14 +171,12 @@ Deliberate, and each is expanded in the section named.
 
 Honest gaps in the evidence rather than in the behaviour. Recorded so that "tested" is not assumed.
 
-- **A frame split across several segments has never been exercised.** At v5 a payload over
-  128 KiB - 1 is split, and nothing this server answers comes close, so only the self-contained path
-  has been run. The reassembly is the driver's own `SegmentToFrameDecoder` and is covered by the
-  driver's tests, but not by anything here.
-- **A frame over the 64 MiB ceiling is untested.** Proving it means allocating one.
-- **The wording of the `REGISTER` unknown-event-type refusal was not taken from a container.** The
-  error code is right; the message is modelled on Cassandra's `RegisterMessage` from memory. No
-  driver sends a bad type, so nothing depends on it.
+- **A frame over the 64 MiB ceiling is untested, and at v5 there is no ceiling.** `maxFrameLength` is
+  enforced by the driver's `FrameEncoder` and `FrameDecoder`, both of which the pipeline replaces when
+  it switches to segments; neither `FrameToSegmentEncoder` nor `SegmentToFrameDecoder` takes a limit,
+  so a v5 connection will reassemble a frame of any size and run out of heap rather than refuse it.
+  That is the driver's own pipeline behaving as it does on the client side too, not something this
+  server chose. Proving anything about it means allocating 64 MiB.
 
 ## Paging
 
@@ -255,13 +253,20 @@ three times and settles on v5. One that is pinned to v4 is served at v4, and one
 fails with `UnsupportedProtocolVersionException` after the refusal, exactly as it would against a
 node that does not speak them. `OPTIONS` advertises `4/v4, 5/v5`.
 
-What v5 changes, and it is only these three things: everything after `READY` travels in
-self-contained segments with a CRC24 over the header and a CRC32 over the payload, which are
-checked - a mismatch is a `PROTOCOL_ERROR` naming it, and the connection ends, because a byte
-stream that has been corrupted once cannot be resynchronized; `PREPARE` answers with a result
-metadata id where v4 sends none; and `duration` is described by its own protocol code rather than as
-a Cassandra marshaller class name. A request may also name its own keyspace, which is honoured for
-that statement and leaves the connection's own selection alone.
+What v5 changes, and it is only these three things: everything after `READY` travels in segments
+carrying a CRC24 over the header and a CRC32 over the payload, which are checked - a mismatch is a
+`PROTOCOL_ERROR` naming it, and the connection ends, because a byte stream that has been corrupted
+once cannot be resynchronized; `PREPARE` answers with a result metadata id where v4 sends none; and
+`duration` is described by its own protocol code rather than as a Cassandra marshaller class name. A
+request may also name its own keyspace, which is honoured for that statement and leaves the
+connection's own selection alone.
+
+A segment carries at most 128 KiB - 1, so a frame larger than that is split across several and
+reassembled by the far side. **Both directions are exercised.** The server reaches the split path
+easily, because [paging](#paging) is deliberately not implemented and a node may legally answer with
+every row it has; a client reaches it with a large bound value or a large batch. The slicing and the
+reassembly are the driver's own `SegmentBuilder` and `SegmentToFrameDecoder` in both directions - what
+is proven here is that they are wired up the right way round, and that the content survives.
 
 Compression is refused at both versions - `STARTUP` asking for one is a `PROTOCOL_ERROR` naming it
 rather than a silent fallback. It buys nothing on a loopback socket.
@@ -279,10 +284,16 @@ not the one that changed the schema.
 | `TOPOLOGY_CHANGE` | never - there is one node and no membership to change |
 | `STATUS_CHANGE` | never - the node is up for as long as the server is bound |
 
-Registering for the latter two is accepted and correctly produces nothing; naming an event type
-that does not exist is a `PROTOCOL_ERROR`. An event may be sent at any time, so nothing orders it
-against the result of the statement that caused it - a client tells them apart by stream id, which
-is negative on an event.
+Registering for the latter two is accepted and correctly produces nothing. An event may be sent at
+any time, so nothing orders it against the result of the statement that caused it - a client tells
+them apart by stream id, which is negative on an event.
+
+Naming an event type that does not exist is a `PROTOCOL_ERROR` reading *Invalid value '&lt;name&gt;'
+for Type*, which is a `cassandra:5.0.8` node's own wording, quoting the name in the case it was sent
+in. Three things about it were captured from a container rather than reasoned about: a name is
+resolved **case-insensitively**, so `schema_change` registers and is then honoured; the refusal does
+not upper-case the name it quotes; and one unknown name rejects the **whole** message, so a
+`REGISTER` naming `SCHEMA_CHANGE` beside a type that does not exist registers nothing at all.
 
 ## Known gaps within supported statements
 

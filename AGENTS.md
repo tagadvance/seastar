@@ -178,6 +178,12 @@ driver fail outright instead of stepping down.
   v5 is `bytes <-> segments <-> frames`, with a CRC24 over each segment header and a CRC32 over each
   payload. All six handlers are the driver's own and every one is direction-agnostic - the direction
   is in the `FrameCodec` (`defaultServer`), not the handler - so **no framing code is written here**.
+- **A segment holds at most 128 KiB - 1, so a larger frame is split across several.** Both directions
+  reach that path and `SegmentFramingTest` drives both; the server reaches it easily, because paging
+  is not implemented and one answer may be every row there is. Note that `maxFrameLength` does
+  **not** survive the switch - it lives on the driver's `FrameEncoder` and `FrameDecoder`, which the
+  v5 pipeline replaces, and neither segment handler takes a limit. A v5 connection therefore
+  reassembles a frame of any size.
 - **The switch is mid-stream, on the same connection, right after `READY`.** The
   `OPTIONS`/`STARTUP` exchange is legacy-framed at every version. The driver switches its side on
   *receiving* `READY`; the server switches on *having sent* it, so the ordering is: write the READY,
