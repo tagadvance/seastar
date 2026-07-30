@@ -31,14 +31,18 @@ import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
 import org.apache.cassandra.cql3.SingleColumnRelation;
 import org.apache.cassandra.cql3.Term;
+import org.apache.cassandra.cql3.Tuples;
 import org.apache.cassandra.cql3.UserTypes;
+import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.cql3.statements.DeleteStatement;
+import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.QualifiedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
+import org.apache.cassandra.utils.Pair;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
@@ -186,13 +190,16 @@ public final class BindMarkers {
 		final ColumnDefinitions resultSet;
 		if (raw instanceof ParsedInsert insert) {
 			collectInsert(table, insert, markers, coordinator);
+			collectModification(table, insert, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof ParsedUpdate update) {
 			collectUpdate(table, update, markers, coordinator);
+			collectModification(table, update, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof DeleteStatement.Parsed delete) {
 			collectWhere(table, FieldBindings.DELETE_WHERE_CLAUSE.require(delete).relations, markers,
 				coordinator);
+			collectModification(table, delete, markers, coordinator);
 			resultSet = EmptyColumnDefinitions.INSTANCE;
 		} else if (raw instanceof SelectStatement.RawStatement select) {
 			collectSelect(table, select, markers, coordinator);
@@ -308,6 +315,50 @@ public final class BindMarkers {
 		return List.of();
 	}
 
+	/**
+	 * The markers an INSERT, UPDATE or DELETE carries outside its columns: the {@code USING} clause
+	 * and the {@code IF} conditions. Neither is typed by a column - a TTL is an {@code int} named
+	 * {@code [ttl]} and a timestamp a {@code bigint} named {@code [timestamp]}, which is what
+	 * {@code Attributes.Raw} calls its two receivers - and both are ordinary bind markers a node
+	 * reports, so leaving them out left the metadata short.
+	 */
+	private static void collectModification(final SeaStarTable table,
+		final ModificationStatement.Parsed raw,
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
+		final var attributes = FieldBindings.MODIFICATION_ATTRIBUTES.require(raw);
+		if (attributes.timeToLive != null) {
+			putIfMarker(attributes.timeToLive, syntheticDefinition(table, "[ttl]", DataTypes.INT),
+				markers);
+		}
+		if (attributes.timestamp != null) {
+			putIfMarker(attributes.timestamp,
+				syntheticDefinition(table, "[timestamp]", DataTypes.BIGINT), markers);
+		}
+		collectConditions(table, raw.getConditions(), markers, coordinator);
+	}
+
+	/**
+	 * The markers of an {@code IF} clause, each typed as the column it compares. A marker the clause
+	 * carries somewhere this does not reach - {@code IF v IN ?} binds the whole list to one - is left
+	 * out, and the total count in {@link #toDefinitions} turns that into empty metadata rather than
+	 * into short metadata.
+	 */
+	private static void collectConditions(final SeaStarTable table,
+		final List<Pair<ColumnIdentifier, ColumnCondition.Raw>> conditions,
+		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
+		for (final var condition : conditions) {
+			final var column = requireColumn(table, condition.left.toString(), coordinator);
+			final var value = condition.right.getValue();
+			if (value != null) {
+				putIfMarker(value, column, markers);
+			}
+			FieldBindings.CONDITION_IN_VALUES.find(condition.right)
+				.stream()
+				.flatMap(List::stream)
+				.forEach(term -> putIfMarker(term, column, markers));
+		}
+	}
+
 	private static void collectSelect(final SeaStarTable table,
 		final SelectStatement.RawStatement raw,
 		final NavigableMap<Integer, ColumnDefinition> markers, final Node coordinator) {
@@ -324,9 +375,20 @@ public final class BindMarkers {
 		for (final var relation : relations) {
 			if (relation instanceof MultiColumnRelation multi) {
 				// A multi-column relation compares a tuple of clustering columns, so its markers sit
-				// inside a tuple literal rather than beside the column they stand for.
-				multi.getEntities()
-					.forEach(entity -> requireColumn(table, entity.toString(), coordinator));
+				// inside a tuple literal rather than beside the column they stand for. A node types each
+				// one as its own column all the same.
+				final var columns = multi.getEntities()
+					.stream()
+					.map(entity -> requireColumn(table, entity.toString(), coordinator))
+					.toList();
+				// Both accessors assert on the operator, so which one is readable is decided here rather
+				// than by a null check.
+				if (!multi.isIN()) {
+					collectTuple(multi.getValue(), columns, markers);
+				} else if (multi.getInValues() != null) {
+					// Null is `(a, b) IN ?`, one marker for the whole list, which SeaStar does not model.
+					multi.getInValues().forEach(term -> collectTuple(term, columns, markers));
+				}
 
 				continue;
 			}
@@ -342,6 +404,22 @@ public final class BindMarkers {
 					putIfMarker(term, column, markers);
 				}
 			}
+		}
+	}
+
+	/**
+	 * The markers of one multi-column relation value, positionally matched to the columns the
+	 * relation names. {@code (a, b) = ?} binds the whole tuple to a single marker instead, which
+	 * SeaStar does not model and so does not register.
+	 */
+	private static void collectTuple(final Term.Raw term, final List<ColumnDefinition> columns,
+		final NavigableMap<Integer, ColumnDefinition> markers) {
+		if (!(term instanceof Tuples.Literal literal)) {
+			return;
+		}
+		final var elements = FieldBindings.TUPLE_ELEMENTS.require(literal);
+		for (int i = 0; i < Math.min(elements.size(), columns.size()); i++) {
+			putIfMarker(elements.get(i), columns.get(i), markers);
 		}
 	}
 
@@ -405,11 +483,14 @@ public final class BindMarkers {
 	private static ColumnDefinitions toDefinitions(final SeaStarTable table,
 		final NavigableMap<Integer, ColumnDefinition> markers,
 		final List<ColumnIdentifier> names) {
-		if (markers.isEmpty()) {
+		// names has one entry per marker the parser saw, so a shorter map is a marker we could not map
+		// and the metadata cannot be reliably indexed by position. Counting rather than only looking
+		// for a gap is what catches an uncollected marker that happens to be the last one, where there
+		// is no gap to find and the metadata would otherwise come out silently short.
+		if (markers.isEmpty() || markers.size() != names.size()) {
 			return EmptyColumnDefinitions.INSTANCE;
 		}
-		// Bind indices are assigned sequentially by the parser; a gap means a marker we could not map,
-		// so the metadata cannot be reliably indexed by position.
+		// Bind indices are assigned sequentially by the parser, so a full map runs 0..size-1.
 		if (markers.firstKey() != 0 || markers.lastKey() != markers.size() - 1) {
 			return EmptyColumnDefinitions.INSTANCE;
 		}

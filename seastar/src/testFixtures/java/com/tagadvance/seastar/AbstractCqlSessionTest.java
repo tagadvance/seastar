@@ -3309,6 +3309,156 @@ public abstract class AbstractCqlSessionTest {
 			"a named marker is not addressable by the column it binds");
 	}
 
+	// The markers a statement carries outside its columns: a USING clause, an IF clause and a
+	// multi-column relation. A node names and types every one of them, so they are variables like any
+	// other, and a statement whose metadata leaves one out cannot be bound.
+
+	private void createMarkerTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.marks "
+			+ "(pk int, ck int, v text, w text, PRIMARY KEY (pk, ck))");
+	}
+
+	@Test
+	@Order(238)
+	@DisplayName("A USING TTL or TIMESTAMP marker is a variable, named [ttl] or [timestamp]")
+	void testUsingClauseVariables() {
+		createMarkerTable();
+
+		assertVariableNames(List.of("pk", "ck", "v", "[ttl]"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ?");
+		assertVariableNames(List.of("pk", "ck", "v", "[timestamp]"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TIMESTAMP ?");
+		assertVariableNames(List.of("pk", "ck", "v", "[ttl]", "[timestamp]"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ? AND TIMESTAMP ?");
+		assertVariableNames(List.of("pk", "ck", "v", "[timestamp]", "[ttl]"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TIMESTAMP ? AND TTL ?");
+		// A bind index follows the text rather than the clause, so a USING clause written ahead of the
+		// SET and WHERE parts is bound ahead of them.
+		assertVariableNames(List.of("[ttl]", "v", "pk", "ck"),
+			"UPDATE foo.marks USING TTL ? SET v = ? WHERE pk = ? AND ck = ?");
+		assertVariableNames(List.of("[timestamp]", "pk", "ck"),
+			"DELETE FROM foo.marks USING TIMESTAMP ? WHERE pk = ? AND ck = ?");
+		// The naming rule reaches these markers too: one written with a name keeps it.
+		assertVariableNames(List.of("pk", "ck", "v", "ttl"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL :ttl");
+		assertVariableNames(List.of("ts", "pk", "ck"),
+			"DELETE FROM foo.marks USING TIMESTAMP :ts WHERE pk = ? AND ck = ?");
+
+		// A TTL is an int and a timestamp a bigint; neither is the type of any column.
+		final var prepared = session.prepare(
+			"UPDATE foo.marks USING TTL ? AND TIMESTAMP ? SET v = ? WHERE pk = ? AND ck = ?");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(DataTypes.INT, variables.get(0).getType());
+		assertEquals(DataTypes.BIGINT, variables.get(1).getType());
+		// The partition key index still names the marker binding the column, which the two markers
+		// ahead of it have pushed along.
+		assertEquals(List.of(3), prepared.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(239)
+	@DisplayName("An IF condition's marker and a multi-column relation's are variables of their column")
+	void testConditionAndTupleVariables() {
+		createMarkerTable();
+
+		assertVariableNames(List.of("v", "pk", "ck", "v"),
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF v = ?");
+		assertVariableNames(List.of("v", "pk", "ck", "cond"),
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF v = :cond");
+		assertVariableNames(List.of("v", "pk", "ck", "v", "w"),
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF v = ? AND w = ?");
+		// IF NOT EXISTS and IF EXISTS carry no marker of their own.
+		assertVariableNames(List.of("pk", "ck", "v"),
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) IF NOT EXISTS");
+		assertVariableNames(List.of("v", "pk", "ck"),
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF EXISTS");
+		// A USING clause and an IF clause bracket the statement, one bound first and one bound last.
+		assertVariableNames(List.of("[ttl]", "v", "pk", "ck", "v"),
+			"UPDATE foo.marks USING TTL ? SET v = ? WHERE pk = ? AND ck = ? IF v = ?");
+
+		// A multi-column relation's markers sit inside a tuple, and are typed one per column.
+		assertVariableNames(List.of("pk", "ck"),
+			"SELECT v FROM foo.marks WHERE pk = ? AND (ck) = (?)");
+		assertVariableNames(List.of("pk", "ck", "ck"),
+			"SELECT v FROM foo.marks WHERE pk = ? AND (ck) IN ((?), (?))");
+
+		final var prepared = session.prepare(
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF w = ?");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(DataTypes.TEXT, variables.get(3).getType());
+		assertEquals(List.of(1), prepared.getPartitionKeyIndices());
+	}
+
+	@Test
+	@Order(240)
+	@DisplayName("A bound TTL, timestamp, IF condition and tuple value each take effect")
+	void testBoundMarkerValues() {
+		createMarkerTable();
+
+		session.execute(session.prepare(
+				"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ?")
+			.bind(20, 1, "ttl", 3600));
+		final var ttl = only("SELECT ttl(v) FROM foo.marks WHERE pk = 20 AND ck = 1").getInt(0);
+		assertTrue(ttl > 3500 && ttl <= 3600, "ttl should be counting down from 3600 but was " + ttl);
+
+		session.execute(session.prepare(
+				"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TIMESTAMP ?")
+			.bind(21, 1, "ts", 4000L));
+		assertEquals(4000L, only("SELECT writetime(v) FROM foo.marks WHERE pk = 21").getLong(0));
+
+		// The UPDATE form, where the marker is written ahead of every other one in the statement.
+		session.execute(session.prepare(
+				"UPDATE foo.marks USING TIMESTAMP ? SET v = ? WHERE pk = ? AND ck = ?")
+			.bind(9000L, "later", 21, 1));
+		assertEquals(9000L, only("SELECT writetime(v) FROM foo.marks WHERE pk = 21").getLong(0));
+		assertEquals(List.of("later"), texts("SELECT v FROM foo.marks WHERE pk = 21"));
+
+		// A bound IF condition decides whether the write applies.
+		session.execute("INSERT INTO foo.marks (pk, ck, v, w) VALUES (22, 1, 'old', 'guard')");
+		final var conditional = session.prepare(
+			"UPDATE foo.marks SET v = ? WHERE pk = ? AND ck = ? IF w = ?");
+		final var refused = session.execute(conditional.bind("new", 22, 1, "wrong")).one();
+		assertNotNull(refused);
+		assertFalse(refused.getBoolean("[applied]"), "a condition on the wrong value should not apply");
+		assertEquals(List.of("old"), texts("SELECT v FROM foo.marks WHERE pk = 22"));
+
+		final var accepted = session.execute(conditional.bind("new", 22, 1, "guard")).one();
+		assertNotNull(accepted);
+		assertTrue(accepted.getBoolean("[applied]"), "a condition on the stored value should apply");
+		assertEquals(List.of("new"), texts("SELECT v FROM foo.marks WHERE pk = 22"));
+
+		// A bound multi-column relation value.
+		session.execute("INSERT INTO foo.marks (pk, ck, v) VALUES (23, 1, 'tuple')");
+		final var tuple = session.execute(
+			session.prepare("SELECT v FROM foo.marks WHERE pk = ? AND (ck) = (?)").bind(23, 1)).one();
+		assertNotNull(tuple);
+		assertEquals("tuple", tuple.getString(0));
+
+		// The same markers reached from a statement carrying its own values rather than a prepared one.
+		session.execute(SimpleStatement.newInstance(
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TIMESTAMP ?", 24, 1, "simple",
+			5000L));
+		assertEquals(5000L, only("SELECT writetime(v) FROM foo.marks WHERE pk = 24").getLong(0));
+		session.execute(SimpleStatement.builder(
+				"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TIMESTAMP :ts")
+			.addNamedValue("pk", 25)
+			.addNamedValue("ck", 1)
+			.addNamedValue("v", "named")
+			.addNamedValue("ts", 6000L)
+			.build());
+		assertEquals(6000L, only("SELECT writetime(v) FROM foo.marks WHERE pk = 25").getLong(0));
+		// An anonymous USING marker is named [ttl], which no named value can be addressed to, so the
+		// columns alone leave a marker unaccounted for.
+		assertWrongNumberOfValues(SimpleStatement.builder(
+				"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ?")
+			.addNamedValue("pk", 26)
+			.addNamedValue("ck", 1)
+			.addNamedValue("v", "short")
+			.build());
+		assertWrongNumberOfValues(SimpleStatement.newInstance(
+			"INSERT INTO foo.marks (pk, ck, v) VALUES (?, ?, ?) USING TTL ?", 26, 1, "short"));
+	}
+
 	private void assertVariableNames(final List<String> expected, final String cql) {
 		final var variables = session.prepare(cql).getVariableDefinitions();
 		final var names = StreamSupport.stream(variables.spliterator(), false)
