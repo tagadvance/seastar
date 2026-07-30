@@ -20,6 +20,14 @@ marker claims is ignored, and one value feeds every marker sharing its name. A d
 *Invalid amount of bind variables*, and a null in a primary key part is *Invalid null value in
 condition for column x*, both being what a node answers.
 
+Every marker a statement carries is a variable, not only the ones standing in for a column. A
+`USING` clause, an `IF` condition, a multi-column relation, an element or field of a collection or
+UDT column, a `LIMIT` and an `INSERT ... JSON` document all bind, and `getVariableDefinitions()`
+names and types them as a node does: `[ttl]` is an `int`, `[timestamp]` a `bigint`, `[json]` and
+`[limit]` their own, and `idx(l)`, `value(l)`, `key(m)`, `value(m)` and `u.field` are typed by what
+they address rather than by the whole column. A bind index follows the order the markers are written
+in, so a `USING` clause written ahead of `SET` and `WHERE` binds ahead of them.
+
 ## Data
 
 | Statement | Supported | Notes |
@@ -328,6 +336,12 @@ from a cluster's.
 - **A bind marker inside a collection literal is accepted.** `VALUES (1, [?, ?])` binds each element;
   a node refuses the statement outright - *bind variables are not supported inside collection
   literals*. SeaStar is the more permissive of the two here.
+- **A marker binding a whole list or tuple is not described the way a node describes it.** `ck IN ?`,
+  `(ck) = ?`, `(ck) IN ?` and `IF v IN ?` bind one marker to a collection of values, which a node
+  names `in(ck)` or `(ck)` and types `list<int>` or `frozen<tuple<int>>`; SeaStar either types it as
+  the column or reports no variables for the statement at all. Nothing is lost by it, because SeaStar
+  refuses every one of those forms at execute - but `prepare` succeeds on them, as it does on a node,
+  so the metadata is reachable.
 - **A bound value is checked against the column's Java type rather than against its bytes.** A value
   the type cannot hold is an `InvalidQueryException`, where a node reports the byte length it was sent
   and there are no bytes in process. It differs in the one direction where a node's check is weaker
