@@ -9,7 +9,6 @@ import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
-import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.ListType;
@@ -304,7 +303,7 @@ public final class SystemSchema {
 			.sorted(comparing(index -> index.getName().asInternal()))
 			.forEach(index -> rows.add(
 				row(keyspace.name().asInternal(), table.getName().asInternal(),
-					index.getName().asInternal(), index.getKind().name(), options(index))))));
+					index.getName().asInternal(), index.getKind().name(), index.getOptions())))));
 
 		return rows;
 	}
@@ -351,12 +350,6 @@ public final class SystemSchema {
 			.anyMatch(column -> DataTypes.COUNTER.equals(column.getType()));
 
 		return isCounter ? COUNTER_TABLE_FLAGS : TABLE_FLAGS;
-	}
-
-	private static Map<String, String> options(final IndexMetadata index) {
-		final var options = index.getOptions();
-
-		return options == null ? Map.of() : options;
 	}
 
 	private static ByteBuffer nameBytes(final CqlIdentifier name) {
