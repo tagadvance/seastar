@@ -10,6 +10,12 @@ against SeaStar in process, against a real node in a container, and against SeaS
 through `seastar-server` - so anything marked **yes** below agrees with a cluster on the cases that
 suite covers, and agrees with itself across the wire.
 
+A statement's own values - `SimpleStatement.newInstance(cql, ...)` and
+`SimpleStatement.builder(cql).addNamedValue(...)` - are bound to its bind markers the way a prepared
+statement's are, in process and over the wire alike. Values that do not account for exactly the
+markers the statement carries are refused with *Invalid amount of bind variables*, and a null in a
+primary key part with *Invalid null value in condition for column x*, both being what a node answers.
+
 ## Data
 
 | Statement | Supported | Notes |
@@ -315,6 +321,21 @@ from a cluster's.
 - **Batches are not atomic or isolated.** See `BATCH` above.
 - **Secondary indexes are metadata only.** They make a query legal without `ALLOW FILTERING`; they do
   not make it faster.
+- **A bind marker inside a collection literal is accepted.** `VALUES (1, [?, ?])` binds each element;
+  a node refuses the statement outright - *bind variables are not supported inside collection
+  literals*. SeaStar is the more permissive of the two here.
+- **A bound value is checked against the column's Java type rather than against its bytes.** A value
+  the type cannot hold is an `InvalidQueryException`, where a node reports the byte length it was sent
+  and there are no bytes in process. It differs in the one direction where a node's check is weaker
+  than a type check: an `int` bound to a `text` column travels as four bytes a node stores as text,
+  and SeaStar refuses it.
+- **A null compared to a column outside the primary key is accepted.** `WHERE v = null ALLOW
+  FILTERING` and `l CONTAINS null` match nothing; a node refuses both with *Unsupported null value
+  for column v*. A null in a primary key part is refused, as on a node.
+- **Over the wire, a named value is matched to a marker's column rather than to the name the marker
+  was written with.** `VALUES (:a, :b)` addressed by `a` and `b` works in process and on a node, but
+  `seastar-server` looks the names up in the variable metadata, which SeaStar names after the
+  columns. The common form - `:pk` for a column called `pk` - is unaffected.
 - **`getTokenMap()` is empty.** SeaStar is one node with no token ring, although read order does
   follow real Murmur3 token order.
 - **Closing a session discards its keyspaces.** A real cluster keeps its metadata readable after a

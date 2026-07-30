@@ -7,6 +7,7 @@ import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.ArrayLiteral;
 import org.apache.cassandra.cql3.Attributes;
 import org.apache.cassandra.cql3.CQL3Type;
+import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.FieldIdentifier;
 import org.apache.cassandra.cql3.Json;
@@ -19,6 +20,7 @@ import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.Tuples;
 import org.apache.cassandra.cql3.TypeCast;
 import org.apache.cassandra.cql3.UTName;
+import org.apache.cassandra.cql3.VariableSpecifications;
 import org.apache.cassandra.cql3.WhereClause;
 import org.apache.cassandra.cql3.conditions.ColumnCondition;
 import org.apache.cassandra.cql3.functions.FunctionCall;
@@ -119,6 +121,20 @@ final class FieldBindings {
 	// Terms and bind markers. A map literal publishes its entries; the other literals do not.
 	static final FieldBinding<Integer> MARKER_BIND_INDEX = FieldBinding.of(AbstractMarker.Raw.class,
 		"bindIndex", Integer.class);
+	/**
+	 * The markers a statement carries. {@code VariableSpecifications#getBindVariables} is public but
+	 * answers the specs, which the parser leaves null and only {@code prepare} fills in, so the count
+	 * and the names have to come off the field.
+	 */
+	static final FieldBinding<VariableSpecifications> STATEMENT_BIND_VARIABLES = FieldBinding.of(
+		CQLStatement.Raw.class, "bindVariables", VariableSpecifications.class);
+	/**
+	 * One entry per bind marker, in bind index order: the name a {@code :name} marker was written
+	 * with, or null for a {@code ?}. Cassandra names an anonymous marker after the column it stands
+	 * for when it prepares, which is what {@link BindMarkers} does here.
+	 */
+	static final FieldBinding<List<ColumnIdentifier>> BIND_VARIABLE_NAMES = FieldBinding.ofList(
+		VariableSpecifications.class, "variableNames");
 	static final FieldBinding<Term.Raw> SET_VALUE = FieldBinding.of(Operation.SetValue.class, "value",
 		Term.Raw.class);
 	static final FieldBinding<Term.Raw> ADDITION_VALUE = FieldBinding.of(Operation.Addition.class,

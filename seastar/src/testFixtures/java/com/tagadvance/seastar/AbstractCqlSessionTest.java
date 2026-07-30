@@ -3042,6 +3042,174 @@ public abstract class AbstractCqlSessionTest {
 		assertEquals(List.of(1, 2, 3, 4, 5), fetched);
 	}
 
+	// The values a statement carries in its own right, rather than through a prepared statement: what
+	// they are bound to, how many of them there have to be, and which of them a column will not take.
+
+	private void createValueTable() {
+		session.execute("CREATE TABLE IF NOT EXISTS foo.vals "
+			+ "(pk int, ck int, v text, PRIMARY KEY (pk, ck))");
+	}
+
+	@Test
+	@Order(230)
+	@DisplayName("A SimpleStatement's positional values are bound to the markers it was written with")
+	void testPositionalValues() {
+		createValueTable();
+
+		for (int ck = 1; ck <= 3; ck++) {
+			session.execute(SimpleStatement.newInstance(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)", 1, ck, "v" + ck));
+		}
+		// Three rows rather than one: values that are dropped rather than bound leave every insert
+		// writing the same all-null key, and the row count is what says so.
+		assertEquals(List.of("v1", "v2", "v3"), texts("SELECT v FROM foo.vals WHERE pk = 1"));
+
+		final var selected = session.execute(SimpleStatement.newInstance(
+			"SELECT v FROM foo.vals WHERE pk = ? AND ck = ?", 1, 2)).one();
+		assertNotNull(selected);
+		assertEquals("v2", selected.getString(0));
+
+		session.execute(SimpleStatement.newInstance(
+			"UPDATE foo.vals SET v = ? WHERE pk = ? AND ck = ?", "updated", 1, 2));
+		assertEquals(List.of("updated", "v1", "v3"), texts("SELECT v FROM foo.vals WHERE pk = 1"));
+
+		session.execute(SimpleStatement.newInstance(
+			"DELETE FROM foo.vals WHERE pk = ? AND ck = ?", 1, 3));
+		assertEquals(List.of("updated", "v1"), texts("SELECT v FROM foo.vals WHERE pk = 1"));
+
+		// A null outside the primary key is an ordinary value, and clears the column it is bound to.
+		session.execute(SimpleStatement.newInstance(
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)", 1, 1, null));
+		final var cleared = session.execute(SimpleStatement.newInstance(
+			"SELECT v FROM foo.vals WHERE pk = ? AND ck = ?", 1, 1)).one();
+		assertNotNull(cleared);
+		assertTrue(cleared.isNull(0), "a null bound to a non-key column should clear it");
+	}
+
+	@Test
+	@Order(231)
+	@DisplayName("Named values are bound by the name of the marker, a ? being named for its column")
+	void testNamedValues() {
+		createValueTable();
+
+		session.execute(SimpleStatement.builder(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (:pk, :ck, :v)")
+			.addNamedValue("pk", 2)
+			.addNamedValue("ck", 1)
+			.addNamedValue("v", "named")
+			.build());
+		assertEquals(List.of("named"), texts("SELECT v FROM foo.vals WHERE pk = 2"));
+
+		// An anonymous marker is named after the column it stands for, so a named value reaches it too.
+		session.execute(SimpleStatement.builder("INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)")
+			.addNamedValue("pk", 3)
+			.addNamedValue("ck", 1)
+			.addNamedValue("v", "by column")
+			.build());
+		assertEquals(List.of("by column"), texts("SELECT v FROM foo.vals WHERE pk = 3"));
+
+		final var selected = session.execute(
+			SimpleStatement.builder("SELECT v FROM foo.vals WHERE pk = :pk AND ck = :ck")
+				.addNamedValue("pk", 2)
+				.addNamedValue("ck", 1)
+				.build()).one();
+		assertNotNull(selected);
+		assertEquals("named", selected.getString(0));
+
+		// A name that is no marker of this statement leaves one of them unaccounted for.
+		assertWrongNumberOfValues(SimpleStatement.builder(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)")
+			.addNamedValue("pk", 4)
+			.addNamedValue("ck", 1)
+			.addNamedValue("nosuch", "x")
+			.build());
+	}
+
+	@Test
+	@Order(232)
+	@DisplayName("Values that do not account for every bind marker are refused, too few or too many")
+	void testWrongNumberOfValues() {
+		createValueTable();
+
+		final var insert = "INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)";
+		assertWrongNumberOfValues(SimpleStatement.newInstance(insert, 6, 1));
+		assertWrongNumberOfValues(SimpleStatement.newInstance(insert, 6, 1, "x", "extra"));
+		assertWrongNumberOfValues(SimpleStatement.newInstance(insert));
+		assertWrongNumberOfValues(SimpleStatement.builder(insert)
+			.addNamedValue("pk", 6)
+			.addNamedValue("ck", 1)
+			.build());
+		// A value with no marker to bind it to is the same complaint from the other side.
+		assertWrongNumberOfValues(
+			SimpleStatement.newInstance("INSERT INTO foo.vals (pk, ck) VALUES (6, 1)", 9));
+
+		assertEquals(0, session.execute("SELECT v FROM foo.vals WHERE pk = 6").all().size(),
+			"a refused statement should have written nothing");
+	}
+
+	@Test
+	@Order(233)
+	@DisplayName("A null primary key part is refused, supplied as a value or written as a literal")
+	void testNullPrimaryKey() {
+		createValueTable();
+
+		final var insert = "INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)";
+		assertNullKey("pk", SimpleStatement.newInstance(insert, null, 1, "x"));
+		assertNullKey("ck", SimpleStatement.newInstance(insert, 7, null, "x"));
+		assertNullKey("pk", SimpleStatement.newInstance(
+			"SELECT v FROM foo.vals WHERE pk = ? AND ck = ?", null, 1));
+		assertNullKey("pk", SimpleStatement.newInstance(
+			"UPDATE foo.vals SET v = ? WHERE pk = ? AND ck = ?", "x", null, 1));
+		assertNullKey("pk", SimpleStatement.newInstance(
+			"DELETE FROM foo.vals WHERE pk = ? AND ck = ?", null, 1));
+
+		// The same rule reaches a null written into the statement, which needs no values at all.
+		assertNullKey("pk",
+			SimpleStatement.newInstance("INSERT INTO foo.vals (pk, ck, v) VALUES (null, 1, 'x')"));
+		assertNullKey("ck",
+			SimpleStatement.newInstance("INSERT INTO foo.vals (pk, ck, v) VALUES (7, null, 'x')"));
+		assertNullKey("pk", SimpleStatement.newInstance("SELECT v FROM foo.vals WHERE pk = null"));
+
+		assertEquals(0, session.execute("SELECT v FROM foo.vals WHERE pk = 7").all().size(),
+			"a refused statement should have written nothing");
+	}
+
+	@Test
+	@Order(234)
+	@DisplayName("A value the marker's column cannot hold is refused rather than stored")
+	void testValueTypeMismatch() {
+		createValueTable();
+
+		// Only the type is asserted: a node reports the length of the bytes it was sent, and there are
+		// no bytes in process, so the wording cannot be the same on both.
+		final var insert = "INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)";
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute(SimpleStatement.newInstance(insert, "not an int", 1, "x")));
+		assertThrows(InvalidQueryException.class,
+			() -> session.execute(SimpleStatement.newInstance(insert, 8, 1L, "x")));
+		assertThrows(InvalidQueryException.class, () -> session.execute(SimpleStatement.newInstance(
+			"SELECT v FROM foo.vals WHERE pk = ? AND ck = ?", 8, "not an int")));
+
+		assertEquals(0, session.execute("SELECT v FROM foo.vals WHERE pk = 8").all().size(),
+			"a refused statement should have written nothing");
+	}
+
+	private void assertWrongNumberOfValues(final SimpleStatement statement) {
+		assertMentions("Invalid amount of bind variables",
+			assertThrows(InvalidQueryException.class, () -> session.execute(statement),
+				"expected to be rejected: " + statement.getQuery()));
+	}
+
+	/**
+	 * Asserts a statement is refused for a null in the primary key. Cassandra reads an INSERT's key
+	 * columns as conditions the way it reads a WHERE clause, so both report the same wording.
+	 */
+	private void assertNullKey(final String column, final SimpleStatement statement) {
+		assertMentions("Invalid null value in condition for column " + column,
+			assertThrows(InvalidQueryException.class, () -> session.execute(statement),
+				"expected to be rejected: " + statement.getQuery()));
+	}
+
 	@AfterAll
 	void afterAll() {
 		session.close();

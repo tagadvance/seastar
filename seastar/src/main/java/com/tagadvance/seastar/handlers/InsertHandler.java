@@ -83,6 +83,17 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 		}
 
 		final var primaryKey = target.primaryKeyNames();
+		// A key part identifies the row, so it has no null: Cassandra refuses the statement rather
+		// than storing a row nothing can address. It reports it as a condition because that is how it
+		// reads an INSERT's key columns - see RestrictionRules, which answers the same for a WHERE.
+		for (final var assignment : assignments) {
+			if (primaryKey.contains(assignment.column()) && assignment.value() == null) {
+				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
+					"Invalid null value in condition for column %s".formatted(
+						assignment.column().asInternal())));
+			}
+		}
+
 		final var pkIndices = primaryKey.stream().mapToInt(table::firstIndexOf).toArray();
 		final Predicate<SeaStarRow> samePrimaryKey = existing -> Arrays.stream(pkIndices)
 			.allMatch(index -> Objects.equals(existing.getObject(index), values.get(index)));

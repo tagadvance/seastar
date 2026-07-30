@@ -10,6 +10,7 @@ import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
+import com.tagadvance.seastar.handlers.BindMarkers;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
 import com.tagadvance.seastar.handlers.CqlParsers;
 import java.util.concurrent.CompletableFuture;
@@ -26,12 +27,14 @@ import org.apache.cassandra.cql3.statements.ModificationStatement;
 class SeaStarCqlRequestHandler {
 
 	private final Statement<?> initialStatement;
+	private final SeaStarCqlSession session;
 	private final SeaStarDriverContext context;
 	private final CqlHandlerRegistry registry;
 
 	protected SeaStarCqlRequestHandler(final Statement<?> statement,
 		final SeaStarCqlSession session, final SeaStarDriverContext context) {
 		this.initialStatement = statement;
+		this.session = session;
 		this.context = context;
 		this.registry = session.handlerRegistry();
 	}
@@ -60,18 +63,10 @@ class SeaStarCqlRequestHandler {
 	private CompletionStage<AsyncResultSet> dispatch(final Statement<?> statement,
 		final boolean requireModification) {
 		final String query;
-		final Object[] values;
 		if (statement instanceof SimpleStatement simpleStatement) {
 			query = simpleStatement.getQuery();
-			values = new Object[]{};
-		} else if (statement instanceof SeaStarBoundStatement boundStatement) {
-			final var preparedStatement = boundStatement.getPreparedStatement();
-			query = preparedStatement.getQuery();
-			values = boundStatement.getBoundValues();
 		} else if (statement instanceof BoundStatement boundStatement) {
-			final var preparedStatement = boundStatement.getPreparedStatement();
-			query = preparedStatement.getQuery();
-			values = decode(boundStatement, preparedStatement.getVariableDefinitions());
+			query = boundStatement.getPreparedStatement().getQuery();
 		} else {
 			throw new UnsupportedOperationException(
 				"Statement of type %s is not currently supported".formatted(
@@ -82,8 +77,12 @@ class SeaStarCqlRequestHandler {
 		final var executionInfo = new SeaStarExecutionInfo(node, statement);
 
 		final CQLStatement.Raw raw;
+		final Object[] values;
 		try {
 			raw = CqlParsers.parse(node, query);
+			// After the parse, not before: a SimpleStatement's values are matched to the markers the
+			// parse tree carries, which is also where their number is checked.
+			values = values(statement, raw);
 		} catch (final Exception e) {
 			attach(executionInfo, e);
 
@@ -110,6 +109,24 @@ class SeaStarCqlRequestHandler {
 			// a throw.
 			return CompletableFuture.failedStage(e);
 		}
+	}
+
+	/**
+	 * The values a statement supplies for its bind markers, by bind index.
+	 */
+	private Object[] values(final Statement<?> statement, final CQLStatement.Raw raw) {
+		if (statement instanceof SimpleStatement simpleStatement) {
+			return BindMarkers.values(context, session.getKeyspace().orElse(null), raw,
+				simpleStatement);
+		}
+		if (statement instanceof SeaStarBoundStatement boundStatement) {
+			return boundStatement.getBoundValues();
+		}
+
+		final var boundStatement = (BoundStatement) statement;
+
+		return decode(boundStatement,
+			boundStatement.getPreparedStatement().getVariableDefinitions());
 	}
 
 	private Object[] decode(final BoundStatement statement, final ColumnDefinitions variables) {
