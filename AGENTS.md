@@ -49,7 +49,7 @@ Tests are JUnit 5 (Jupiter) with Mockito. Configuration cache, parallel, and bui
 
 ### Benchmarks
 
-Goal 2 — "minimize startup time to act as a viable alternative to TestContainers" — is measured, not asserted. The numbers, the hardware they were taken on, and the versions they pin to live in [benchmarks.md](benchmarks.md); it is the baseline against which the locking and query-engine changes are compared, so re-run these and update it when either lands.
+Goal 2 — "minimize startup time to act as a viable alternative to TestContainers" — is measured, not asserted. The numbers, the hardware they were taken on, and the versions they pin to live in [benchmarks.md](benchmarks.md). Every figure in it comes from a single sitting on one machine, which is the only thing that makes the sections comparable — so a partial re-run is worse than none. Re-run the whole set, on an idle machine, and replace the file wholesale.
 
 Benchmarks live in their own source sets (`seastar/src/jmh`, `seastar/src/containerBench`, `seastar-server/src/wireBench`). They are **not** on the default build and their classes are **not** in the published jar. All benchmark tasks are serialized against each other by a Gradle shared service, so listing several in one invocation is safe despite `org.gradle.parallel=true`. The service is registered by the `seastar.benchmark-conventions` plugin in `build-logic` rather than by a module, because a shared service is keyed by name across the whole build and two modules declaring their own would be two types under one name.
 
