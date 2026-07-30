@@ -135,23 +135,23 @@ answered, what is refused by name, and what differs from a node on purpose.
 ## Benchmarks
 
 Full numbers, environment and reproduction steps live in [benchmarks.md](benchmarks.md); this is
-the headline. Laptop-class hardware (see that file) — absolute numbers will be lower on a desktop,
-the ratios are the interesting part.
+the headline. Absolute numbers depend on the machine (see that file) — the ratios are the
+interesting part.
 
 | | SeaStar | TestContainers Cassandra |
 | --- | --- | --- |
-| Ready for the first query (warm image) | **743 ms** from JVM start | 13 397 ms from `container.start()` |
-| Ready for the first query (cold, image not present) | 743 ms | 18 575 ms |
-| Second and subsequent sessions in the same JVM | **8 ms** | a second container, so ~13 s again |
+| Ready for the first query (warm image) | **692 ms** from JVM start | 8 010 ms from `container.start()` |
+| Ready for the first query (cold, image not present) | 692 ms | 11 945 ms |
+| Second and subsequent sessions in the same JVM | **6.4 ms** | a second container, so ~8 s again |
 
-Roughly **18x faster than a warm container** and **25x faster than a cold one** to first query, and
-roughly **1 700x faster** for every session after the first in the same JVM.
+Roughly **12x faster than a warm container** and **17x faster than a cold one** to first query, and
+roughly **1 250x faster** for every session after the first in the same JVM.
 
 Serving the same session over a socket costs about half a second of startup and roughly 0.8 ms per
 statement, and both are the driver and the round trip rather than SeaStar. Measured three ways in one
-sitting: **690 ms** to first query in process, **1 266 ms** over `seastar-server`, **9 729 ms** for a
-warm TestContainers Cassandra — so even through the whole native protocol it is still 7.7x faster to
-a usable session. A statement then costs 0.32 ms in process and 1.09 ms over the socket.
+sitting: **692 ms** to first query in process, **1 258 ms** over `seastar-server`, **8 010 ms** for a
+warm TestContainers Cassandra — so even through the whole native protocol it is still 6.4x faster to
+a usable session. A statement then costs 0.32 ms in process and 1.12 ms over the socket.
 
 ## Known limitations
 
