@@ -64,8 +64,15 @@ final class Terms {
 		final CodecRegistry codecRegistry, final Node coordinator, final Object... bindings) {
 		if (term instanceof AbstractMarker.Raw marker) {
 			final var bindIndex = FieldBindings.MARKER_BIND_INDEX.require(marker);
+			// A prepared statement may leave its trailing markers unbound, which reads as null.
+			final var value = bindIndex < bindings.length ? bindings[bindIndex] : null;
+			if (value != null && !codecRegistry.codecFor(dataType).accepts(value)) {
+				throw new InvalidQueryException(coordinator,
+					"Invalid value %s for a bind marker of type %s".formatted(value,
+						dataType.asCql(true, true)));
+			}
 
-			return bindIndex < bindings.length ? bindings[bindIndex] : null;
+			return value;
 		} else if (FieldBindings.NULL_LITERAL.isInstance(term)) {
 			return null;
 		} else if (term instanceof Constants.Literal literal) {

@@ -91,7 +91,7 @@ Each SeaStar class is deliberately **analogous to** a driver-internal class (the
 
 1. `SeaStarCqlSession.execute(request, resultType)` → `SeaStarRequestProcessorRegistry.processorFor(...)` picks a `SeaStarRequestProcessor` by matching the result type (`Statement.SYNC`/`ASYNC`, prepare sync/async). Registered in `SeaStarBuiltInRequestProcessors`.
 2. Sync processors delegate to their async counterpart and block (`CompletableFutures.getUninterruptibly`).
-3. `SeaStarCqlRequestHandler.handle()` extracts the query string + bound values (from `SimpleStatement` or `SeaStarBoundStatement`), parses it via Cassandra's `QueryProcessor`, then dispatches to a `CqlHandler` through `CqlHandlerRegistry`.
+3. `SeaStarCqlRequestHandler.handle()` extracts the query string (from `SimpleStatement` or a `BoundStatement`), parses it via Cassandra's `QueryProcessor`, resolves the values for its bind markers, then dispatches to a `CqlHandler` through `CqlHandlerRegistry`. The values come after the parse because a `SimpleStatement`'s are matched to the markers the parse tree carries - `BindMarkers.values` is that, and it is where a count that does not add up is refused.
 4. A `CqlHandler<T extends CQLStatement.Raw>` (`CreateKeyspaceHandler`, `CreateTableHandler`, `AlterTableHandler`, `CreateTypeHandler`, `UseKeyspaceHandler`, `SelectHandler`, …) has the statement translated (see below), then mutates or reads the in-memory model and returns a `CompletionStage<AsyncResultSet>`.
 
 There are two parallel registries — do not conflate them: `SeaStarRequestProcessorRegistry` selects a *processor* by driver result type; `CqlHandlerRegistry` selects a *handler* by parsed statement type. Handlers are built once in `SeaStarCqlSession#buildHandlerRegistry` and shared across requests.

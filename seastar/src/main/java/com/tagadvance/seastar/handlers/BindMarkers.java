@@ -3,6 +3,7 @@ package com.tagadvance.seastar.handlers;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
@@ -24,6 +25,7 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.apache.cassandra.cql3.AbstractMarker;
 import org.apache.cassandra.cql3.CQLStatement;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.MultiColumnRelation;
 import org.apache.cassandra.cql3.Operation;
 import org.apache.cassandra.cql3.Relation;
@@ -38,6 +40,7 @@ import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Resolves the bind-marker (variable) and result-set {@link ColumnDefinitions} for a parsed
@@ -49,6 +52,10 @@ import org.jspecify.annotations.NonNull;
  * a keyspace, table or column that does not exist at prepare time, so this throws rather than
  * answering with empty definitions. A statement that addresses no table - DDL, TRUNCATE - carries no
  * markers and resolves to nothing, which is why preparing one succeeds.
+ *
+ * <p>{@link #values(SeaStarDriverContext, CqlIdentifier, CQLStatement.Raw, SimpleStatement)} is the
+ * other side of the same question: which of a statement's own values goes to which marker. It is
+ * here because the parse tree is the only place the markers are counted and named.
  */
 public final class BindMarkers {
 
@@ -60,7 +67,81 @@ public final class BindMarkers {
 	private static final Definitions EMPTY = new Definitions(EmptyColumnDefinitions.INSTANCE,
 		EmptyColumnDefinitions.INSTANCE, List.of());
 
+	private static final Object[] NO_VALUES = {};
+
+	private static final String WRONG_COUNT = "Invalid amount of bind variables";
+
 	private BindMarkers() {
+	}
+
+	/**
+	 * The values a {@link SimpleStatement} supplies for its bind markers, by bind index, which is what
+	 * the translation layer resolves a marker against.
+	 *
+	 * <p>A statement carries positional values or named ones, never both - the driver's builder
+	 * refuses the mixture - so those are the two cases here. Positional values line up with the
+	 * markers as written; named ones are matched to the name a {@code :name} marker was written with,
+	 * or, for a {@code ?}, to the column it stands for, which is how a node resolves them.
+	 *
+	 * @throws InvalidQueryException if the values do not account for exactly the markers the statement
+	 *                               carries, which is what a node answers rather than binding null
+	 */
+	public static Object[] values(final SeaStarDriverContext context,
+		final @Nullable CqlIdentifier sessionKeyspace, final CQLStatement.Raw raw,
+		final SimpleStatement statement) {
+		final var coordinator = context.getNode();
+		final var markers = FieldBindings.BIND_VARIABLE_NAMES.require(
+			FieldBindings.STATEMENT_BIND_VARIABLES.require(raw));
+		final var positional = statement.getPositionalValues();
+		final var named = statement.getNamedValues();
+		if (positional.isEmpty() && named.isEmpty()) {
+			// Unlike a prepared statement, which may leave its trailing markers unbound, a statement
+			// executed straight off a string has to account for every one of them.
+			if (!markers.isEmpty()) {
+				throw new InvalidQueryException(coordinator, WRONG_COUNT);
+			}
+
+			return NO_VALUES;
+		}
+
+		if (!positional.isEmpty()) {
+			if (positional.size() != markers.size()) {
+				throw new InvalidQueryException(coordinator, WRONG_COUNT);
+			}
+
+			return positional.toArray();
+		}
+
+		if (named.size() != markers.size()) {
+			throw new InvalidQueryException(coordinator, WRONG_COUNT);
+		}
+
+		// A ? carries no name of its own, so the columns are only resolved when one has to be named.
+		final var columns = markers.contains(null)
+			? resolve(context, sessionKeyspace, raw).variables() : EmptyColumnDefinitions.INSTANCE;
+		final var values = new Object[markers.size()];
+		for (int i = 0; i < markers.size(); i++) {
+			final var name = name(markers.get(i), columns, i);
+			if (name == null || !named.containsKey(name)) {
+				throw new InvalidQueryException(coordinator, WRONG_COUNT);
+			}
+			values[i] = named.get(name);
+		}
+
+		return values;
+	}
+
+	/**
+	 * The name a named value is matched against for one marker: the one it was written with, else the
+	 * column it stands for, else null where SeaStar could not map the marker to a column.
+	 */
+	private static @Nullable CqlIdentifier name(final @Nullable ColumnIdentifier marker,
+		final ColumnDefinitions columns, final int index) {
+		if (marker != null) {
+			return CqlIdentifier.fromInternal(marker.toString());
+		}
+
+		return index < columns.size() ? columns.get(index).getName() : null;
 	}
 
 	/**

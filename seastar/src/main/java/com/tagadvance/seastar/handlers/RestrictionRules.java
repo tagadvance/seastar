@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -186,8 +187,9 @@ final class RestrictionRules {
 			}
 			keys = keys.stream()
 				.flatMap(prefix -> alternatives.stream().map(value -> {
-					// Not List.copyOf: a bound marker left unset resolves to null, and a partition key
-					// column pinned to null matches nothing rather than throwing.
+					// Not List.copyOf: a key is a positional list of values and must tolerate a null in
+					// it. A null pinning a partition key column is refused by validateRelations, which
+					// every caller runs first, so it cannot be one of them.
 					final List<Object> key = new ArrayList<>(prefix);
 					key.add(value);
 
@@ -216,9 +218,13 @@ final class RestrictionRules {
 		final Node coordinator) {
 		final var codecRegistry = target.table().context().getCodecRegistry();
 		final var clustering = clusteringNames(target);
+		final var primaryKey = target.primaryKeyNames();
 		for (final var restriction : restrictions) {
 			if (restriction.isMultiColumn()) {
 				validateMultiColumn(restriction, clustering, coordinator);
+			}
+			if (restriction.operator().isEquality() && !restriction.isMultiColumn()) {
+				requireNonNullKey(restriction, primaryKey, coordinator);
 			}
 			switch (restriction.operator()) {
 				case NEQ -> throw new InvalidQueryException(coordinator,
@@ -247,6 +253,24 @@ final class RestrictionRules {
 								column.name().asInternal(), column.type().asCql(true, true)));
 					});
 			}
+		}
+	}
+
+	/**
+	 * A primary key column compared to null names no row, and Cassandra refuses the comparison rather
+	 * than answering nothing - which is what makes a bound value nobody supplied an error rather than
+	 * a silent miss. Only {@code =} and {@code IN} are refused; a null slice bound is accepted, and a
+	 * null on a column outside the primary key is reported by the filtering path instead.
+	 */
+	private static void requireNonNullKey(final Restriction restriction,
+		final Set<CqlIdentifier> primaryKey, final Node coordinator) {
+		final var column = restriction.column();
+		final var nulls = restriction.values().stream()
+			.flatMap(List::stream)
+			.anyMatch(Objects::isNull);
+		if (primaryKey.contains(column.name()) && nulls) {
+			throw new InvalidQueryException(coordinator,
+				"Invalid null value in condition for column %s".formatted(column.name().asInternal()));
 		}
 	}
 

@@ -1,5 +1,6 @@
 package com.tagadvance.seastar.handlers;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -10,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.api.core.metadata.schema.ClusteringOrder;
@@ -607,6 +609,48 @@ class TranslationTest {
 
 			assertEquals("Invalid number of arguments in call to function now: 0 required but found 1",
 				error.getMessage());
+		}
+
+	}
+
+	/**
+	 * Only the named form is covered here. Positional values, the count that has to match and a null
+	 * key part are all in {@code AbstractCqlSessionTest}, where a container says they match a node; a
+	 * marker written with a name of its own cannot go there, because {@code :seastar-server} matches a
+	 * named value against the marker's column rather than against the name it was written with.
+	 */
+	@Nested
+	@DisplayName("BindMarkers")
+	class BindMarkersTest {
+
+		private static final String INSERT =
+			"INSERT INTO ks.events (pk, ck, note) VALUES (:a, :b, :c)";
+
+		@Test
+		@DisplayName("a marker written with a name of its own is addressed by that name")
+		void namedMarker() {
+			final var statement = SimpleStatement.builder(INSERT)
+				.addNamedValue("a", 1)
+				.addNamedValue("b", 2)
+				.addNamedValue("c", "x")
+				.build();
+
+			assertArrayEquals(new Object[]{1, 2, "x"},
+				BindMarkers.values(context, id("ks"), parse(INSERT), statement));
+		}
+
+		@Test
+		@DisplayName("a named marker is not addressed by the column it stands for")
+		void namedMarkerByColumn() {
+			final var statement = SimpleStatement.builder(INSERT)
+				.addNamedValue("pk", 1)
+				.addNamedValue("ck", 2)
+				.addNamedValue("note", "x")
+				.build();
+
+			final var error = assertThrows(InvalidQueryException.class,
+				() -> BindMarkers.values(context, id("ks"), parse(INSERT), statement));
+			assertEquals("Invalid amount of bind variables", error.getMessage());
 		}
 
 	}
