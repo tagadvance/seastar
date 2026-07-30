@@ -399,13 +399,20 @@ final class SeaStarRequestDispatcher {
 		return bind(session.prepare(query), options.positionalValues, options.namedValues);
 	}
 
+	/**
+	 * Binds the values a request carries to the markers the prepared statement reports, the two forms
+	 * counted the way a node counts them.
+	 *
+	 * <p>Positional values are checked against the marker count before any of them is read. Named
+	 * ones are not counted at all: {@code QueryOptions.OptionsWithNames} walks the markers and looks
+	 * each one's name up among the names supplied, so a marker no name accounts for is the count
+	 * complaint, a name no marker claims is ignored, and one value feeds every marker sharing its
+	 * name.
+	 */
 	private BoundStatement bind(final PreparedStatement statement,
 		final List<ByteBuffer> positionalValues, final Map<String, ByteBuffer> namedValues) {
 		final var variables = statement.getVariableDefinitions();
-		// A node counts the values against the markers before it reads any of them, and a name that is
-		// no marker of this statement leaves one of them unaccounted for, so it reports the same thing.
-		final var supplied = positionalValues.isEmpty() ? namedValues.size() : positionalValues.size();
-		if (supplied != variables.size()) {
+		if (namedValues.isEmpty() && positionalValues.size() != variables.size()) {
 			throw new InvalidQueryException(node(), WRONG_VALUE_COUNT);
 		}
 
@@ -414,11 +421,14 @@ final class SeaStarRequestDispatcher {
 			for (int i = 0; i < positionalValues.size(); i++) {
 				bound = bound.setBytesUnsafe(i, positionalValues.get(i));
 			}
-			for (final var value : namedValues.entrySet()) {
-				// firstIndexOf rather than setBytesUnsafe(String, ...): the driver's by-name default goes
-				// through allIndicesOf, which SeaStar's bound statement does not override and which logs a
-				// warning every time it is called.
-				bound = bound.setBytesUnsafe(index(variables, value.getKey()), value.getValue());
+			for (int i = 0; !namedValues.isEmpty() && i < variables.size(); i++) {
+				// The names are compared as the node compares them, on the marker's own name and
+				// case-sensitively, rather than through the driver's case-insensitive firstIndexOf.
+				final var name = variables.get(i).getName().asInternal();
+				if (!namedValues.containsKey(name)) {
+					throw new InvalidQueryException(node(), WRONG_VALUE_COUNT);
+				}
+				bound = bound.setBytesUnsafe(i, namedValues.get(name));
 			}
 		} catch (final IllegalArgumentException e) {
 			// A buffer the column's type cannot decode is an IllegalArgumentException from the driver's
@@ -428,15 +438,6 @@ final class SeaStarRequestDispatcher {
 		}
 
 		return bound;
-	}
-
-	private int index(final ColumnDefinitions variables, final String name) {
-		final var index = variables.firstIndexOf(name);
-		if (index < 0) {
-			throw new InvalidQueryException(node(), WRONG_VALUE_COUNT);
-		}
-
-		return index;
 	}
 
 	/**

@@ -614,38 +614,35 @@ class TranslationTest {
 	}
 
 	/**
-	 * Only the named form is covered here. Positional values, the count that has to match and a null
-	 * key part are all in {@code AbstractCqlSessionTest}, where a container says they match a node; a
-	 * marker written with a name of its own cannot go there, because {@code :seastar-server} matches a
-	 * named value against the marker's column rather than against the name it was written with.
+	 * A marker written {@code :"A"} keeps its case, and no named value the driver can build reaches
+	 * it: {@code addNamedValue(String)} folds the name it is given, so the folded name never matches
+	 * the marker's. A node behaves the same way and is unreachable from the shared suite for the same
+	 * reason, which is why this is asserted against {@code BindMarkers} directly. The named form
+	 * generally, and the count that has to match, are in {@code AbstractCqlSessionTest}, where a
+	 * container says they match a node.
 	 */
 	@Nested
 	@DisplayName("BindMarkers")
 	class BindMarkersTest {
 
 		private static final String INSERT =
-			"INSERT INTO ks.events (pk, ck, note) VALUES (:a, :b, :c)";
+			"INSERT INTO ks.events (pk, ck, note) VALUES (:\"A\", :b, :c)";
 
 		@Test
-		@DisplayName("a marker written with a name of its own is addressed by that name")
-		void namedMarker() {
-			final var statement = SimpleStatement.builder(INSERT)
-				.addNamedValue("a", 1)
-				.addNamedValue("b", 2)
-				.addNamedValue("c", "x")
-				.build();
+		@DisplayName("a quoted marker name keeps its case")
+		void quotedMarkerName() {
+			final var variables = BindMarkers.resolve(context, id("ks"), parse(INSERT)).variables();
 
-			assertArrayEquals(new Object[]{1, 2, "x"},
-				BindMarkers.values(context, id("ks"), parse(INSERT), statement));
+			assertEquals("A", variables.get(0).getName().asInternal());
 		}
 
 		@Test
-		@DisplayName("a named marker is not addressed by the column it stands for")
-		void namedMarkerByColumn() {
+		@DisplayName("a case-folded named value does not reach a quoted marker")
+		void quotedMarkerUnaddressable() {
 			final var statement = SimpleStatement.builder(INSERT)
-				.addNamedValue("pk", 1)
-				.addNamedValue("ck", 2)
-				.addNamedValue("note", "x")
+				.addNamedValue("A", 1)
+				.addNamedValue("b", 2)
+				.addNamedValue("c", "x")
 				.build();
 
 			final var error = assertThrows(InvalidQueryException.class,

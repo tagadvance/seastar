@@ -3194,6 +3194,129 @@ public abstract class AbstractCqlSessionTest {
 			"a refused statement should have written nothing");
 	}
 
+	@Test
+	@Order(235)
+	@DisplayName("A named marker is addressed by the name it was written with, not by its column")
+	void testNamedMarkerNames() {
+		createValueTable();
+
+		final var named = "INSERT INTO foo.vals (pk, ck, v) VALUES (:a, :b, :c)";
+		session.execute(SimpleStatement.builder(named)
+			.addNamedValue("a", 10)
+			.addNamedValue("b", 1)
+			.addNamedValue("c", "by marker")
+			.build());
+		assertEquals(List.of("by marker"), texts("SELECT v FROM foo.vals WHERE pk = 10"));
+
+		// The column the marker binds is not a name the statement carries, so a marker is left over.
+		assertWrongNumberOfValues(SimpleStatement.builder(named)
+			.addNamedValue("pk", 11)
+			.addNamedValue("ck", 1)
+			.addNamedValue("v", "by column")
+			.build());
+
+		// A statement may mix the two forms, and each marker keeps its own name.
+		final var mixed = "INSERT INTO foo.vals (pk, ck, v) VALUES (:a, ?, :c)";
+		session.execute(SimpleStatement.builder(mixed)
+			.addNamedValue("a", 12)
+			.addNamedValue("ck", 1)
+			.addNamedValue("c", "mixed")
+			.build());
+		assertEquals(List.of("mixed"), texts("SELECT v FROM foo.vals WHERE pk = 12"));
+		assertWrongNumberOfValues(SimpleStatement.builder(mixed)
+			.addNamedValue("a", 13)
+			.addNamedValue("b", 1)
+			.addNamedValue("c", "mixed")
+			.build());
+
+		// A marker whose name is another column's is still addressed by the name, not by that column.
+		session.execute(SimpleStatement.builder(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (:ck, :pk, :v)")
+			.addNamedValue("ck", 14)
+			.addNamedValue("pk", 1)
+			.addNamedValue("v", "crossed")
+			.build());
+		assertEquals(List.of("crossed"), texts("SELECT v FROM foo.vals WHERE pk = 14 AND ck = 1"));
+
+		final var selected = session.execute(
+			SimpleStatement.builder("SELECT v FROM foo.vals WHERE pk = :x AND ck = :y")
+				.addNamedValue("x", 10)
+				.addNamedValue("y", 1)
+				.build()).one();
+		assertNotNull(selected);
+		assertEquals("by marker", selected.getString(0));
+	}
+
+	@Test
+	@Order(236)
+	@DisplayName("One named value feeds every marker of that name, and a spare name is ignored")
+	void testRepeatedAndSpareNames() {
+		createValueTable();
+
+		// Nothing is deduplicated: :x is two markers, and the one value supplied reaches both.
+		session.execute(SimpleStatement.builder(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (:x, :x, 'twice')")
+			.addNamedValue("x", 15)
+			.build());
+		assertEquals(List.of("twice"), texts("SELECT v FROM foo.vals WHERE pk = 15 AND ck = 15"));
+
+		// A node resolves named values with one lookup per marker, so a name no marker claims is not
+		// a value too many - it is simply never looked at.
+		session.execute(SimpleStatement.builder(
+				"INSERT INTO foo.vals (pk, ck, v) VALUES (:a, :b, :c)")
+			.addNamedValue("a", 16)
+			.addNamedValue("b", 1)
+			.addNamedValue("c", "spare")
+			.addNamedValue("nosuch", "ignored")
+			.build());
+		assertEquals(List.of("spare"), texts("SELECT v FROM foo.vals WHERE pk = 16"));
+	}
+
+	@Test
+	@Order(237)
+	@DisplayName("Variable definitions are named after the markers, a ? after the column it binds")
+	void testVariableNames() {
+		createValueTable();
+
+		assertVariableNames(List.of("a", "b", "c"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:a, :b, :c)");
+		assertVariableNames(List.of("pk", "ck", "v"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (?, ?, ?)");
+		assertVariableNames(List.of("a", "ck", "c"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:a, ?, :c)");
+		assertVariableNames(List.of("ck", "pk", "v"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:ck, :pk, :v)");
+		// An unquoted marker name is folded to lower case, exactly as an unquoted identifier is.
+		assertVariableNames(List.of("a", "b", "c"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:A, :B, :C)");
+		// Two markers of one name are two variables, not one.
+		assertVariableNames(List.of("x", "x"),
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:x, :x, 'twice')");
+		assertVariableNames(List.of("p", "q"), "SELECT v FROM foo.vals WHERE pk = :p AND ck = :q");
+		assertVariableNames(List.of("v", "p", "q"),
+			"UPDATE foo.vals SET v = :v WHERE pk = :p AND ck = :q");
+
+		// The column still types the variable, and is still what the partition key indices name.
+		final var prepared = session.prepare(
+			"INSERT INTO foo.vals (pk, ck, v) VALUES (:a, :b, :c)");
+		final var variables = prepared.getVariableDefinitions();
+		assertEquals(DataTypes.INT, variables.get(0).getType());
+		assertEquals(DataTypes.TEXT, variables.get(2).getType());
+		assertEquals(List.of(0), prepared.getPartitionKeyIndices());
+
+		assertEquals(0, variables.firstIndexOf("a"));
+		assertEquals(-1, variables.firstIndexOf("pk"),
+			"a named marker is not addressable by the column it binds");
+	}
+
+	private void assertVariableNames(final List<String> expected, final String cql) {
+		final var variables = session.prepare(cql).getVariableDefinitions();
+		final var names = StreamSupport.stream(variables.spliterator(), false)
+			.map(definition -> definition.getName().asInternal())
+			.toList();
+		assertEquals(expected, names, cql);
+	}
+
 	private void assertWrongNumberOfValues(final SimpleStatement statement) {
 		assertMentions("Invalid amount of bind variables",
 			assertThrows(InvalidQueryException.class, () -> session.execute(statement),

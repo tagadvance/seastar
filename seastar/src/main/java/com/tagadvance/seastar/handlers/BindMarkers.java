@@ -83,7 +83,12 @@ public final class BindMarkers {
 	 * markers as written; named ones are matched to the name a {@code :name} marker was written with,
 	 * or, for a {@code ?}, to the column it stands for, which is how a node resolves them.
 	 *
-	 * @throws InvalidQueryException if the values do not account for exactly the markers the statement
+	 * <p>The two are counted differently, and deliberately. A node checks positional values against
+	 * the marker count, but resolves named ones with one lookup per marker
+	 * ({@code QueryOptions.OptionsWithNames}): a marker no name accounts for is the count complaint,
+	 * a name no marker claims is ignored, and one value feeds every marker sharing its name.
+	 *
+	 * @throws InvalidQueryException if the values do not account for every marker the statement
 	 *                               carries, which is what a node answers rather than binding null
 	 */
 	public static Object[] values(final SeaStarDriverContext context,
@@ -110,10 +115,6 @@ public final class BindMarkers {
 			}
 
 			return positional.toArray();
-		}
-
-		if (named.size() != markers.size()) {
-			throw new InvalidQueryException(coordinator, WRONG_COUNT);
 		}
 
 		// A ? carries no name of its own, so the columns are only resolved when one has to be named.
@@ -151,6 +152,10 @@ public final class BindMarkers {
 	 * that does not exist fails here rather than at bind or execute. Statements that address no table
 	 * at all - DDL, TRUNCATE - carry no markers and resolve to nothing, which is also what a cluster
 	 * does: preparing them succeeds.
+	 *
+	 * <p>A variable is named after the marker rather than after the column it binds - see
+	 * {@link #toDefinitions}. The column is what types it, and what
+	 * {@link Definitions#partitionKeyIndices()} is computed from.
 	 *
 	 * @throws InvalidQueryException if the statement addresses something that does not exist
 	 */
@@ -196,7 +201,9 @@ public final class BindMarkers {
 			return EMPTY;
 		}
 
-		final var variables = toDefinitions(markers);
+		final var variables = toDefinitions(table, markers,
+			FieldBindings.BIND_VARIABLE_NAMES.require(
+				FieldBindings.STATEMENT_BIND_VARIABLES.require(raw)));
 		// A marker we could not map leaves toDefinitions empty, so indices into it would be meaningless.
 		final var partitionKeyIndices =
 			variables.size() == markers.size() ? partitionKeyIndices(table, markers) : List.<Integer>of();
@@ -385,8 +392,19 @@ public final class BindMarkers {
 		}
 	}
 
-	private static ColumnDefinitions toDefinitions(
-		final NavigableMap<Integer, ColumnDefinition> markers) {
+	/**
+	 * The variable definitions for the markers collected, named the way a node names them: after the
+	 * name a {@code :name} marker was written with, else after the column a {@code ?} stands for. The
+	 * keyspace, table and type stay the column's either way, which is what
+	 * {@code VariableSpecifications#add} does - it rebuilds the spec around the written name alone.
+	 *
+	 * <p>{@code names} is one entry per marker in bind index order, null where the marker was
+	 * anonymous. Nothing is deduplicated: {@code :x} written twice is two definitions both named
+	 * {@code x}, as it is on a node.
+	 */
+	private static ColumnDefinitions toDefinitions(final SeaStarTable table,
+		final NavigableMap<Integer, ColumnDefinition> markers,
+		final List<ColumnIdentifier> names) {
 		if (markers.isEmpty()) {
 			return EmptyColumnDefinitions.INSTANCE;
 		}
@@ -396,7 +414,14 @@ public final class BindMarkers {
 			return EmptyColumnDefinitions.INSTANCE;
 		}
 
-		return DefaultColumnDefinitions.valueOf(new ArrayList<>(markers.values()));
+		final List<ColumnDefinition> definitions = new ArrayList<>(markers.size());
+		markers.forEach((index, column) -> {
+			final var written = index < names.size() ? names.get(index) : null;
+			definitions.add(written == null ? column
+				: syntheticDefinition(table, written.toString(), column.getType()));
+		});
+
+		return DefaultColumnDefinitions.valueOf(definitions);
 	}
 
 	private static ColumnDefinition syntheticDefinition(final SeaStarTable table, final String name,
