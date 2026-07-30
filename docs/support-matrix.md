@@ -12,9 +12,13 @@ suite covers, and agrees with itself across the wire.
 
 A statement's own values - `SimpleStatement.newInstance(cql, ...)` and
 `SimpleStatement.builder(cql).addNamedValue(...)` - are bound to its bind markers the way a prepared
-statement's are, in process and over the wire alike. Values that do not account for exactly the
-markers the statement carries are refused with *Invalid amount of bind variables*, and a null in a
-primary key part with *Invalid null value in condition for column x*, both being what a node answers.
+statement's are, in process and over the wire alike. A marker written `:name` is addressed by that
+name, an anonymous `?` by the column it binds, and `getVariableDefinitions()` names them the same
+way. The two value forms are counted as a node counts them: positional values against the marker
+count, named ones with one lookup per marker - so a marker no name accounts for is refused, a name no
+marker claims is ignored, and one value feeds every marker sharing its name. A discrepancy is
+*Invalid amount of bind variables*, and a null in a primary key part is *Invalid null value in
+condition for column x*, both being what a node answers.
 
 ## Data
 
@@ -332,10 +336,6 @@ from a cluster's.
 - **A null compared to a column outside the primary key is accepted.** `WHERE v = null ALLOW
   FILTERING` and `l CONTAINS null` match nothing; a node refuses both with *Unsupported null value
   for column v*. A null in a primary key part is refused, as on a node.
-- **Over the wire, a named value is matched to a marker's column rather than to the name the marker
-  was written with.** `VALUES (:a, :b)` addressed by `a` and `b` works in process and on a node, but
-  `seastar-server` looks the names up in the variable metadata, which SeaStar names after the
-  columns. The common form - `:pk` for a column called `pk` - is unaffected.
 - **`getTokenMap()` is empty.** SeaStar is one node with no token ring, although read order does
   follow real Murmur3 token order.
 - **Closing a session discards its keyspaces.** A real cluster keeps its metadata readable after a
