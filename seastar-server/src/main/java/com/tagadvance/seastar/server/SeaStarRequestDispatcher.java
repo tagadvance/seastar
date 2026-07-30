@@ -70,6 +70,12 @@ import org.jspecify.annotations.Nullable;
 @ThreadSafe
 final class SeaStarRequestDispatcher {
 
+	/**
+	 * What a node answers when a request's values do not account for exactly the bind markers its
+	 * statement carries, whichever side the discrepancy is on.
+	 */
+	private static final String WRONG_VALUE_COUNT = "Invalid amount of bind variables";
+
 	private final SeaStarCqlSession session;
 	private final SystemTables systemTables;
 	private final Collection<SeaStarConnection> connections;
@@ -396,19 +402,29 @@ final class SeaStarRequestDispatcher {
 	private BoundStatement bind(final PreparedStatement statement,
 		final List<ByteBuffer> positionalValues, final Map<String, ByteBuffer> namedValues) {
 		final var variables = statement.getVariableDefinitions();
-		if (!positionalValues.isEmpty() && positionalValues.size() != variables.size()) {
-			throw new InvalidQueryException(node(), "Invalid amount of bind variables");
+		// A node counts the values against the markers before it reads any of them, and a name that is
+		// no marker of this statement leaves one of them unaccounted for, so it reports the same thing.
+		final var supplied = positionalValues.isEmpty() ? namedValues.size() : positionalValues.size();
+		if (supplied != variables.size()) {
+			throw new InvalidQueryException(node(), WRONG_VALUE_COUNT);
 		}
 
 		var bound = statement.bind();
-		for (int i = 0; i < positionalValues.size(); i++) {
-			bound = bound.setBytesUnsafe(i, positionalValues.get(i));
-		}
-		for (final var value : namedValues.entrySet()) {
-			// firstIndexOf rather than setBytesUnsafe(String, ...): the driver's by-name default goes
-			// through allIndicesOf, which SeaStar's bound statement does not override and which logs a
-			// warning every time it is called.
-			bound = bound.setBytesUnsafe(index(variables, value.getKey()), value.getValue());
+		try {
+			for (int i = 0; i < positionalValues.size(); i++) {
+				bound = bound.setBytesUnsafe(i, positionalValues.get(i));
+			}
+			for (final var value : namedValues.entrySet()) {
+				// firstIndexOf rather than setBytesUnsafe(String, ...): the driver's by-name default goes
+				// through allIndicesOf, which SeaStar's bound statement does not override and which logs a
+				// warning every time it is called.
+				bound = bound.setBytesUnsafe(index(variables, value.getKey()), value.getValue());
+			}
+		} catch (final IllegalArgumentException e) {
+			// A buffer the column's type cannot decode is an IllegalArgumentException from the driver's
+			// own codec, which would travel as a SERVER_ERROR. A node reports what the client sent as
+			// invalid, so the message is kept and only the code changes.
+			throw new InvalidQueryException(node(), e.getMessage());
 		}
 
 		return bound;
@@ -417,8 +433,7 @@ final class SeaStarRequestDispatcher {
 	private int index(final ColumnDefinitions variables, final String name) {
 		final var index = variables.firstIndexOf(name);
 		if (index < 0) {
-			throw new InvalidQueryException(node(),
-				"Undefined name " + name + " in bind variables");
+			throw new InvalidQueryException(node(), WRONG_VALUE_COUNT);
 		}
 
 		return index;
