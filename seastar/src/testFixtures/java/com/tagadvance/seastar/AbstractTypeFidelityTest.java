@@ -26,6 +26,7 @@ public abstract class AbstractTypeFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(7)
+	@DisplayName("CREATE TABLE accepts every CQL column type, collections, tuples, UDTs and vectors included")
 	void testNewTableWithAllPossibleDataTypes() {
 		final var context = session.getContext();
 

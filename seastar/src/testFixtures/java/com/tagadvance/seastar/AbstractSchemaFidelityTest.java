@@ -26,6 +26,7 @@ public abstract class AbstractSchemaFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(1)
+	@DisplayName("CREATE KEYSPACE creates it; creating it again throws unless IF NOT EXISTS")
 	void testCreateKeyspace() {
 		final var context = session.getContext();
 		if (context instanceof SeaStarDriverContext seaStarContext) {
@@ -52,6 +53,7 @@ public abstract class AbstractSchemaFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(3)
+	@DisplayName("CREATE TABLE creates it; creating it again throws unless IF NOT EXISTS")
 	void testCreateSimpleTable() {
 		final var context = session.getContext();
 
@@ -94,6 +96,7 @@ public abstract class AbstractSchemaFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(5)
+	@DisplayName("A two-part PRIMARY KEY reads back as partition key plus ascending clustering column")
 	void testCreateTableWithPrimaryKeyAndClusteringColumn() {
 		final var context = session.getContext();
 
@@ -124,6 +127,7 @@ public abstract class AbstractSchemaFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(6)
+	@DisplayName("A composite partition key keeps its components in declaration order")
 	void testCreateTableWithPrimaryKeysAndClusteringColumn() {
 		final var context = session.getContext();
 

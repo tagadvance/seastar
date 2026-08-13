@@ -47,6 +47,7 @@ public abstract class AbstractSessionFidelityTest extends AbstractFidelityTest {
 
 	@Test
 	@Order(2)
+	@DisplayName("USE selects the keyspace, quoted or unquoted, and getKeyspace reports it")
 	void testUseKeyspace() {
 		Stream.of("USE sess", "USE \"sess\";").forEach(cql -> {
 			final var resultSet = assertDoesNotThrow(() -> session.execute(cql));
