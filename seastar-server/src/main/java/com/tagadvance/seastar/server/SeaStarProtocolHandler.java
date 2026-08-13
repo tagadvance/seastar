@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Every frame is answered on the server's funnel rather than on the Netty event loop that
  * decoded it, which is what keeps SeaStar's "no interleaving between one session's requests"
- * invariant true over the wire (b_plan B2). Responses may therefore complete out of the order
+ * invariant true over the wire. Responses may therefore complete out of the order
  * they arrived in; that is legal, and echoing the request's stream id is exactly what makes it
  * legal.
  *

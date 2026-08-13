@@ -78,7 +78,7 @@ final class Protocol {
 	 * Writes one response, on the stream id of the request it answers.
 	 *
 	 * <p>No tracing id is ever fabricated, no warning is ever raised, and custom payloads are read
-	 * by nothing here, so all three are empty on every response (b_plan B7).
+	 * by nothing here, so all three are empty on every response.
 	 *
 	 * @param ctx      the context to write from
 	 * @param version  the protocol version to write the header with, which is the version of the

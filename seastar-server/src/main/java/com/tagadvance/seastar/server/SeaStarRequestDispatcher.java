@@ -172,7 +172,7 @@ final class SeaStarRequestDispatcher {
 	 * to its limit and leaves the position there - so preparing the same statement twice would send
 	 * an empty id the second time. The duplicate belongs here, where the buffer is written, rather
 	 * than in the core, where the shared instance is the behaviour a caller has to be able to rely
-	 * on (e_plan E4).
+	 * on.
 	 */
 	private static byte @Nullable [] resultMetadataId(final PreparedStatement statement,
 		final int version) {
@@ -262,7 +262,7 @@ final class SeaStarRequestDispatcher {
 	}
 
 	/**
-	 * Tells every connection that registered for one that the schema moved (f_plan F2).
+	 * Tells every connection that registered for one that the schema moved.
 	 *
 	 * <p>The result of a DDL statement goes back to the connection that ran it and nowhere else, so
 	 * without this a second client watching the same server never learns that anything happened -
@@ -286,7 +286,7 @@ final class SeaStarRequestDispatcher {
 	 * Answers the keyspaces a real node keeps to describe itself, which the model has no idea about:
 	 * {@code system} from {@link SystemTables}, {@code system_schema} from the core's projection.
 	 *
-	 * <p>This is the whole of {@code d_plan D1}, and it is on purpose that it happens here rather
+	 * <p>It is on purpose that this happens here rather
 	 * than in the core's handler registry. These tables are a property of the listener, not of the
 	 * data: an in-process user who never starts a server must not suddenly find invented keyspaces in
 	 * {@code getMetadata().getKeyspaces()}.

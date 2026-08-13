@@ -11,7 +11,7 @@ import org.apache.cassandra.utils.MurmurHash;
  * {@code MurmurHash.hash3_x64_128(key)[0]}, with {@code Long.MIN_VALUE} reserved as the minimum
  * token and folded onto {@code Long.MAX_VALUE}. The partitioner itself is deliberately not used -
  * loading it drags in {@code PartitionerDefinedOrder} and the {@code AbstractType} hierarchy, and
- * the reason c_plan C1 rejects {@code Raw#prepare} is that touching that side of cassandra-all
+ * the reason {@code Raw#prepare} is rejected is that touching that side of cassandra-all
  * costs a {@code DatabaseDescriptor} init. {@code MurmurHash} is a leaf utility with no static
  * state, so calling it costs nothing but the hash.
  *

@@ -75,7 +75,7 @@ class SeaStarCqlSessionBuilderTest {
 	}
 
 	/**
-	 * f_plan_api_contract.txt F6: transport settings a caller might set on a builder shared with a
+	 * Transport settings a caller might set on a builder shared with a
 	 * real session are accepted and ignored rather than rejected.
 	 */
 	@Test
@@ -92,7 +92,7 @@ class SeaStarCqlSessionBuilderTest {
 	}
 
 	/**
-	 * f_plan_api_contract.txt F6: a contact point names a real address to connect to, which SeaStar
+	 * A contact point names a real address to connect to, which SeaStar
 	 * has none of, so accepting one silently would misrepresent what got configured.
 	 */
 	@Test

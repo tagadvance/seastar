@@ -420,7 +420,7 @@ class SystemSchemaTest {
 	}
 
 	/**
-	 * d_plan D6. The projection is a projection, not a keyspace: an in-process user who never starts
+	 * The projection is a projection, not a keyspace: an in-process user who never starts
 	 * a server must not suddenly find invented system keyspaces in their metadata. If this fails,
 	 * someone took the real-keyspace route - which is a deliberate, documented change to the core,
 	 * not something to land by accident.

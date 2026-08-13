@@ -59,7 +59,7 @@ class ConcurrencyTest {
 	}
 
 	/**
-	 * The regression test for the deadlock b_plan B1 reproduced. Three threads were enough: one
+	 * The regression test for the reproduced deadlock. Three threads were enough: one
 	 * reading a row under the table's read lock, one writing a column by name - which took the row's
 	 * write lock and then the table's read lock, inverting the order - and one wanting the table's
 	 * write lock, which a write-preferring {@link java.util.concurrent.locks.ReentrantReadWriteLock}

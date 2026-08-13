@@ -24,7 +24,7 @@ import org.jspecify.annotations.Nullable;
  * control-connection queries; there are six of them, they are string literals in the driver's
  * source, and they do not vary. Parsing CQL properly to answer them would mean putting
  * {@code cassandra-all} on this module's classpath and teaching the core's handler registry about
- * tables that do not exist in the model - which is exactly what {@code d_plan D1} rules out, and
+ * tables that do not exist in the model - which is exactly what the design rules out, and
  * what a fake system keyspace in the model would cost every in-process user. Simulacron matches
  * strings for the same reason.
  *

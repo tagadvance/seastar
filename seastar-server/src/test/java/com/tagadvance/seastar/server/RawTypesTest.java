@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * c_plan C3. Pure, total and the easiest thing in the wave to get subtly wrong in a way that shows
+ * The raw-type mapping: pure, total and the easiest thing to get subtly wrong in a way that shows
  * up for one column type in one user's schema, so every type SeaStar supports is named here.
  *
  * <p>The expectations come from a {@code cassandra:5.0.8} container: a table with one column of

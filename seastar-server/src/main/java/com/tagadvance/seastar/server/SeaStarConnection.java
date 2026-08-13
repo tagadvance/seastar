@@ -21,7 +21,7 @@ import org.jspecify.annotations.Nullable;
  * session-wide keyspace instead, so the two do not line up: a harness that runs {@code USE ks} on
  * one connection and an {@code INSERT} on another would otherwise fail, and fail intermittently.
  * The keyspace is tracked here and applied inside the funnel immediately before the statement
- * runs, which is safe precisely because the funnel serializes every request (b_plan B2).
+ * runs, which is safe precisely because the funnel serializes every request.
  *
  * <p>The event types a {@code REGISTER} asked for are per connection as well, which is what makes
  * a {@code SCHEMA_CHANGE} reach the connections watching for one rather than the connection that

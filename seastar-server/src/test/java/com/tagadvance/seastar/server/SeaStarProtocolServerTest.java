@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * b_plan B5: the lifecycle and the builder.
+ * The lifecycle and the builder.
  */
 class SeaStarProtocolServerTest {
 

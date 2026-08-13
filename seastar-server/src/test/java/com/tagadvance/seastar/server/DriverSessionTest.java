@@ -110,7 +110,7 @@ class DriverSessionTest {
 	@Test
 	@DisplayName("a prepared statement reflects a column added after it was prepared")
 	void testPreparedStatementAfterASchemaChange() {
-		// e_plan E4, answered end to end rather than at the socket: a bound statement asks for its
+		// Answered end to end rather than at the socket: a bound statement asks for its
 		// metadata to be skipped, so if the server ever honoured that the driver would decode this row
 		// against the columns the PREPARE described and never see `extra` at all.
 		try (final var connected = connect(false)) {
@@ -131,7 +131,7 @@ class DriverSessionTest {
 	@Test
 	@DisplayName("DDL returns promptly rather than waiting out the schema-agreement timeout")
 	void testDdlIsNotSlow() {
-		// d_plan D5's failure mode, and it is loud only if something asserts on it: with a null or
+		// The failure mode is loud only if something asserts on it: with a null or
 		// unstable schema_version the driver never sees agreement, waits the full
 		// advanced.control-connection.schema-agreement.timeout - ten seconds by default - and then
 		// carries on successfully anyway, warning where nobody is looking. Every statement below is

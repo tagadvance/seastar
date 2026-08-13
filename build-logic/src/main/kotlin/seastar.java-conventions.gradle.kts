@@ -4,7 +4,7 @@ import com.vanniktech.maven.publish.SourcesJar
 import org.gradle.jvm.toolchain.JavaToolchainService
 
 // Everything both published modules share: toolchain, warnings, archive determinism, and the
-// whole publishing block. a_plan A4 chose a convention plugin over `subprojects { }` because the
+// whole publishing block. A convention plugin was chosen over `subprojects { }` because the
 // latter fights the configuration cache that gradle.properties turns on.
 
 plugins {
@@ -17,7 +17,7 @@ plugins {
     id("com.vanniktech.maven.publish.base")
 }
 
-// a_plan A5: both modules are versioned from here, in lockstep, always. seastar-server is built
+// Both modules are versioned from here, in lockstep, always. seastar-server is built
 // against the core's internals as much as against the driver's, so a mismatched pair is not a
 // combination worth supporting.
 //
@@ -89,7 +89,7 @@ tasks.named<Jar>("jar") {
 // What switches signing on, and the only thing that does. Keep it a condition: the plugin's
 // signAllPublications() makes signing *required* for any version that is not a -SNAPSHOT, so
 // calling it unconditionally would break publishToMavenLocal for a contributor with no GPG key -
-// the one publishing path that has to work without credentials (j_plan J4).
+// the one publishing path that has to work without credentials.
 val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
 
 // RELEASE IS STILL BLOCKED, but no longer by anything in this file. What is left is external, and
@@ -120,8 +120,8 @@ mavenPublishing {
     // both jars, and - the part that matters - the sourcesElements and javadocElements *variants*
     // the published .module carries. Letting the plugin add its own would be a second artifact
     // under the same classifier. None() for sources also stops the plugin adding a
-    // testFixturesSourcesElements variant to :seastar, which a_plan A3 would then have to skip
-    // alongside the two it already skips.
+    // testFixturesSourcesElements variant to :seastar, which the publishing block would then
+    // have to skip alongside the two it already skips.
     configure(JavaLibrary(javadocJar = JavadocJar.None(), sourcesJar = SourcesJar.None()))
 
     if (!signingKey.isNullOrBlank()) {

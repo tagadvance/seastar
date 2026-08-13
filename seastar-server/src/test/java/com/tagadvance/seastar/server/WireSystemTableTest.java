@@ -29,7 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * d_plan D1, D2, D3 and D5 driven off the wire: the exact query strings java-driver-core 4.19.3
+ * The system tables driven off the wire: the exact query strings java-driver-core 4.19.3
  * sends on its control connection, and the rows that come back.
  *
  * <p>The column lists and their types were taken from {@code DESCRIBE TABLE} on a

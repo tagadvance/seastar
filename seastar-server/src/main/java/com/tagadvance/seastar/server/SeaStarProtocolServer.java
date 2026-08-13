@@ -140,7 +140,7 @@ public final class SeaStarProtocolServer implements AutoCloseable {
 			throw new IllegalStateException("this server has already been started");
 		}
 
-		// One acceptor and one I/O thread: every request is answered on the funnel (b_plan B2), so
+		// One acceptor and one I/O thread: every request is answered on the funnel, so
 		// extra event loops would only add threads to start and to shut down. Startup cost is a
 		// goal-2 concern for a library that means to beat TestContainers.
 		final var acceptors = new NioEventLoopGroup(1, threads("accept"));

@@ -33,7 +33,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * f_plan F1, at the level the driver cannot show: the bytes. A v5 connection starts in the legacy
+ * Segment framing at the level the driver cannot show: the bytes. A v5 connection starts in the legacy
  * framing the handshake uses at every version, and switches to CRC-checked segments for everything
  * after {@code READY} - mid-stream, on the same socket.
  *

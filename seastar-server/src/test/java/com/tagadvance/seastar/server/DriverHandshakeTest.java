@@ -82,9 +82,9 @@ class DriverHandshakeTest {
 		// An unconfigured driver's first byte on the wire is 66 (DSE_V2), not 5, and it walks down
 		// DSE_V2 -> DSE_V1 -> V5. Had the refusal of the two DSE versions been the wrong shape it
 		// would have stopped at the first one with an UnsupportedProtocolVersionException, or - the
-		// outcome b_plan B4 is really guarding against - waited out its init timeout with nothing
-		// useful to say. It stops at v5 now rather than walking on to v4, which is the whole of
-		// f_plan F3 seen from the client.
+		// outcome the version gate is really guarding against - waited out its init timeout with nothing
+		// useful to say. It stops at v5 now rather than walking on to v4 - the negotiation seen
+		// from the client.
 		try (final var connected = connect(UnaryOperator.identity())) {
 			assertEquals("V5", connected.getContext().getProtocolVersion().name());
 		}

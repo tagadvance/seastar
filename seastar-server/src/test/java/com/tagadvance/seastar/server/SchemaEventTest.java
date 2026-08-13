@@ -27,7 +27,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * f_plan F2: a DDL statement is answered with a {@code SCHEMA_CHANGE} result on the connection that
+ * A DDL statement is answered with a {@code SCHEMA_CHANGE} result on the connection that
  * ran it <em>and</em> pushed as a {@code SCHEMA_CHANGE} event to every connection that registered
  * for one. Both, not either - the result is how the client that changed the schema finds out, the
  * event is how everybody else does.

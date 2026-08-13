@@ -32,7 +32,7 @@ import net.jcip.annotations.ThreadSafe;
  * own, from {@code com.datastax.oss.driver.internal.core.protocol}, and every one of them is
  * direction-agnostic: they delegate to a {@link FrameCodec} or a {@link SegmentCodec} and the
  * direction lives in the codec ({@code defaultServer} rather than {@code defaultClient}), not in
- * the handler. That is the same finding b_plan B1 recorded for the legacy pair, checked again for
+ * the handler. That is the same finding already recorded for the legacy pair, checked again for
  * the segment four. The cost of the reuse is a compile-time dependency on driver internals, which
  * a driver bump breaks loudly at {@code compileJava}; {@code FrameRoundTripTest} says so where a
  * reader will meet it.
@@ -63,8 +63,8 @@ final class Framing {
 		this.maxFrameLength = maxFrameLength;
 		this.primitiveCodec = new ByteBufPrimitiveCodec(ByteBufAllocator.DEFAULT);
 		// No compression, so the segment header is three bytes rather than five and a payload
-		// travels as it was written. b_plan B7 refuses compression by name; f_plan F4 leaves it
-		// refused, since it buys nothing on a loopback socket.
+		// travels as it was written. Compression is refused by name and stays refused, since it
+		// buys nothing on a loopback socket.
 		this.frameCodec = FrameCodec.defaultServer(primitiveCodec, Compressor.none());
 		this.segmentCodec = new SegmentCodec<>(primitiveCodec, Compressor.none());
 		this.frameEncoder = new FrameEncoder(frameCodec, maxFrameLength);

@@ -18,8 +18,8 @@ description = "A native-protocol listener that serves an in-memory SeaStar CqlSe
 // transitive is not a contract.
 // java-driver-core is `implementation` in :seastar rather than `api`, so it does not reach this
 // module's compile classpath on its own. It is declared here instead of being promoted there:
-// b_plan's brief is a listener, not a change to what every consumer of the core gets, and a_plan A7
-// asks for the core's published surface to be protected.
+// this module's brief is a listener, not a change to what every consumer of the core gets, and
+// the core's published surface stays protected.
 dependencies {
     implementation(project(":seastar"))
     implementation("org.apache.cassandra:java-driver-core:4.19.3")

@@ -19,7 +19,7 @@ import net.jcip.annotations.NotThreadSafe;
  * version byte is 66. {@code FrameCodec} has codecs for v3 to v6 only, so such a frame does not
  * decode at all and there is no stream to reject politely - the client would get a generic
  * decoding error, never see {@link Protocol#unsupportedVersion(int)}, and give up at its first
- * {@code OPTIONS}. That is precisely the "it just hangs" failure b_plan B4 exists to prevent.
+ * {@code OPTIONS}. That is precisely the "it just hangs" failure this gate exists to prevent.
  *
  * <p>The version is settled once per connection and never changes, so the gate removes itself as
  * soon as it has seen a header it likes. The driver's own {@code FrameDecoder} takes the same

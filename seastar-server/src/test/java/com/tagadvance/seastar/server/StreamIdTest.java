@@ -24,7 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * b_plan B6: the stream id is what lets a client have several requests on one connection at once,
+ * The stream id is what lets a client have several requests on one connection at once,
  * and it is the only thing that says which answer belongs to which.
  *
  * <p>A driver manages stream ids itself and will not put an arbitrary mixture in flight on demand,

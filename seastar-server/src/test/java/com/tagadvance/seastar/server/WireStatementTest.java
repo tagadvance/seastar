@@ -34,7 +34,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * c_plan C1, C4, C5, C6 and C7 driven off the wire: what a client sends, and the message it gets
+ * The statement messages driven off the wire: what a client sends, and the message it gets
  * back, with no {@code CqlSession} in the way.
  *
  * <p>Every expectation about a real node's shape - which statement answers with which message,
@@ -497,7 +497,7 @@ class WireStatementTest {
 		final var rows = assertInstanceOf(Rows.class, send(new Execute(prepared.preparedQueryId,
 			options(List.of(bytes(1)), Map.of(), null))));
 
-		// e_plan E4: the registry holds a core prepared statement rather than a parse result of its
+		// The registry holds a core prepared statement rather than a parse result of its
 		// own, and the core re-resolves the query every time it runs, so there is nothing here to
 		// subscribe to SchemaChanges. A v5 server would also have to change the resultMetadataId; v4
 		// has no such mechanism, and the driver takes what the response describes.

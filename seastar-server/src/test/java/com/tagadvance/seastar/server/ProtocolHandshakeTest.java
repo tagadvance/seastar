@@ -26,7 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * b_plan B3, B4 and B7, driven straight off the wire with the driver's own client codecs, so that
+ * The handshake paths, driven straight off the wire with the driver's own client codecs, so that
  * what is asserted is the bytes rather than an in-process call.
  */
 class ProtocolHandshakeTest {

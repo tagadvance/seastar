@@ -13,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * f_plan_api_contract.txt F6: a bound statement's transport settings (execution profile, node,
+ * A bound statement's transport settings (execution profile, node,
  * routing token, tracing, timeout, paging, page size, consistency) are accepted and stored rather
  * than rejected, even though SeaStar's query engine never consults them - a caller sharing
  * builder/statement configuration code with a real session should not have to special-case SeaStar.
