@@ -23,7 +23,15 @@ final class CassandraContainers {
 	 */
 	private static final DockerImageName IMAGE = DockerImageName.parse("cassandra:5.0.8");
 
-	private static final CassandraContainer CASSANDRA = new CassandraContainer(IMAGE);
+	/**
+	 * The heap is pinned rather than left to the image's default of a quarter of system memory
+	 * (capped at 8g) - a single-node test fixture does not need gigabytes per suite run.
+	 * cassandra-env.sh refuses {@code MAX_HEAP_SIZE} without {@code HEAP_NEWSIZE}, so the two are
+	 * set as a pair.
+	 */
+	private static final CassandraContainer CASSANDRA = new CassandraContainer(IMAGE)
+		.withEnv("MAX_HEAP_SIZE", "1G")
+		.withEnv("HEAP_NEWSIZE", "200M");
 
 	/**
 	 * The driver's default {@code basic.request.timeout} is two seconds, which a containerised node
