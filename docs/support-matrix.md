@@ -32,7 +32,7 @@ in, so a `USING` clause written ahead of `SET` and `WHERE` binds ahead of them.
 
 | Statement | Supported | Notes |
 | --- | --- | --- |
-| `SELECT` | yes | Rows come back in partition-token and clustering order. `ORDER BY`, `LIMIT`, `DISTINCT` and `ALLOW FILTERING` are implemented; the range, `CONTAINS`, `LIKE` and `IS NOT NULL` operators are parsed and rejected. A query that pins the whole partition key walks one partition; anything else is a full scan. `GROUP BY` and `PER PARTITION LIMIT` are rejected. |
+| `SELECT` | yes | Rows come back in partition-token and clustering order. `ORDER BY`, `LIMIT`, `DISTINCT` and `ALLOW FILTERING` are implemented. The range operators are implemented under Cassandra's restriction rules - a column may carry a lower and an upper bound in one query, and a multi-column relation (`(ck1, ck2) > (1, 2)`) compares lexicographically - and so are `CONTAINS` and `CONTAINS KEY`; `LIKE` and `IS NOT NULL` are parsed and rejected. A query that pins the whole partition key walks one partition; anything else is a full scan. `GROUP BY` and `PER PARTITION LIMIT` are rejected. |
 | `SELECT` clause | yes | Column aliases, `count(*)`, `count`, `min`, `max`, `sum`, `avg`, `token`, `writetime`, `ttl`, `cast` and `SELECT JSON`. A cast converts between the numeric types and to text; any other pair is rejected. Element selection (`m['k']`), field selection, slices and arithmetic in the select clause are rejected by name. |
 | `INSERT` | yes | Including `IF NOT EXISTS`, `INSERT ... JSON` with `DEFAULT NULL`/`DEFAULT UNSET`, and `USING TTL`/`USING TIMESTAMP`. Bulk load is O(n^2) in the number of rows. |
 | `UPDATE` | yes | Including `IF` conditions and `USING TTL`/`USING TIMESTAMP`. |

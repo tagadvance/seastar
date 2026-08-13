@@ -190,9 +190,8 @@ round trip.
 
 ## What is not benchmarked
 
-- **Range operators.** `WHERE ck > 1` and `WHERE ck >= 1 AND ck <= 2` are parsed and rejected. This
-  is the one genuine query-engine gap, and the most interesting thing to measure when it lands: a
-  range scan is exactly where the full-scan read path will hurt.
+- **Range operators.** `WHERE ck > 1` and `WHERE ck >= 1 AND ck <= 2` are implemented but not yet
+  measured: a range scan is exactly where the full-scan read path will hurt.
 - **Materialized views** are unsupported by design rather than missing. `KeyspaceMetadata#getViews()`
   is always empty, which is what a cluster answers for a keyspace without views.
 
