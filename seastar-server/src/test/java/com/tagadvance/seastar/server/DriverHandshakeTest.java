@@ -20,6 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 /**
  * The handshake as a real driver sees it - no wire client, no mock, an actual {@link CqlSession}
@@ -34,6 +35,10 @@ import org.junit.jupiter.api.Test;
  * <p>{@link DriverSessionTest} is where the session then does some work.
  */
 @NullMarked
+// Isolated because these sessions are deliberately stock - default connect and request budgets -
+// and the stock contract is about the driver, not about surviving a machine saturated by the
+// concurrently running classes.
+@Isolated
 class DriverHandshakeTest {
 
 	private SeaStarCqlSession session;

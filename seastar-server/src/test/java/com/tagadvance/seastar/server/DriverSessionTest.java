@@ -26,6 +26,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 /**
  * The whole of the wire path, exercised the way a harness will: an ordinary {@link CqlSession}
@@ -38,6 +39,10 @@ import org.junit.jupiter.api.Test;
  * there is another page to ask for. None of that was covered before.
  */
 @NullMarked
+// Isolated because these sessions are deliberately stock - default connect and request budgets -
+// and the stock contract is about the driver, not about surviving a machine saturated by the
+// concurrently running classes.
+@Isolated
 class DriverSessionTest {
 
 	private static final String KEYSPACE = "CREATE KEYSPACE harness WITH replication = "

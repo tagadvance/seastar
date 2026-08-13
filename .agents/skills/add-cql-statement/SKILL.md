@@ -30,15 +30,15 @@ For `javap` on a type: the classes are in the `cassandra-all` sources/binary jar
 
 ## 2. Determine real Cassandra failure behavior
 
-For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to `AbstractCqlSessionTest` (`seastar/src/testFixtures`, so every backend runs it) asserting the behavior, then run it against the real server:
+For every way the query can fail (missing keyspace, missing table, already exists, invalid column, ...), find the driver exception type Cassandra actually throws. Add a test to the matching fidelity group - `AbstractSchemaFidelityTest`, `AbstractCrudFidelityTest`, ... in `seastar/src/testFixtures`, so every backend runs it - asserting the behavior, then run that group against the real server (the example assumes the Schema group):
 
 ```bash
-./gradlew :seastar:containerTest --tests 'com.tagadvance.seastar.ContainerCqlSessionTest'
+./gradlew :seastar:containerTest --tests 'com.tagadvance.seastar.ContainerSchemaFidelityTest'
 ```
 
-Note both halves of that command. The container backend is on the `containerTest` task, not `test`, which excludes it - and the suite is ordered and stateful, so a **single-method** filter fails with *keyspace foo does not exist* instead of running your test. Filter to the class.
+Note both halves of that command. The container backend is on the `containerTest` task, not `test`, which excludes it - and a group is ordered and stateful, so a **single-method** filter fails instead of running your test. Filter to the class.
 
-`ContainerCqlSessionTest` needs Docker (Testcontainers). Note the exception **type** (`AlreadyExistsException`, `InvalidQueryException`, `InvalidQueryException` subtypes, ...) and roughly the message. Existing handlers show the pattern: construct with `executionInfo.getCoordinator()`.
+The container backend needs Docker (Testcontainers). Note the exception **type** (`AlreadyExistsException`, `InvalidQueryException`, `InvalidQueryException` subtypes, ...) and roughly the message. Existing handlers show the pattern: construct with `executionInfo.getCoordinator()`.
 
 ## 3. Write the handler
 
@@ -74,13 +74,13 @@ An index statement reports the **table** it indexes, not the index. Miss this st
 Run the fast SeaStar test, which must now pass with the same assertions the container test passed:
 
 ```bash
-./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'
+./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarSchemaFidelityTest'
 ```
 
-`SeaStarCqlSessionTest`, `ContainerCqlSessionTest` and `:seastar-server`'s `WireCqlSessionTest` all extend `AbstractCqlSessionTest`, so one test method runs in process, against real Cassandra, and over a socket. Green on all three = parity achieved. The wire backend needs no Docker and is on the default build:
+Every fidelity group has a `SeaStar*`, `Container*` and `:seastar-server` `Wire*` backend class, so one test method runs in process, against real Cassandra, and over a socket. Green on all three = parity achieved. The wire backend needs no Docker and is on the default build:
 
 ```bash
-./gradlew :seastar-server:test --tests 'com.tagadvance.seastar.server.WireCqlSessionTest'
+./gradlew :seastar-server:test --tests 'com.tagadvance.seastar.server.WireSchemaFidelityTest'
 ```
 
 ## 7. Update the matrix

@@ -5,20 +5,16 @@ import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
 import java.net.InetSocketAddress;
 import java.time.Duration;
-import org.junit.jupiter.api.Tag;
 import org.testcontainers.cassandra.CassandraContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Runs the shared fidelity suite against a real Cassandra node. Excluded from the default
- * {@code test} task; run it with {@code ./gradlew :seastar:containerTest}. Skipped rather than failed
- * when no Docker daemon is reachable.
+ * The one Cassandra node every {@code Container*FidelityTest} class runs against. One container
+ * rather than one per class, because a node takes tens of seconds to boot and the fidelity groups
+ * write to disjoint keyspaces precisely so they can share one - concurrently included. Started on
+ * first use and never stopped; Testcontainers' resource reaper removes it when the JVM exits.
  */
-@Tag("container")
-@Testcontainers(disabledWithoutDocker = true)
-class ContainerCqlSessionTest extends AbstractCqlSessionTest {
+final class CassandraContainers {
 
 	private static final int PORT = 9042;
 
@@ -27,8 +23,7 @@ class ContainerCqlSessionTest extends AbstractCqlSessionTest {
 	 */
 	private static final DockerImageName IMAGE = DockerImageName.parse("cassandra:5.0.8");
 
-	@Container
-	private static final CassandraContainer cassandra = new CassandraContainer(IMAGE);
+	private static final CassandraContainer CASSANDRA = new CassandraContainer(IMAGE);
 
 	/**
 	 * The driver's default {@code basic.request.timeout} is two seconds, which a containerised node
@@ -44,12 +39,21 @@ class ContainerCqlSessionTest extends AbstractCqlSessionTest {
 			Duration.ofSeconds(30))
 		.build();
 
-	@Override
-	protected CqlSession createInstance() {
+	private CassandraContainers() {
+		// hidden constructor
+	}
+
+	static CqlSession newSession() {
+		synchronized (CASSANDRA) {
+			if (!CASSANDRA.isRunning()) {
+				CASSANDRA.start();
+			}
+		}
+
 		return CqlSession.builder()
 			.addContactPoint(
-				new InetSocketAddress(cassandra.getHost(), cassandra.getMappedPort(PORT)))
-			.withLocalDatacenter(cassandra.getLocalDatacenter())
+				new InetSocketAddress(CASSANDRA.getHost(), CASSANDRA.getMappedPort(PORT)))
+			.withLocalDatacenter(CASSANDRA.getLocalDatacenter())
 			.withConfigLoader(CONFIG)
 			.build();
 	}

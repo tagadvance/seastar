@@ -10,23 +10,23 @@ Requires JDK 17 (configured via Gradle toolchain; foojay resolver auto-downloads
 
 ### Testing strategy
 
-`AbstractCqlSessionTest` is how the fidelity goal is measured: one suite, run twice against the same `CqlSession` API, once on a real Cassandra (`ContainerCqlSessionTest`, TestContainers) and once on SeaStar (`SeaStarCqlSessionTest`). Any behavioral divergence surfaces as a failure in one subclass but not the other.
+The fidelity suite is how the fidelity goal is measured: one set of expectations, run against every backend through the same `CqlSession` API. It is split into groups — `AbstractSchemaFidelityTest`, `AbstractCrudFidelityTest`, `AbstractQueryFidelityTest` and so on, all extending `AbstractFidelityTest` — and each backend extends every group once: `SeaStar*FidelityTest` in process, `Container*FidelityTest` against a real Cassandra (TestContainers, one shared node via `CassandraContainers`), and `:seastar-server`'s `Wire*FidelityTest` over a socket. Any behavioral divergence surfaces as a failure in one backend's class and not another's.
 
-It lives in `seastar/src/testFixtures` rather than `src/test`, so a backend in another module can extend it. The fixture is for this build only — the test-fixtures variants are skipped in the publishing block. `ContainerCqlSessionTest` stays in `src/test`: it is a backend, not the suite.
+The abstract groups live in `seastar/src/testFixtures` rather than `src/test`, so a backend in another module can extend them. The fixture is for this build only — the test-fixtures variants are skipped in the publishing block. The concrete backend classes stay in each module's `src/test`: they are backends, not the suite.
 
-So when adding or changing behavior, put the coverage in `AbstractCqlSessionTest` first, expressed only through the public driver API so both subclasses can run it. Add unit tests when appropriate, for what that suite cannot reach (internals, or error paths a live cluster will not produce), not as a substitute for it.
+So when adding or changing behavior, put the coverage in the matching fidelity group first, expressed only through the public driver API so every backend can run it. Each group owns its own keyspaces — no two groups share one — which is what lets a backend's classes run concurrently (`junit-platform.properties`; the wire module is kept serial for now, see the comment there). Add unit tests when appropriate, for what that suite cannot reach (internals, or error paths a live cluster will not produce), not as a substitute for it.
 
-**One method of that suite cannot be run on its own.** It is `@TestInstance(PER_CLASS)` and ordered, and it reads like a session transcript - a later test selects a keyspace an earlier one created - so `--tests '...SeaStarCqlSessionTest.testSimpleSelect'` fails with *keyspace foo does not exist* rather than telling you anything. Filter to the class. A single-method filter is for the ordinary unit tests.
+**One method of a group cannot be run on its own.** A group is `@TestInstance(PER_CLASS)` and ordered, and it reads like a session transcript - a later test can rely on rows an earlier one wrote - so `--tests '...SeaStarCrudFidelityTest.testSelectProjection'` fails rather than telling you anything. Filter to the class. A single-method filter is for the ordinary unit tests.
 
 ```bash
 ./gradlew build                          # compile + test; no Docker required
 ./gradlew :seastar:test                  # run all tests except the container suite
-./gradlew :seastar:containerTest         # run ContainerCqlSessionTest; needs Docker, skips without it
-./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCqlSessionTest'          # single class
+./gradlew :seastar:containerTest         # run Container*FidelityTest; needs Docker, skips without it
+./gradlew :seastar:test --tests 'com.tagadvance.seastar.SeaStarCrudFidelityTest'        # single class
 ./gradlew :seastar:test --tests 'com.tagadvance.seastar.SystemSchemaTest.testKeyspaces' # single method
-./gradlew :seastar:containerTest --tests 'com.tagadvance.seastar.ContainerCqlSessionTest'
-    # the container backend on its own; note the task, since `test` excludes the container tag and
-    # a --tests filter naming that class against `test` fails with "No tests found"
+./gradlew :seastar:containerTest --tests 'com.tagadvance.seastar.ContainerCrudFidelityTest'
+    # one container backend class on its own; note the task, since `test` excludes the container tag
+    # and a --tests filter naming that class against `test` fails with "No tests found"
 ./gradlew publishToMavenLocal            # publish both artifacts locally
 ./gradlew :seastar:inspectRaw -Pquery="CREATE KEYSPACE foo WITH replication = {...}"
     # parses the CQL string with cassandra-all's own parser and prints its CQLStatement.Raw
@@ -332,7 +332,7 @@ atomic. `VolatileRow#statics` caches the result in a single `volatile` field for
 readers racing get the same `Cells` back, so the race is benign.
 
 `ConcurrencyTest` is the regression test for all of this. It is a unit test, not part of
-`AbstractCqlSessionTest`, because a live cluster cannot reach SeaStar's own locks. Everything in it
+the fidelity suite, because a live cluster cannot reach SeaStar's own locks. Everything in it
 is time-bounded and fails on a latch: a hung Gradle test worker is far worse than a red test.
 
 ### Row storage and the partition index

@@ -30,7 +30,7 @@ import org.jspecify.annotations.NonNull;
  * {@code rs.iterator()} and {@code rs.currentPage()} return every row, and
  * {@code ResultSet#getAvailableWithoutFetching()} equals the total. What is <em>not</em> reproduced
  * is code that asserts on the page boundary itself - the number of pages, a page size being
- * respected, or {@code fetchNextPage()} returning something. {@code AbstractCqlSessionTest} pins the
+ * respected, or {@code fetchNextPage()} returning something. {@code AbstractCellFidelityTest} pins the
  * idioms on both backends.
  *
  * <p>Not safe for concurrent use: {@link #currentPage()} and {@code rs.iterator()} share one

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
@@ -22,12 +21,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-class SeaStarCqlSessionTest extends AbstractCqlSessionTest {
-
-	@Override
-	protected CqlSession createInstance() {
-		return SeaStarCqlSession.builder().build();
-	}
+class SeaStarCqlSessionTest {
 
 	@Test
 	@DisplayName("A TypeChangeEvent evicts cached prepared statements referencing the changed UDT")

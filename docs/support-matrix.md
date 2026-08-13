@@ -5,7 +5,8 @@ category: a statement is either handled or it fails with a driver exception that
 SeaStar does not implement, so "SeaStar is broken" and "SeaStar does not do that" are never the same
 answer.
 
-Verified against `cassandra:5.0.8`. `AbstractCqlSessionTest` runs the same assertions three ways -
+Verified against `cassandra:5.0.8`. The fidelity suite - the `Abstract*FidelityTest` groups under
+`seastar/src/testFixtures` - runs the same assertions three ways -
 against SeaStar in process, against a real node in a container, and against SeaStar over a socket
 through `seastar-server` - so anything marked **yes** below agrees with a cluster on the cases that
 suite covers, and agrees with itself across the wire.
@@ -208,7 +209,7 @@ implementation does when there is no next page. Every client idiom still termina
 row: `while (rs.hasMorePages())` runs zero times, `rs.all()`, `rs.iterator()` and `rs.currentPage()`
 return the lot. What is not reproduced is code that asserts on the page boundary itself - a page
 count, a page size being respected, or `fetchNextPage()` returning something.
-`AbstractCqlSessionTest` pins the idioms on both backends.
+`AbstractCellFidelityTest` pins the idioms on every backend.
 
 Over the wire (`seastar-server`) this is protocol-legal rather than a divergence - a node is always
 free to return everything, and result metadata with no paging state is what says "last page", so a

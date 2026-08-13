@@ -22,10 +22,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 /**
  * b_plan B2: every request is answered on one thread that is not a Netty event loop.
+ *
+ * <p>Isolated because {@code testOneFunnelPerServer} diffs the JVM-wide set of funnel threads
+ * around starting its own server; a concurrently starting server adds a funnel of its own to the
+ * diff.
  */
+@Isolated
 class RequestFunnelTest {
 
 	private SeaStarCqlSession session;
