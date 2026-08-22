@@ -14,6 +14,19 @@ wherever your code already takes a `CqlSession`.
    [Benchmarks](#benchmarks) below.
 3. All code is thread-safe unless a class is explicitly documented otherwise.
 
+## Built with AI assistance
+
+AI is a contentious issue that elicits strong emotions, both positive and negative. I,
+[@tagadvance](https://github.com/tagadvance), built the initial scaffolding and fidelity test suite
+by hand. Every commit since [6115072](https://github.com/tagadvance/seastar/commit/6115072) was
+written with help from [Claude](https://claude.com/claude-code), usually Opus 5 or Fable, and
+occasionally reviewed by [Gemini](https://gemini.google.com/).
+
+Here's the thing: if I take my truck to a mechanic and find out they're using wrenches instead of
+an impact to tear down my engine, I'm going to be a little upset — especially if they're charging
+by the hour. AI is a tool like any other, and this library probably never would have been released
+without Claude doing most of the grunt work implementing handlers for all the various query types.
+
 ## Install
 
 The current release is `1.0.0-alpha`, on Maven Central.
