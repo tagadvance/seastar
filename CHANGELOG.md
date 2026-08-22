@@ -8,6 +8,14 @@ called out explicitly.
 
 ### Fixed
 
+- `seastar-server` could corrupt a v5 connection right after the handshake: the `READY` write and
+  the switch to segment framing reached the event loop as two separately enqueued tasks, so a
+  client acting on the `READY` quickly could land its first segment while the pipeline was still
+  legacy-framed. The driver surfaces that as `ClosedConnectionException` during protocol
+  initialization step 3 - and then `AllNodesFailedException` - and a raw client as a CRC mismatch.
+  Rare on an idle machine, common on a loaded one; it is what made CI's wire suite flaky. The write
+  and the switch are now one event-loop task, which no read can interleave.
+
 - Every implementation of the driver's by-name data interfaces now overrides `allIndicesOf`, which
   the driver's named getters and setters call on every by-name access. The inherited
   backward-compatibility default logged a warning per call - hundreds of

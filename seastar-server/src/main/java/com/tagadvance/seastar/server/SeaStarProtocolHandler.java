@@ -156,13 +156,20 @@ final class SeaStarProtocolHandler extends SimpleChannelInboundHandler<Frame> {
 			log.warn("failed to answer {}", request.message, e);
 			response = new Error(ProtocolConstants.ErrorCode.SERVER_ERROR, String.valueOf(e));
 		}
-		Protocol.write(ctx, request.protocolVersion, request.streamId, response);
 		if (startsSegmentFraming(request, response)) {
-			// Not on the write's future, and not from here: both tasks are submitted to the channel's
-			// event loop from the funnel, in this order, so the READY is encoded in the legacy format
-			// before the pipeline changes underneath it. A future's listener could run inline on this
-			// thread instead, which would rearrange the pipeline from off the event loop.
-			ctx.channel().eventLoop().execute(() -> framing.segmented(ctx.pipeline()));
+			// One event-loop task carrying both the write and the switch. Enqueued separately from
+			// here, the two leave a window: the loop flushes the READY, the client's first segment
+			// arrives over loopback and is read through the still-legacy decoder - all before this
+			// thread gets to enqueue the switch. On the event loop the READY is encoded inline, in
+			// the legacy format, and the pipeline is segmented before the task yields back to I/O,
+			// so no read can come between the two.
+			final var ready = response;
+			ctx.channel().eventLoop().execute(() -> {
+				Protocol.write(ctx, request.protocolVersion, request.streamId, ready);
+				framing.segmented(ctx.pipeline());
+			});
+		} else {
+			Protocol.write(ctx, request.protocolVersion, request.streamId, response);
 		}
 	}
 

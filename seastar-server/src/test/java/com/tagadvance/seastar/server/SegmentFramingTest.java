@@ -95,6 +95,24 @@ class SegmentFramingTest {
 	}
 
 	@Test
+	@DisplayName("the switch to segments holds on every connection, not only an unloaded one")
+	void testTheSwitchHoldsUnderRepetition() throws IOException {
+		// The switch used to reach the event loop as two tasks - write the READY, then rearrange
+		// the pipeline - enqueued separately from the funnel. A client that acts on the READY
+		// quickly can land its first segment between the two, to be read by the legacy decoder
+		// and answered through the legacy encoder, which the far side reads as a CRC mismatch.
+		// One connection rarely hits the window; a run of them on a busy machine is how CI did.
+		for (int i = 0; i < 100; i++) {
+			try (final var client = connect()) {
+				final var response = client.send(V5, 1,
+					new Query("SELECT cluster_name FROM system.local"));
+
+				assertInstanceOf(Rows.class, response.message);
+			}
+		}
+	}
+
+	@Test
 	@DisplayName("a v4 connection never switches, and stays legacy-framed for its whole life")
 	void testV4StaysLegacy() throws IOException {
 		try (final var client = new WireClient(server.port())) {
