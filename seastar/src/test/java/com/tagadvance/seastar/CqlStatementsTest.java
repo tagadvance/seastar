@@ -63,4 +63,31 @@ class CqlStatementsTest {
 		assertEquals(List.of("SELECT 1"), CqlStatements.split("SELECT 1"));
 	}
 
+	@Test
+	@DisplayName("Ignores everything inside a $$-quoted body, as a function dump writes one")
+	void testDollarQuotedBody() {
+		final var cql = "CREATE FUNCTION f(a int) RETURNS NULL ON NULL INPUT RETURNS int "
+			+ "LANGUAGE java AS $$ return a; -- not a comment; 'not a string'; /* still body */ $$;"
+			+ "SELECT 1;";
+		assertEquals(List.of(
+				"CREATE FUNCTION f(a int) RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE java "
+					+ "AS $$ return a; -- not a comment; 'not a string'; /* still body */ $$",
+				"SELECT 1"),
+			CqlStatements.split(cql));
+	}
+
+	@Test
+	@DisplayName("An unterminated $$ body runs to the end of the script")
+	void testUnterminatedDollarQuotedBody() {
+		assertEquals(List.of("CREATE FUNCTION f AS $$ return 1;"),
+			CqlStatements.split("CREATE FUNCTION f AS $$ return 1;"));
+	}
+
+	@Test
+	@DisplayName("A lone $ is an ordinary character")
+	void testLoneDollar() {
+		assertEquals(List.of("INSERT INTO t (v) VALUES ('$5')", "SELECT 1"),
+			CqlStatements.split("INSERT INTO t (v) VALUES ('$5'); SELECT 1;"));
+	}
+
 }

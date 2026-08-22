@@ -6,6 +6,12 @@ called out explicitly.
 
 ## [Unreleased]
 
+### Added
+
+- The schema splitter behind `withSchema`/`withSchemaFile`/`withSchemaResource` understands
+  `$$`-quoted bodies, so a `DESCRIBE` dump containing a function body with semicolons in it splits
+  correctly.
+
 ### Changed
 
 - `close()` keeps the keyspaces, so `getMetadata()` stays readable after close - matching the real

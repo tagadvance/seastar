@@ -8,10 +8,11 @@ import org.jspecify.annotations.NonNull;
 
 /**
  * Splits a CQL script into its individual statements on top-level semicolons, ignoring semicolons
- * that appear inside single-quoted strings, double-quoted identifiers, line comments
- * ({@code --} or {@code //}) and block comments ({@code /* ... *}{@code /}). Comments are replaced
- * with a single space so adjacent tokens do not merge; leading and trailing whitespace is trimmed
- * from each statement and empty statements are dropped.
+ * that appear inside single-quoted strings, double-quoted identifiers, {@code $$}-quoted bodies
+ * (the form a {@code DESCRIBE} dump writes a function body in), line comments ({@code --} or
+ * {@code //}) and block comments ({@code /* ... *}{@code /}). Comments are replaced with a single
+ * space so adjacent tokens do not merge; leading and trailing whitespace is trimmed from each
+ * statement and empty statements are dropped.
  */
 final class CqlStatements {
 
@@ -43,6 +44,13 @@ final class CqlStatements {
 						i = consumeLineComment(cql, i, current);
 					} else if (i + 1 < length && cql.charAt(i + 1) == '*') {
 						i = consumeBlockComment(cql, i, current);
+					} else {
+						current.append(c);
+					}
+				}
+				case '$' -> {
+					if (i + 1 < length && cql.charAt(i + 1) == '$') {
+						i = consumeDollarQuoted(cql, i, current);
 					} else {
 						current.append(c);
 					}
@@ -90,6 +98,25 @@ final class CqlStatements {
 		}
 
 		return cql.length() - 1;
+	}
+
+	/**
+	 * Consumes a {@code $$ ... $$} run starting at the first {@code $}. CQL has no tagged variant
+	 * ({@code $tag$}), so the body runs to the next {@code $$} and nothing inside it - quotes,
+	 * comments, semicolons - is interpreted. Returns the index of the closing run's last character;
+	 * an unterminated body consumes the rest.
+	 */
+	private static int consumeDollarQuoted(final String cql, final int i,
+		final StringBuilder current) {
+		final int end = cql.indexOf("$$", i + 2);
+		if (end < 0) {
+			current.append(cql, i, cql.length());
+
+			return cql.length() - 1;
+		}
+		current.append(cql, i, end + 2);
+
+		return end + 1;
 	}
 
 	private static int consumeLineComment(final String cql, final int i,
