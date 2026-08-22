@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.servererrors.UnauthorizedException;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import java.util.List;
 import java.util.concurrent.CompletionException;
@@ -249,6 +250,18 @@ public abstract class AbstractSessionFidelityTest extends AbstractFidelityTest {
 		final var query = "SELECT v FROM ids WHERE id = ?";
 
 		assertEquals(md5(keyspace.asInternal() + query), hex(session.prepare(query).getId()));
+	}
+
+	@Test
+	@Order(248)
+	@DisplayName("Auth statements are refused with UnauthorizedException, as on a node without auth")
+	void testAuthStatementsUnauthorized() {
+		// Type only: a default node's wording ("You have to be logged in...") is its own, and so
+		// is SeaStar's. The message assertions live in SeaStarCqlSessionTest.
+		Stream.of("CREATE ROLE r", "DROP ROLE r", "GRANT SELECT ON KEYSPACE sess TO r",
+				"REVOKE SELECT ON KEYSPACE sess FROM r", "LIST ROLES", "LIST ALL PERMISSIONS")
+			.forEach(cql -> assertThrows(UnauthorizedException.class, () -> session.execute(cql),
+				cql));
 	}
 
 }

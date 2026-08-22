@@ -6,6 +6,13 @@ called out explicitly.
 
 ## [Unreleased]
 
+### Changed
+
+- The auth statements (`CREATE`/`ALTER`/`DROP ROLE`, `GRANT`, `REVOKE`, `LIST ROLES`,
+  `LIST PERMISSIONS`) are refused with `UnauthorizedException` rather than
+  `InvalidQueryException`, matching what a default Cassandra node answers; verified against the
+  container. The message is still SeaStar's own.
+
 ### Fixed
 
 - `seastar-server` could corrupt a v5 connection right after the handshake: the `READY` write and

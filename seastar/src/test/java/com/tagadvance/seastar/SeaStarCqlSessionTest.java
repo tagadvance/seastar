@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.servererrors.UnauthorizedException;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
 import com.datastax.oss.driver.internal.core.context.InternalDriverContext;
 import com.datastax.oss.driver.internal.core.cql.DefaultPrepareRequest;
@@ -17,6 +18,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -181,18 +183,29 @@ class SeaStarCqlSessionTest {
 				Map.entry("CREATE TRIGGER trg ON foo.t USING 'org.example.Trigger'", "triggers"),
 				Map.entry("DROP TRIGGER trg ON foo.t", "triggers"),
 				Map.entry("DESCRIBE TABLE foo.t", "DESCRIBE"),
-				Map.entry("DESCRIBE KEYSPACES", "DESCRIBE"),
-				Map.entry("CREATE ROLE r", "roles and permissions"),
-				Map.entry("DROP ROLE r", "roles and permissions"),
-				Map.entry("GRANT SELECT ON KEYSPACE foo TO r", "roles and permissions"),
-				Map.entry("REVOKE SELECT ON KEYSPACE foo FROM r", "roles and permissions"),
-				Map.entry("LIST ROLES", "roles and permissions"),
-				Map.entry("LIST ALL PERMISSIONS", "roles and permissions"))
+				Map.entry("DESCRIBE KEYSPACES", "DESCRIBE"))
 				.forEach((cql, feature) -> {
 					final var thrown = assertThrows(InvalidQueryException.class,
 						() -> session.execute(cql), cql);
 					assertTrue(thrown.getMessage().contains(feature),
 						"%s should name %s but said: %s".formatted(cql, feature,
+							thrown.getMessage()));
+					assertTrue(thrown.getMessage().contains(cql),
+						"%s should quote the query but said: %s".formatted(cql,
+							thrown.getMessage()));
+					assertNotNull(thrown.getExecutionInfo(),
+						"%s should carry execution info".formatted(cql));
+				});
+
+			// The auth statements are UnauthorizedException rather than InvalidQueryException,
+			// matching a default node; see UnsupportedStatements.
+			List.of("CREATE ROLE r", "DROP ROLE r", "GRANT SELECT ON KEYSPACE foo TO r",
+					"REVOKE SELECT ON KEYSPACE foo FROM r", "LIST ROLES", "LIST ALL PERMISSIONS")
+				.forEach(cql -> {
+					final var thrown = assertThrows(UnauthorizedException.class,
+						() -> session.execute(cql), cql);
+					assertTrue(thrown.getMessage().contains("roles and permissions"),
+						"%s should name roles and permissions but said: %s".formatted(cql,
 							thrown.getMessage()));
 					assertTrue(thrown.getMessage().contains(cql),
 						"%s should quote the query but said: %s".formatted(cql,

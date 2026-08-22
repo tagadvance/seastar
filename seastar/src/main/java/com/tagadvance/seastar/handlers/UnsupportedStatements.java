@@ -3,7 +3,9 @@ package com.tagadvance.seastar.handlers;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.core.servererrors.CoordinatorException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import com.datastax.oss.driver.api.core.servererrors.UnauthorizedException;
 import com.datastax.oss.driver.api.core.session.Request;
 import java.util.Locale;
 import java.util.Map;
@@ -33,12 +35,14 @@ import org.jspecify.annotations.Nullable;
  * cassandra-all upgrade that adds a statement type would hit; deriving the name keeps the internal
  * class out of the message either way.
  *
- * <p>The exception type is {@link InvalidQueryException} for all of them, which is what a live
- * cluster answers when a feature is switched off rather than missing - {@code CREATE MATERIALIZED
- * VIEW} on a default 5.0 node gives {@code Materialized views are disabled. Enable in cassandra.yaml
- * to use.} and {@code CREATE FUNCTION} gives {@code User-defined functions are disabled in
- * cassandra.yaml}, both {@code InvalidQueryException}. SeaStar's reason differs - the feature is not
- * built rather than turned off - so the message says so and the type matches.
+ * <p>The exception type is {@link InvalidQueryException} for nearly all of them, which is what a
+ * live cluster answers when a feature is switched off rather than missing - {@code CREATE
+ * MATERIALIZED VIEW} on a default 5.0 node gives {@code Materialized views are disabled. Enable in
+ * cassandra.yaml to use.} and {@code CREATE FUNCTION} gives {@code User-defined functions are
+ * disabled in cassandra.yaml}, both {@code InvalidQueryException}. SeaStar's reason differs - the
+ * feature is not built rather than turned off - so the message says so and the type matches. The
+ * auth statements are the exception: a default node - which also has no auth configured - answers
+ * those with {@link UnauthorizedException}, so SeaStar does too.
  */
 final class UnsupportedStatements {
 
@@ -69,14 +73,19 @@ final class UnsupportedStatements {
 	/**
 	 * The failure for a statement no handler claimed.
 	 */
-	static InvalidQueryException failure(final ExecutionInfo executionInfo,
+	static CoordinatorException failure(final ExecutionInfo executionInfo,
 		final CQLStatement.Raw raw) {
 		final var feature = feature(raw);
 		final var query = queryOf(executionInfo.getRequest());
 		final var message = query == null ? "SeaStar does not support %s".formatted(feature)
 			: "SeaStar does not support %s. The statement was: %s".formatted(feature, query);
 
-		return new InvalidQueryException(executionInfo.getCoordinator(), message);
+		return isAuth(raw) ? new UnauthorizedException(executionInfo.getCoordinator(), message)
+			: new InvalidQueryException(executionInfo.getCoordinator(), message);
+	}
+
+	private static boolean isAuth(final CQLStatement.Raw raw) {
+		return raw instanceof AuthenticationStatement || raw instanceof AuthorizationStatement;
 	}
 
 	private static String feature(final CQLStatement.Raw raw) {

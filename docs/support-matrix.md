@@ -65,7 +65,8 @@ in, so a `USING` clause written ahead of `SET` and `WHERE` binds ahead of them.
 
 ## Not implemented
 
-Each of these fails with `InvalidQueryException` whose message names the feature and quotes the
+Each of these fails with `InvalidQueryException` (the auth statements with `UnauthorizedException`
+- see their row) whose message names the feature and quotes the
 query. `SeaStarCqlSessionTest` pins that behavior; it cannot go in the shared suite, because a real
 node runs most of them.
 
@@ -80,7 +81,7 @@ in cassandra.yaml*, both `InvalidQueryException`. SeaStar's reason differs, so t
 | `CREATE`/`DROP FUNCTION` | A user-defined function needs a script engine to run its body. `KeyspaceMetadata#getFunctions()` is always empty. |
 | `CREATE`/`DROP AGGREGATE` | Rests on user-defined functions. `KeyspaceMetadata#getAggregates()` is always empty. |
 | `CREATE`/`DROP TRIGGER` | A trigger loads a class by name and runs it inside the server. |
-| `CREATE`/`ALTER`/`DROP ROLE`, `GRANT`, `REVOKE`, `LIST ROLES`, `LIST PERMISSIONS`, identity statements | SeaStar has no authentication or authorization model, so there is nothing for a permission to restrict. Note that a default Cassandra node - which also has no auth configured - answers these with `UnauthorizedException` rather than `InvalidQueryException`. |
+| `CREATE`/`ALTER`/`DROP ROLE`, `GRANT`, `REVOKE`, `LIST ROLES`, `LIST PERMISSIONS`, identity statements | SeaStar has no authentication or authorization model, so there is nothing for a permission to restrict. These answer `UnauthorizedException` rather than `InvalidQueryException`, because that is what a default Cassandra node - which also has no auth configured - answers; the message is SeaStar's own. |
 | `DESCRIBE ...` | Not a scope decision but a parse-tree one: `DescribeStatement` tells `DESCRIBE KEYSPACES` from `DESCRIBE TABLES` only by which anonymous inner class it is, and `DESCRIBE TABLE` only by the identity of an opaque lambda field. There is no honest way to read the variant back out, and keying off `$1` versus `$2` would break silently on any cassandra-all upgrade. `TableMetadata#describe()` works, so the same text is reachable through the metadata API. |
 
 ## Cells: write time, TTL and static columns

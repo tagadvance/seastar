@@ -3,6 +3,7 @@ package com.tagadvance.seastar.server;
 import com.datastax.oss.driver.api.core.servererrors.AlreadyExistsException;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.servererrors.SyntaxError;
+import com.datastax.oss.driver.api.core.servererrors.UnauthorizedException;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
 import com.datastax.oss.protocol.internal.response.Error;
 import com.datastax.oss.protocol.internal.response.error.AlreadyExists;
@@ -54,6 +55,9 @@ final class Failures {
 		}
 		if (cause instanceof InvalidQueryException) {
 			return new Error(ProtocolConstants.ErrorCode.INVALID, message);
+		}
+		if (cause instanceof UnauthorizedException) {
+			return new Error(ProtocolConstants.ErrorCode.UNAUTHORIZED, message);
 		}
 		// The support matrix's "deliberately unimplemented" travels this way. A live node reports a
 		// feature it has switched off as INVALID, so a feature SeaStar has not built reports the same.
