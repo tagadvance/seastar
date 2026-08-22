@@ -336,4 +336,18 @@ public abstract class AbstractPreparedFidelityTest extends AbstractFidelityTest 
 		assertEquals(id, prepared.getResultMetadataId());
 	}
 
+	@Test
+	@Order(243)
+	@DisplayName("A bound statement answers allIndicesOf and rejects an unknown variable")
+	void testBoundStatementAllIndicesOf() {
+		createMetaTable("people");
+		final var bound = session.prepare("SELECT * FROM meta.people WHERE id = ?").bind(ANN_ID);
+
+		assertEquals(List.of(0), bound.allIndicesOf("id"));
+		assertEquals(List.of(0), bound.allIndicesOf(CqlIdentifier.fromCql("id")));
+		assertThrows(IllegalArgumentException.class, () -> bound.allIndicesOf("nope"));
+		assertThrows(IllegalArgumentException.class,
+			() -> bound.allIndicesOf(CqlIdentifier.fromCql("nope")));
+	}
+
 }

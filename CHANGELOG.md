@@ -4,6 +4,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). SeaStar
 any release may still change the public API; from `1.0.0` onward this file is where that gets
 called out explicitly.
 
+## [Unreleased]
+
+### Fixed
+
+- Every implementation of the driver's by-name data interfaces now overrides `allIndicesOf`, which
+  the driver's named getters and setters call on every by-name access. The inherited
+  backward-compatibility default logged a warning per call - hundreds of
+  "`SeaStarBoundStatement` should override `allIndicesOf(String)`" lines in a real workload - and,
+  for a missing column on a row, returned `[-1]` instead of failing with the
+  `IllegalArgumentException` a real node's driver raises.
+
 ## [1.0.0-alpha] - 2026-08-12
 
 Initial alpha release. Public API: `SeaStarCqlSession` (via `.builder()...build()`),

@@ -88,6 +88,24 @@ class VolatileUdtValue implements SeaStarUdtValue {
 			.orElse(-1));
 	}
 
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull String name) {
+		return allIndicesOf(CqlIdentifier.fromCql(name));
+	}
+
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		// Field names are unique within a type, so the first occurrence is the only one.
+		final var index = firstIndexOf(id);
+		if (index == -1) {
+			throw new IllegalArgumentException("%s is not a field in this UDT".formatted(id));
+		}
+
+		return List.of(index);
+	}
+
 	/**
 	 * The entries, copied out under the read lock so that the encoding and comparison the callers go
 	 * on to do happen with no lock held. Encoding asks the type for its attachment point, which takes

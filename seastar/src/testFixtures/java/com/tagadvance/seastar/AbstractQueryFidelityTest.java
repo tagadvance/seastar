@@ -534,4 +534,21 @@ public abstract class AbstractQueryFidelityTest extends AbstractFidelityTest {
 		assertInvalid("SELECT id FROM query.ordering WHERE l > [1] ALLOW FILTERING", "l");
 	}
 
+	@Test
+	@Order(244)
+	@DisplayName("A row answers allIndicesOf and rejects an unknown column")
+	void testRowAllIndicesOf() {
+		session.execute("CREATE TABLE IF NOT EXISTS query.indices (id int PRIMARY KEY, name text)");
+		session.execute("INSERT INTO query.indices (id, name) VALUES (1, 'a')");
+
+		final var result = session.execute("SELECT id, name FROM query.indices WHERE id = 1");
+		// The column definitions answer an unknown name with an empty list; the row throws.
+		assertEquals(List.of(1), result.getColumnDefinitions().allIndicesOf("name"));
+		assertEquals(List.of(), result.getColumnDefinitions().allIndicesOf("nope"));
+
+		final var row = result.one();
+		assertEquals(List.of(0), row.allIndicesOf("id"));
+		assertThrows(IllegalArgumentException.class, () -> row.allIndicesOf("nope"));
+	}
+
 }

@@ -118,6 +118,22 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 
 	@Override
 	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		// Field names are unique within a type, so the first occurrence is the only one. A missing
+		// field is an empty list rather than a throw, matching DefaultUserDefinedType.
+		final var index = firstIndexOf(id);
+
+		return index == -1 ? List.of() : List.of(index);
+	}
+
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull String name) {
+		return allIndicesOf(CqlIdentifier.fromCql(name));
+	}
+
+	@Override
+	@NonNull
 	public List<DataType> getFieldTypes() {
 		return readLockUnchecked(
 			() -> definitions.stream().map(UserDefinedTypeDefinition::dataType).toList());

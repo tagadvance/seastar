@@ -513,6 +513,23 @@ class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull String name) {
+		return allIndicesOf(CqlIdentifier.fromInternal(name));
+	}
+
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		// Column names are unique within a table, so the first occurrence is the only one. A
+		// missing column is an empty list rather than a throw, matching DefaultColumnDefinitions;
+		// the row wrappers layer their own validation on top.
+		final var index = firstIndexOf(id);
+
+		return index == -1 ? List.of() : List.of(index);
+	}
+
+	@Override
 	public void drop() {
 		attach(AttachmentPoint.NONE);
 	}
@@ -612,6 +629,24 @@ class VolatileTable implements SeaStarTable {
 					requireNonNull(name, "name must not be null");
 
 					return firstIndexOf(CqlIdentifier.fromInternal(name));
+				}
+
+				@Override
+				@NonNull
+				public List<Integer> allIndicesOf(final @NonNull String name) {
+					requireNonNull(name, "name must not be null");
+
+					return allIndicesOf(CqlIdentifier.fromInternal(name));
+				}
+
+				@Override
+				@NonNull
+				public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+					requireNonNull(id, "id must not be null");
+
+					final var index = firstIndexOf(id);
+
+					return index == -1 ? List.of() : List.of(index);
 				}
 
 				@Override

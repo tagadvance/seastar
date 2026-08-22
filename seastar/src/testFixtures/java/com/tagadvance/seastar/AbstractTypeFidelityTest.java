@@ -413,4 +413,23 @@ public abstract class AbstractTypeFidelityTest extends AbstractFidelityTest {
 		assertDoesNotThrow(() -> session.execute("DROP TYPE IF EXISTS nope.drop_addr"));
 	}
 
+	@Test
+	@Order(245)
+	@DisplayName("A UDT and its value answer allIndicesOf; only the value rejects an unknown field")
+	void testUdtAllIndicesOf() {
+		createUdtLiteralTable();
+		session.execute(
+			"INSERT INTO types.lit_people (id, home) VALUES (245, {street: 'Main', zip: 1})");
+
+		final var home = session.execute("SELECT home FROM types.lit_people WHERE id = 245")
+			.one()
+			.getUdtValue("home");
+		assertEquals(List.of(1), home.allIndicesOf("zip"));
+		assertThrows(IllegalArgumentException.class, () -> home.allIndicesOf("nope"));
+
+		final var type = home.getType();
+		assertEquals(List.of(0), type.allIndicesOf("street"));
+		assertEquals(List.of(), type.allIndicesOf("nope"));
+	}
+
 }

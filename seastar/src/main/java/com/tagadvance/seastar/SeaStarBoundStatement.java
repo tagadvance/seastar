@@ -278,6 +278,30 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull String name) {
+		final var indices = preparedStatement.getVariableDefinitions().allIndicesOf(name);
+		if (indices.isEmpty()) {
+			throw new IllegalArgumentException(
+				"%s is not a variable in this bound statement".formatted(name));
+		}
+
+		return indices;
+	}
+
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		final var indices = preparedStatement.getVariableDefinitions().allIndicesOf(id);
+		if (indices.isEmpty()) {
+			throw new IllegalArgumentException(
+				"%s is not a variable in this bound statement".formatted(id));
+		}
+
+		return indices;
+	}
+
+	@Override
 	public int firstIndexOf(final @NonNull String name) {
 		final var index = preparedStatement.getVariableDefinitions().firstIndexOf(name);
 		if (index < 0) {

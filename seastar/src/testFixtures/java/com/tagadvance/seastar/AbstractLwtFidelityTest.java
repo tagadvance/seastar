@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.cql.BatchStatement;
 import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -211,6 +212,20 @@ public abstract class AbstractLwtFidelityTest extends AbstractFidelityTest {
 			.build();
 
 		assertThrows(InvalidQueryException.class, () -> session.execute(batch));
+	}
+
+	@Test
+	@Order(247)
+	@DisplayName("A failed LWT's result row answers allIndicesOf for [applied]")
+	void testAppliedRowAllIndicesOf() {
+		createLwtTable();
+		session.execute("INSERT INTO lwt.lwt (id, name, age) VALUES (247, 'first', 1)");
+
+		final var row = session.execute(
+			"INSERT INTO lwt.lwt (id, name, age) VALUES (247, 'second', 2) IF NOT EXISTS").one();
+		assertFalse(row.getBoolean("[applied]"));
+		assertEquals(List.of(0), row.allIndicesOf("[applied]"));
+		assertThrows(IllegalArgumentException.class, () -> row.allIndicesOf("nope"));
 	}
 
 }

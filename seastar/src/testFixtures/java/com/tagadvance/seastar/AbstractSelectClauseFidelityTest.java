@@ -241,4 +241,15 @@ public abstract class AbstractSelectClauseFidelityTest extends AbstractFidelityT
 		assertEquals(json.replace("\"pk\": 1", "\"pk\": 2"), copy);
 	}
 
+	@Test
+	@Order(246)
+	@DisplayName("A computed column's row answers allIndicesOf and rejects an unknown column")
+	void testComputedRowAllIndicesOf() {
+		createAggregateTable();
+
+		final var row = only("SELECT count(*) FROM sel.agg");
+		assertEquals(List.of(0), row.allIndicesOf("count"));
+		assertThrows(IllegalArgumentException.class, () -> row.allIndicesOf("nope"));
+	}
+
 }

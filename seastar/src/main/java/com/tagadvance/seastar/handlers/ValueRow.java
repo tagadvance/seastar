@@ -80,6 +80,28 @@ final class ValueRow implements Row {
 
 	@Override
 	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull String name) {
+		final var indices = definitions.allIndicesOf(name);
+		if (indices.isEmpty()) {
+			throw new IllegalArgumentException("%s is not a column in this row".formatted(name));
+		}
+
+		return indices;
+	}
+
+	@Override
+	@NonNull
+	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		final var indices = definitions.allIndicesOf(id);
+		if (indices.isEmpty()) {
+			throw new IllegalArgumentException("%s is not a column in this row".formatted(id));
+		}
+
+		return indices;
+	}
+
+	@Override
+	@NonNull
 	public DataType getType(final @NonNull String name) {
 		return definitions.get(name).getType();
 	}
