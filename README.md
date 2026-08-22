@@ -16,8 +16,7 @@ wherever your code already takes a `CqlSession`.
 
 ## Install
 
-Not yet published — the artifact coordinates below are what `1.0.0-alpha` will resolve to once it
-ships; `publishToMavenLocal` works today for local use.
+The current release is `1.0.0-alpha`, on Maven Central.
 
 There are two artifacts, and **most people need only the first**. Take `seastar-server` only if the
 code under test builds its own `CqlSession` from a host and a port and cannot be handed one — because
