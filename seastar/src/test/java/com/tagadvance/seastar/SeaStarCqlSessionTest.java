@@ -123,25 +123,6 @@ class SeaStarCqlSessionTest {
 		}
 	}
 
-	/**
-	 * Not shared with {@link ContainerCqlSessionTest}: a real cluster owns the schema independently
-	 * of the session, so its metadata stays readable after close. SeaStar's storage <em>is</em> the
-	 * session, so closing discards it and a leaked session fails loudly.
-	 */
-	@Test
-	@DisplayName("Closing a session discards its keyspaces")
-	void testCloseDiscardsKeyspaces() {
-		final var session = SeaStarCqlSession.builder().build();
-		session.execute("CREATE KEYSPACE ks WITH replication = "
-			+ "{'class': 'SimpleStrategy', 'replication_factor': 1}");
-		assertTrue(session.getContext().getSeaStarKeyspace("ks").isPresent());
-
-		session.close();
-
-		assertTrue(session.getContext().getSeaStarKeyspaces().isEmpty());
-		assertTrue(session.getMetadata().getKeyspaces().isEmpty());
-	}
-
 	@Test
 	@DisplayName("A keyspace created outside CQL reports Cassandra's default replication")
 	void testProgrammaticKeyspaceDefaults() {

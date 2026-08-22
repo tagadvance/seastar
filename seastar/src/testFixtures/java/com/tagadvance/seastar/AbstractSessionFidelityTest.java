@@ -192,6 +192,12 @@ public abstract class AbstractSessionFidelityTest extends AbstractFidelityTest {
 		final var asyncError = assertThrows(CompletionException.class, stage::join);
 		assertInstanceOf(IllegalStateException.class, asyncError.getCause());
 		assertEquals("Session is closed", asyncError.getCause().getMessage());
+
+		// Metadata outlives the close: the driver keeps its last schema snapshot readable, and
+		// SeaStar keeps the model it was serving.
+		final var keyspace = doomed.getMetadata().getKeyspace("closing");
+		assertTrue(keyspace.isPresent());
+		assertTrue(keyspace.orElseThrow().getTable("t").isPresent());
 	}
 
 	@Test

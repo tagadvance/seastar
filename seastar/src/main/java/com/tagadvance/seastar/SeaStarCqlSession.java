@@ -28,7 +28,6 @@ import com.tagadvance.seastar.handlers.TruncateHandler;
 import com.tagadvance.seastar.handlers.UpdateHandler;
 import com.tagadvance.seastar.handlers.UseKeyspaceHandler;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -203,21 +202,18 @@ public class SeaStarCqlSession implements CqlSession {
 	}
 
 	/**
-	 * Closes the session. The first call discards every keyspace held by the context and completes
-	 * {@link #closeFuture()}; subsequent calls are no-ops that return the same stage.
+	 * Closes the session. The first call completes {@link #closeFuture()}; subsequent calls are
+	 * no-ops that return the same stage.
 	 *
-	 * <p>Dropping the keyspaces is deliberate: the storage model is named {@code Volatile*} because
-	 * it lives only for the session, and discarding it turns a leaked session into a loud, obvious
-	 * failure instead of a test that quietly reads another test's data. Note that this diverges from
-	 * the real driver, which keeps {@link #getMetadata()} readable after close - there the schema
-	 * belongs to the cluster, whereas here the session <em>is</em> the cluster.
+	 * <p>The keyspaces are kept, matching the real driver, which leaves {@link #getMetadata()}
+	 * readable after close. Nothing outside the session references them, so they are collected with
+	 * it; an earlier design dropped them here to make a leaked session loud, and was reversed for
+	 * fidelity.
 	 */
 	@Override
 	@NonNull
 	public CompletionStage<Void> closeAsync() {
 		if (closed.compareAndSet(false, true)) {
-			Set.copyOf(context.getSeaStarKeyspaces().keySet())
-				.forEach(context::removeSeaStarKeyspace);
 			closeFuture.complete(null);
 		}
 

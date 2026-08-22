@@ -8,6 +8,9 @@ called out explicitly.
 
 ### Changed
 
+- `close()` keeps the keyspaces, so `getMetadata()` stays readable after close - matching the real
+  driver, which serves its last schema snapshot. Requests after close still fail with
+  `IllegalStateException`. Previously the model was discarded to make a leaked session loud.
 - The auth statements (`CREATE`/`ALTER`/`DROP ROLE`, `GRANT`, `REVOKE`, `LIST ROLES`,
   `LIST PERMISSIONS`) are refused with `UnauthorizedException` rather than
   `InvalidQueryException`, matching what a default Cassandra node answers; verified against the
