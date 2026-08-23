@@ -199,9 +199,9 @@ session behind Cassandra's native protocol. That is the whole harness:
 
 ```java
 try (var session = SeaStarCqlSession.builder()
-         .withSchemaResource("/schema.cql", SchemaImport.LENIENT)
-         .build();
-     var server = SeaStarProtocolServer.builder().session(session).build().start()) {
+        .withSchemaResource("/schema.cql", SchemaImport.LENIENT)
+        .build();
+    var server = SeaStarProtocolServer.builder().session(session).build().start()) {
 
     var contactPoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), server.port());
     // hand contactPoint to whatever builds its own driver
