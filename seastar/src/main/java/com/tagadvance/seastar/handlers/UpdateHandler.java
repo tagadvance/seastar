@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
@@ -41,69 +42,73 @@ public class UpdateHandler implements CqlHandler<ParsedUpdate> {
 	@Override
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final ParsedUpdate raw, final Object... bindings) {
-		final var coordinator = executionInfo.getCoordinator();
-
-		final Modification update;
-		final Predicate<SeaStarRow> predicate;
-		final Map<Integer, Object> upsertKey;
-		final List<List<Object>> partitions;
 		try {
-			update = Modifications.update(context, getKeyspace, raw, coordinator, bindings);
-			validateAssignments(update, coordinator);
-			predicate = RestrictionRules.forUpdate(update, coordinator);
-			upsertKey = RestrictionRules.upsertKey(update);
-			partitions = RestrictionRules.partitions(update.target(), update.restrictions());
+			return translateCql(context, executionInfo, raw, bindings).apply().get();
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
+	}
+
+	@Override
+	public Translated translateCql(final SeaStarDriverContext context,
+		final ExecutionInfo executionInfo, final ParsedUpdate raw, final Object... bindings) {
+		final var coordinator = executionInfo.getCoordinator();
+
+		final Modification update = Modifications.update(context, getKeyspace, raw, coordinator,
+			bindings);
+		validateAssignments(update, coordinator);
+		final Predicate<SeaStarRow> predicate = RestrictionRules.forUpdate(update, coordinator);
+		final Map<Integer, Object> upsertKey = RestrictionRules.upsertKey(update);
+		final List<List<Object>> partitions = RestrictionRules.partitions(update.target(),
+			update.restrictions());
 
 		final var table = update.target().table();
 		final var assignments = update.assignments();
 		final var conditions = update.conditions();
 		final var writes = Writes.of(context, update);
 
-		final AsyncResultSet result = table.mutate(() -> {
-			final var matched = RestrictionRules.rows(table, partitions)
-				.filter(SeaStarRow::isLive)
-				.filter(predicate)
-				.toList();
+		return new Translated(Set.of(table.keyspace()),
+			() -> CompletableFuture.completedStage(table.mutate(() -> {
+				final var matched = RestrictionRules.rows(table, partitions)
+					.filter(SeaStarRow::isLive)
+					.filter(predicate)
+					.toList();
 
-			if (update.ifExists()) {
-				if (matched.isEmpty()) {
-					return AppliedResultSets.of(context, table, executionInfo, false);
+				if (update.ifExists()) {
+					if (matched.isEmpty()) {
+						return AppliedResultSets.of(context, table, executionInfo, false);
+					}
+					apply(matched, assignments, writes, coordinator);
+
+					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-				apply(matched, assignments, writes, coordinator);
 
-				return AppliedResultSets.of(context, table, executionInfo, true);
-			}
+				if (!conditions.isEmpty()) {
+					if (matched.isEmpty()) {
+						return AppliedResultSets.of(context, table, executionInfo, false);
+					}
+					final var existing = matched.get(0).snapshot();
+					if (!Conditions.hold(conditions, existing)) {
+						return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
+					}
+					apply(matched, assignments, writes, coordinator);
 
-			if (!conditions.isEmpty()) {
-				if (matched.isEmpty()) {
-					return AppliedResultSets.of(context, table, executionInfo, false);
+					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-				final var existing = matched.get(0).snapshot();
-				if (!Conditions.hold(conditions, existing)) {
-					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
+
+				if (!matched.isEmpty()) {
+					apply(matched, assignments, writes, coordinator);
+				} else if (upsertKey != null) {
+					final var values = new ArrayList<Object>(
+						Collections.nCopies(table.size(), null));
+					upsertKey.forEach(values::set);
+					final var row = table.addRow(values, writes.timestamp());
+					apply(List.of(row), assignments, writes, coordinator);
+					row.markLive(writes.timestamp(), writes.expiresAt());
 				}
-				apply(matched, assignments, writes, coordinator);
 
-				return AppliedResultSets.of(context, table, executionInfo, true);
-			}
-
-			if (!matched.isEmpty()) {
-				apply(matched, assignments, writes, coordinator);
-			} else if (upsertKey != null) {
-				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
-				upsertKey.forEach(values::set);
-				final var row = table.addRow(values, writes.timestamp());
-				apply(List.of(row), assignments, writes, coordinator);
-				row.markLive(writes.timestamp(), writes.expiresAt());
-			}
-
-			return newAsyncResultSet(executionInfo);
-		});
-
-		return CompletableFuture.completedStage(result);
+				return newAsyncResultSet(executionInfo);
+			})));
 	}
 
 	private static void apply(final List<SeaStarRow> matched, final List<Assignment> assignments,

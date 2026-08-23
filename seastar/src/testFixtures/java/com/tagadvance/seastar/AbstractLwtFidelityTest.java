@@ -215,6 +215,43 @@ public abstract class AbstractLwtFidelityTest extends AbstractFidelityTest {
 	}
 
 	@Test
+	@Order(253)
+	@DisplayName("A batch with an invalid child applies nothing")
+	void testBatchWithInvalidChildAppliesNothing() {
+		createLwtTable();
+
+		// An undefined column, caught by validation.
+		assertThrows(InvalidQueryException.class, () -> session.execute("BEGIN BATCH "
+			+ "INSERT INTO lwt.lwt (id, name, age) VALUES (253, 'kept?', 1); "
+			+ "INSERT INTO lwt.lwt (id, nope) VALUES (2530, 'x'); "
+			+ "APPLY BATCH"));
+		assertNull(lwtName(253));
+
+		// A missing partition key, caught later than an unknown column but still before applying.
+		assertThrows(InvalidQueryException.class, () -> session.execute("BEGIN BATCH "
+			+ "INSERT INTO lwt.lwt (id, name, age) VALUES (253, 'kept?', 1); "
+			+ "INSERT INTO lwt.lwt (name) VALUES ('x'); "
+			+ "APPLY BATCH"));
+		assertNull(lwtName(253));
+	}
+
+	@Test
+	@Order(254)
+	@DisplayName("A programmatic batch with an invalid child applies nothing")
+	void testProgrammaticBatchWithInvalidChildAppliesNothing() {
+		createLwtTable();
+
+		final var batch = BatchStatement.builder(DefaultBatchType.LOGGED)
+			.addStatement(SimpleStatement.newInstance(
+				"INSERT INTO lwt.lwt (id, name, age) VALUES (254, 'kept?', 1)"))
+			.addStatement(SimpleStatement.newInstance("INSERT INTO lwt.lwt (id, nope) VALUES (2540, 'x')"))
+			.build();
+
+		assertThrows(InvalidQueryException.class, () -> session.execute(batch));
+		assertNull(lwtName(254));
+	}
+
+	@Test
 	@Order(247)
 	@DisplayName("A failed LWT's result row answers allIndicesOf for [applied]")
 	void testAppliedRowAllIndicesOf() {

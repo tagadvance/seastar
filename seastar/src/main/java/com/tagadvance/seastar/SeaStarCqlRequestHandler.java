@@ -10,9 +10,12 @@ import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.internal.core.cql.CqlRequestHandler;
+import com.tagadvance.seastar.handlers.Batches;
 import com.tagadvance.seastar.handlers.BindMarkers;
+import com.tagadvance.seastar.handlers.CqlHandler;
 import com.tagadvance.seastar.handlers.CqlHandlerRegistry;
 import com.tagadvance.seastar.handlers.CqlParsers;
+import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
@@ -44,57 +47,72 @@ class SeaStarCqlRequestHandler {
 			return handleBatch(batch);
 		}
 
-		return dispatch(initialStatement, false);
+		return dispatch(initialStatement);
 	}
 
-	// Apply each child statement in sequence under the table locks, then return a void result whose
-	// wasApplied() is true, matching a non-conditional batch on a live cluster.
+	// Two phases, the same shape as BatchHandler: translate - and so validate - every child before
+	// applying any, then apply them in order behind the write locks of the keyspaces the batch
+	// touches. The void result's wasApplied() is true, matching a non-conditional batch on a live
+	// cluster.
 	private CompletionStage<AsyncResultSet> handleBatch(final BatchStatement batch) {
-		CompletionStage<AsyncResultSet> chain = CompletableFuture.completedStage(null);
-		for (final var child : batch) {
-			chain = chain.thenCompose(ignored -> dispatch(child, true));
+		final var translated = new ArrayList<CqlHandler.Translated>();
+		try {
+			for (final var child : batch) {
+				translated.add(translate(child));
+			}
+		} catch (final RuntimeException e) {
+			return CompletableFuture.failedStage(e);
 		}
 
 		final var executionInfo = new SeaStarExecutionInfo(context.getNode(), batch);
 
-		return chain.thenApply(ignored -> SeaStarAsyncResultSet.empty(executionInfo));
+		return Batches.apply(translated, () -> SeaStarAsyncResultSet.empty(executionInfo));
 	}
 
-	private CompletionStage<AsyncResultSet> dispatch(final Statement<?> statement,
-		final boolean requireModification) {
-		final String query;
-		if (statement instanceof SimpleStatement simpleStatement) {
-			query = simpleStatement.getQuery();
-		} else if (statement instanceof BoundStatement boundStatement) {
-			query = boundStatement.getPreparedStatement().getQuery();
-		} else {
-			throw new UnsupportedOperationException(
-				"Statement of type %s is not currently supported".formatted(
-					statement.getClass().getSimpleName()));
-		}
-
+	/**
+	 * The translate half of {@link #dispatch} for one batch child: parse, bind and validate without
+	 * applying, throwing on anything invalid so the batch applies nothing.
+	 */
+	private CqlHandler.Translated translate(final Statement<?> statement) {
 		final var node = context.getNode();
 		final var executionInfo = new SeaStarExecutionInfo(node, statement);
 
 		final CQLStatement.Raw raw;
 		final Object[] values;
 		try {
-			raw = CqlParsers.parse(node, query);
+			raw = CqlParsers.parse(node, queryOf(statement));
 			// After the parse, not before: a SimpleStatement's values are matched to the markers the
 			// parse tree carries, which is also where their number is checked.
 			values = values(statement, raw);
-		} catch (final Exception e) {
+			if (!(raw instanceof ModificationStatement.Parsed)) {
+				throw new InvalidQueryException(node,
+					"Only INSERT, UPDATE and DELETE statements are allowed in batches");
+			}
+
+			return registry.processorFor(raw, executionInfo)
+				.translateCql(context, executionInfo, raw, values);
+		} catch (final RuntimeException e) {
+			attach(executionInfo, e);
+
+			throw e;
+		}
+	}
+
+	private CompletionStage<AsyncResultSet> dispatch(final Statement<?> statement) {
+		final var node = context.getNode();
+		final var executionInfo = new SeaStarExecutionInfo(node, statement);
+
+		final CQLStatement.Raw raw;
+		final Object[] values;
+		try {
+			raw = CqlParsers.parse(node, queryOf(statement));
+			// After the parse, not before: a SimpleStatement's values are matched to the markers the
+			// parse tree carries, which is also where their number is checked.
+			values = values(statement, raw);
+		} catch (final RuntimeException e) {
 			attach(executionInfo, e);
 
 			return CompletableFuture.failedStage(e);
-		}
-
-		if (requireModification && !(raw instanceof ModificationStatement.Parsed)) {
-			final var error = new InvalidQueryException(node,
-				"Only INSERT, UPDATE and DELETE statements are allowed in batches");
-			attach(executionInfo, error);
-
-			return CompletableFuture.failedStage(error);
 		}
 
 		try {
@@ -109,6 +127,19 @@ class SeaStarCqlRequestHandler {
 			// a throw.
 			return CompletableFuture.failedStage(e);
 		}
+	}
+
+	private static String queryOf(final Statement<?> statement) {
+		if (statement instanceof SimpleStatement simpleStatement) {
+			return simpleStatement.getQuery();
+		}
+		if (statement instanceof BoundStatement boundStatement) {
+			return boundStatement.getPreparedStatement().getQuery();
+		}
+
+		throw new UnsupportedOperationException(
+			"Statement of type %s is not currently supported".formatted(
+				statement.getClass().getSimpleName()));
 	}
 
 	/**

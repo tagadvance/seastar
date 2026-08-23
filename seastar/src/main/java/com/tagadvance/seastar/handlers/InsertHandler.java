@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
@@ -50,17 +51,22 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final ModificationStatement.Parsed raw,
 		final Object... bindings) {
-		final var coordinator = executionInfo.getCoordinator();
-
-		final Modification insert;
 		try {
-			insert = raw instanceof ParsedInsertJson json
-				? Modifications.insertJson(context, getKeyspace, json, coordinator, bindings)
-				: Modifications.insert(context, getKeyspace, (ParsedInsert) raw, coordinator,
-					bindings);
+			return translateCql(context, executionInfo, raw, bindings).apply().get();
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
+	}
+
+	@Override
+	public Translated translateCql(final SeaStarDriverContext context,
+		final ExecutionInfo executionInfo, final ModificationStatement.Parsed raw,
+		final Object... bindings) {
+		final var coordinator = executionInfo.getCoordinator();
+
+		final Modification insert = raw instanceof ParsedInsertJson json
+			? Modifications.insertJson(context, getKeyspace, json, coordinator, bindings)
+			: Modifications.insert(context, getKeyspace, (ParsedInsert) raw, coordinator, bindings);
 
 		final var target = insert.target();
 		final var table = target.table();
@@ -77,8 +83,8 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 			: target.primaryKeyNames();
 		for (final var part : required) {
 			if (!named.contains(part)) {
-				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
-					"Missing mandatory PRIMARY KEY part %s".formatted(part.asInternal())));
+				throw new InvalidQueryException(coordinator,
+					"Missing mandatory PRIMARY KEY part %s".formatted(part.asInternal()));
 			}
 		}
 
@@ -88,9 +94,9 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 		// reads an INSERT's key columns - see RestrictionRules, which answers the same for a WHERE.
 		for (final var assignment : assignments) {
 			if (primaryKey.contains(assignment.column()) && assignment.value() == null) {
-				return CompletableFuture.failedStage(new InvalidQueryException(coordinator,
+				throw new InvalidQueryException(coordinator,
 					"Invalid null value in condition for column %s".formatted(
-						assignment.column().asInternal())));
+						assignment.column().asInternal()));
 			}
 		}
 
@@ -101,35 +107,34 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 		// partition. Without this an insert walks every row in the table and a bulk load is O(n^2).
 		final var partition = partitionKey(target, values);
 
-		final AsyncResultSet result = table.mutate(() -> {
-			final var existing = table.partition(partition)
-				.filter(samePrimaryKey)
-				.findFirst()
-				.orElse(null);
-			if (insert.ifNotExists()) {
+		return new Translated(Set.of(table.keyspace()),
+			() -> CompletableFuture.completedStage(table.mutate(() -> {
+				final var existing = table.partition(partition)
+					.filter(samePrimaryKey)
+					.findFirst()
+					.orElse(null);
+				if (insert.ifNotExists()) {
+					if (existing == null) {
+						create(table, target, values, assignments, writes);
+
+						return AppliedResultSets.of(context, table, executionInfo, true);
+					}
+
+					return AppliedResultSets.ofExisting(context, table, executionInfo,
+						existing.snapshot());
+				}
+				// INSERT is an upsert; write only the named columns, preserving any columns this
+				// statement did not specify on a row that already shares this primary key. An
+				// explicitly-inserted NULL still clears its column; an unnamed column is left as-is.
 				if (existing == null) {
 					create(table, target, values, assignments, writes);
-
-					return AppliedResultSets.of(context, table, executionInfo, true);
+				} else {
+					apply(target, existing, assignments, writes);
+					existing.markLive(writes.timestamp(), writes.expiresAt());
 				}
 
-				return AppliedResultSets.ofExisting(context, table, executionInfo,
-					existing.snapshot());
-			}
-			// INSERT is an upsert; write only the named columns, preserving any columns this
-			// statement did not specify on a row that already shares this primary key. An
-			// explicitly-inserted NULL still clears its column; an unnamed column is left as-is.
-			if (existing == null) {
-				create(table, target, values, assignments, writes);
-			} else {
-				apply(target, existing, assignments, writes);
-				existing.markLive(writes.timestamp(), writes.expiresAt());
-			}
-
-			return newAsyncResultSet(executionInfo);
-		});
-
-		return CompletableFuture.completedStage(result);
+				return newAsyncResultSet(executionInfo);
+			})));
 	}
 
 	/**

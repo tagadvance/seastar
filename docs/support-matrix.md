@@ -38,7 +38,7 @@ in, so a `USING` clause written ahead of `SET` and `WHERE` binds ahead of them.
 | `INSERT` | yes | Including `IF NOT EXISTS`, `INSERT ... JSON` with `DEFAULT NULL`/`DEFAULT UNSET`, and `USING TTL`/`USING TIMESTAMP`. An insert reads only the partition it writes to, so a bulk load scales linearly. |
 | `UPDATE` | yes | Including `IF` conditions and `USING TTL`/`USING TIMESTAMP`. |
 | `DELETE` | yes | Including `IF EXISTS` and `USING TIMESTAMP`. |
-| `BATCH` | yes | Children are applied in order. **Not atomic and not isolated**: a child that fails partway through leaves the earlier ones applied, where a cluster rejects the whole batch first. A batch-level `USING` is rejected; write it on each child. |
+| `BATCH` | yes | Atomic and isolated: every child is validated before any is applied, so an invalid child leaves the store untouched, and the whole batch runs behind the write locks of every keyspace it touches (acquired in name order, so a two-keyspace batch cannot deadlock). Children apply in order. The one carve-out: a conditional child's `IF` is evaluated as its turn comes, against the state its predecessors left, where a node evaluates every condition against the pre-batch state and requires a single partition. A batch-level `USING` is rejected; write it on each child. |
 | `TRUNCATE` | yes | |
 | `USE` | yes | A keyspace that does not exist fails with `InvalidQueryException`, as on a cluster. |
 
@@ -178,9 +178,6 @@ Deliberate, and each is expanded in the section named.
   means **`system_schema.tables.comment` is always the empty string**, whatever `WITH comment = '...'`
   said, and a client reading table options over the wire disagrees with in-process `getOptions()`,
   which is empty. Fixing it is a change to the model, not to the projection.
-- **A `BATCH` is not atomic or isolated.** Inherited from the core and restated here, because a
-  client on a socket has no reason to read the CQL tables: a child that fails partway through leaves
-  the earlier ones applied, where a node rejects the whole batch first.
 - **A DDL statement is answered from memory, and the wait is the driver's.** One second per statement
   by default - see the note at the end of
   [The system keyspaces](#the-system-keyspaces-seastar-server).
@@ -332,7 +329,10 @@ from a cluster's.
   static row behind, readable with a null clustering key.
 - **`UPDATE` cannot create a partition from static columns alone.** `UPDATE t SET s = 'x' WHERE
   pk = 1` on a partition with no rows writes nothing, where a cluster creates a static row.
-- **Batches are not atomic or isolated.** See `BATCH` above.
+- **Conditional children in a batch are evaluated one at a time**, each `IF` against the state its
+  predecessors left, where a node evaluates every condition against the pre-batch state and
+  requires the whole batch to address one partition. Everything else about a batch is atomic and
+  isolated - see `BATCH` above.
 - **Secondary indexes are metadata only.** They make a query legal without `ALLOW FILTERING`; they do
   not make it faster.
 - **A bind marker inside a collection literal is accepted.** `VALUES (1, [?, ?])` binds each element;

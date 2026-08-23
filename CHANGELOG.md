@@ -19,6 +19,10 @@ called out explicitly.
 
 ### Changed
 
+- A `BATCH` is now atomic and isolated: every child is validated before any is applied, so an
+  invalid child leaves the store untouched, and the whole batch runs behind the write locks of
+  every keyspace it touches. The carve-out, documented in the support matrix: a conditional
+  child's `IF` is still evaluated as its turn comes rather than against the pre-batch state.
 - `close()` keeps the keyspaces, so `getMetadata()` stays readable after close - matching the real
   driver, which serves its last schema snapshot. Requests after close still fail with
   `IllegalStateException`. Previously the model was discarded to make a leaked session loud.

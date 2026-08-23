@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
 import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarDriverContext;
+import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
@@ -16,17 +17,16 @@ import org.apache.cassandra.cql3.statements.BatchStatement.Parsed;
 /**
  * Handles a {@code BEGIN BATCH ... APPLY BATCH} parsed from a CQL string. Each child statement is
  * a {@code ModificationStatement.Parsed} (INSERT/UPDATE/DELETE); the parser rejects anything else,
- * so no SELECT can reach here. Children are dispatched to their own handlers in order, mirroring a
- * reasonable first cut of batch semantics for an in-memory fake: apply each child in sequence.
+ * so no SELECT can reach here.
  *
- * <p>Known limitation: this is not atomic. Real Cassandra validates every child up front and
- * rejects the whole batch before applying anything, so an invalid statement leaves the store
- * untouched. Here each child is validated and applied as it is dispatched, so a child that fails
- * partway through (for example an undefined column) leaves the earlier children already applied
- * rather than rolling the batch back. Batches are also not isolated - see
- * {@code docs/support-matrix.md}. Each child takes and releases its own table lock rather than
- * holding all of them for the batch, which is also why a two-table batch cannot deadlock; making
- * a batch atomic would mean locking every child's table up front, sorted by a stable key.
+ * <p>Atomic and isolated, in two phases. Every child is translated - which is where validation
+ * lives - before any is applied, so an invalid child fails the batch with the store untouched,
+ * as a node's up-front validation does. The applications then run in order while this holds the
+ * write lock of every keyspace the batch touches, taken in name order so that a two-keyspace
+ * batch cannot deadlock; a concurrent reader sees the batch entirely or not at all. The one
+ * carve-out, documented in {@code docs/support-matrix.md}: a conditional child's {@code IF} is
+ * evaluated as its turn comes, against the state its predecessors left, where a node evaluates
+ * every condition against the pre-batch state.
  */
 @ThreadSafe
 public class BatchHandler implements CqlHandler<Parsed> {
@@ -59,14 +59,17 @@ public class BatchHandler implements CqlHandler<Parsed> {
 		final var children = FieldBindings.BATCH_STATEMENTS.require(raw);
 
 		final var registry = this.registry.get();
-		CompletionStage<AsyncResultSet> chain = CompletableFuture.completedStage(null);
-		for (final var child : children) {
-			chain = chain.thenCompose(
-				ignored -> registry.processorFor(child, executionInfo)
-					.processCql(context, executionInfo, child, bindings));
+		final var translated = new ArrayList<Translated>(children.size());
+		try {
+			for (final var child : children) {
+				translated.add(registry.processorFor(child, executionInfo)
+					.translateCql(context, executionInfo, child, bindings));
+			}
+		} catch (final RuntimeException e) {
+			return CompletableFuture.failedStage(e);
 		}
 
-		return chain.thenApply(ignored -> newAsyncResultSet(executionInfo));
+		return Batches.apply(translated, () -> newAsyncResultSet(executionInfo));
 	}
 
 }

@@ -16,8 +16,9 @@ wherever your code already takes a `CqlSession`.
    and thread safety alone is the floor, not the goal. Being safe to call from two threads does not
    make an operation atomically correct; that is what the locks are for. Each statement runs
    atomically under its keyspace's lock, so a concurrent reader never observes a half-applied
-   statement. What is deliberately not atomic — a multi-statement `BATCH` — is called out in the
-   support matrix.
+   statement, and a `BATCH` holds the locks of every keyspace it touches for the whole batch. The
+   one deliberate carve-out — condition evaluation inside a conditional batch — is called out in
+   the support matrix.
 
 ## Built with AI assistance
 
@@ -178,8 +179,8 @@ a usable session. A statement then costs 0.32 ms in process and 1.12 ms over the
 Every deliberate divergence from real Cassandra is catalogued in
 [docs/support-matrix.md](docs/support-matrix.md) rather than duplicated here. The short version: a
 `SELECT` always returns a single page, a delete does not leave a tombstone (a write stamped older
-than one is applied instead of suppressed), a `BATCH` is not atomic or isolated, and there are no
-materialized views, UDFs/aggregates, auth, roles, or a token map. Each is a considered trade-off for
+than one is applied instead of suppressed), a conditional `BATCH` evaluates its `IF` conditions one
+child at a time, and there are no materialized views, UDFs/aggregates, auth, roles, or a token map. Each is a considered trade-off for
 an in-memory fake, not an oversight — the matrix says why.
 
 On a socket, `seastar-server` adds its own short list. Compression, TLS and a paging state in a

@@ -44,19 +44,24 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 	@Override
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final Parsed raw, final Object... bindings) {
-		final var coordinator = executionInfo.getCoordinator();
-
-		final Modification delete;
-		final Predicate<SeaStarRow> predicate;
-		final List<List<Object>> partitions;
 		try {
-			delete = Modifications.delete(context, getKeyspace, raw, coordinator, bindings);
-			validateDeletedColumns(delete, coordinator);
-			predicate = RestrictionRules.forDelete(delete, coordinator);
-			partitions = RestrictionRules.partitions(delete.target(), delete.restrictions());
+			return translateCql(context, executionInfo, raw, bindings).apply().get();
 		} catch (final InvalidQueryException e) {
 			return CompletableFuture.failedStage(e);
 		}
+	}
+
+	@Override
+	public Translated translateCql(final SeaStarDriverContext context,
+		final ExecutionInfo executionInfo, final Parsed raw, final Object... bindings) {
+		final var coordinator = executionInfo.getCoordinator();
+
+		final Modification delete = Modifications.delete(context, getKeyspace, raw, coordinator,
+			bindings);
+		validateDeletedColumns(delete, coordinator);
+		final Predicate<SeaStarRow> predicate = RestrictionRules.forDelete(delete, coordinator);
+		final List<List<Object>> partitions = RestrictionRules.partitions(delete.target(),
+			delete.restrictions());
 
 		final var table = delete.target().table();
 		final var deletedColumns = delete.assignments();
@@ -67,43 +72,42 @@ public class DeleteHandler implements CqlHandler<Parsed> {
 		final var partitionWide = deletedColumns.isEmpty() && !restrictsClustering(delete);
 		final var stamped = delete.timestamp() != null;
 
-		final AsyncResultSet result = table.mutate(() -> {
-			final var matched = RestrictionRules.rows(table, partitions)
-				.filter(SeaStarRow::isLive)
-				.filter(predicate)
-				.toList();
+		return new Translated(Set.of(table.keyspace()),
+			() -> CompletableFuture.completedStage(table.mutate(() -> {
+				final var matched = RestrictionRules.rows(table, partitions)
+					.filter(SeaStarRow::isLive)
+					.filter(predicate)
+					.toList();
 
-			if (delete.ifExists()) {
-				if (matched.isEmpty()) {
-					return AppliedResultSets.of(context, table, executionInfo, false);
+				if (delete.ifExists()) {
+					if (matched.isEmpty()) {
+						return AppliedResultSets.of(context, table, executionInfo, false);
+					}
+					applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes,
+						stamped, coordinator);
+
+					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-				applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
-					coordinator);
 
-				return AppliedResultSets.of(context, table, executionInfo, true);
-			}
+				if (!conditions.isEmpty()) {
+					if (matched.isEmpty()) {
+						return AppliedResultSets.of(context, table, executionInfo, false);
+					}
+					final var existing = matched.get(0).snapshot();
+					if (!Conditions.hold(conditions, existing)) {
+						return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
+					}
+					applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes,
+						stamped, coordinator);
 
-			if (!conditions.isEmpty()) {
-				if (matched.isEmpty()) {
-					return AppliedResultSets.of(context, table, executionInfo, false);
+					return AppliedResultSets.of(context, table, executionInfo, true);
 				}
-				final var existing = matched.get(0).snapshot();
-				if (!Conditions.hold(conditions, existing)) {
-					return AppliedResultSets.ofExisting(context, table, executionInfo, existing);
-				}
-				applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
-					coordinator);
 
-				return AppliedResultSets.of(context, table, executionInfo, true);
-			}
+				applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes,
+					stamped, coordinator);
 
-			applyDelete(table, partitions, matched, deletedColumns, partitionWide, writes, stamped,
-				coordinator);
-
-			return newAsyncResultSet(executionInfo);
-		});
-
-		return CompletableFuture.completedStage(result);
+				return newAsyncResultSet(executionInfo);
+			})));
 	}
 
 	/**
