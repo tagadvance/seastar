@@ -439,13 +439,13 @@ class VolatileRow implements SeaStarRow {
 	@NonNull
 	@Override
 	public CodecRegistry codecRegistry() {
-		return attachmentPoint.getCodecRegistry();
+		return table.readLockUnchecked(() -> attachmentPoint).getCodecRegistry();
 	}
 
 	@NonNull
 	@Override
 	public ProtocolVersion protocolVersion() {
-		return attachmentPoint.getProtocolVersion();
+		return table.readLockUnchecked(() -> attachmentPoint).getProtocolVersion();
 	}
 
 	@Override
