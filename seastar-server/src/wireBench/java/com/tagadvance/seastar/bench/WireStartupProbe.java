@@ -44,6 +44,11 @@ public final class WireStartupProbe {
 	}
 
 	public static void main(final String[] args) {
+		// First statement of main, before any reference to a com.tagadvance class - see
+		// StartupProbe for why: the harness's own clock must exclude the JVM's own boot.
+		final var mainStart = System.nanoTime();
+		Metrics.millis("jvm.to.main", uptimeNanos());
+
 		final var beforeBuild = System.nanoTime();
 		final var session = SeaStarCqlSession.builder().build();
 		Metrics.millis("seastar.build", System.nanoTime() - beforeBuild);
@@ -52,6 +57,7 @@ public final class WireStartupProbe {
 		final var server = SeaStarProtocolServer.builder().session(session).build().start();
 		Metrics.millis("server.start", System.nanoTime() - beforeStart);
 		Metrics.millis("jvm.to.listening", uptimeNanos());
+		Metrics.millis("main.to.listening", System.nanoTime() - mainStart);
 
 		final var beforeConnect = System.nanoTime();
 		final var driver = connect(server.port());
@@ -59,8 +65,10 @@ public final class WireStartupProbe {
 
 		final var beforeQuery = System.nanoTime();
 		driver.execute(CREATE_KEYSPACE);
-		Metrics.millis("query.first", System.nanoTime() - beforeQuery);
+		final var afterQuery = System.nanoTime();
+		Metrics.millis("query.first", afterQuery - beforeQuery);
 		Metrics.millis("jvm.to.first.query", uptimeNanos());
+		Metrics.millis("main.to.first.query", afterQuery - mainStart);
 
 		driver.execute(CREATE_TABLE);
 		driver.execute(INSERT);

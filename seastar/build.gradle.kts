@@ -84,6 +84,18 @@ containerBench.runtimeClasspath += sourceSets["main"].output + sourceSets["jmh"]
 dependencies {
     "containerBenchImplementation"("org.testcontainers:testcontainers:2.0.5")
     "containerBenchImplementation"("org.testcontainers:testcontainers-cassandra:2.0.5")
+    // ContainerStatementBenchmark is JMH-annotated but the me.champeau.jmh plugin only generates
+    // runner code for the jmh source set, so the generator is wired up by hand here - same JMH
+    // version the jmh source set resolves, so the two are comparable.
+    "containerBenchImplementation"("org.openjdk.jmh:jmh-core:1.36")
+    "containerBenchAnnotationProcessor"("org.openjdk.jmh:jmh-generator-annprocess:1.36")
+}
+
+// WireStatementBenchmark needs seastar-server to put the same fixture behind a socket. This is a
+// forward dependency (:seastar-server already depends on :seastar's main sources) but not a cycle:
+// only the jmh source set sees it, so :seastar's published api is untouched.
+dependencies {
+    "jmhImplementation"(project(":seastar-server"))
 }
 
 jmh {
@@ -136,6 +148,11 @@ registerColdJvmBenchmark("startupSchemaBenchmark", "com.tagadvance.seastar.bench
     description = "Startup seeded with a realistic fixture schema via withSchema."
 }
 
+registerColdJvmBenchmark("startupMemoryBenchmark", "com.tagadvance.seastar.bench.StartupProbe", 5,
+    listOf("memory", "0/1000/100000")).configure {
+    description = "Heap and RSS after seeding the fixture schema and loading N rows."
+}
+
 // The three variants are interleaved rather than run one after another: they are compared against
 // each other, so a machine that throttles part way through must not favour whichever ran first.
 registerColdJvmBenchmark("parserCostBenchmark", "com.tagadvance.seastar.bench.ParserCostProbe", 20,
@@ -154,6 +171,32 @@ listOf("warm" to 3, "cold" to 1).forEach { (mode, samples) ->
         containerBench).configure {
         description = "TestContainers Cassandra start to first query, $mode image. Requires Docker."
     }
+}
+
+registerColdJvmBenchmark("containerMemoryBenchmark", "com.tagadvance.seastar.bench.ContainerProbe",
+    1, listOf("memory", "0/1000/100000"), containerBench).configure {
+    description = "Container and driver-side heap/RSS after seeding the fixture schema and " +
+        "loading N rows. Requires Docker."
+}
+
+registerColdJvmBenchmark("truncateBenchmark", "com.tagadvance.seastar.bench.TruncateProbe", 1,
+    listOf("true/false"), containerBench).configure {
+    description = "TRUNCATE cost on a container, with and without auto_snapshot. Requires Docker."
+}
+
+// ContainerStatementBenchmark is JMH, but the me.champeau.jmh plugin only wires up the jmh source
+// set (HANDOVER trap 4 - TestContainers cannot share a classpath with the pinned driver), so this
+// runs JMH's own Main against containerBench's classpath directly instead of through the plugin's
+// task. The annotations on the class itself carry Fork/Warmup/Measurement/BenchmarkMode, so no CLI
+// options are needed beyond which class to run.
+tasks.register<JavaExec>("containerTurnaroundBenchmark") {
+    description = "Per-statement JMH benchmarks against a real Cassandra container. Requires Docker."
+    group = "benchmark"
+    mainClass = "org.openjdk.jmh.Main"
+    classpath = containerBench.runtimeClasspath
+    systemProperty("logback.configurationFile", logbackConfiguration)
+    args("com.tagadvance.seastar.bench.ContainerStatementBenchmark")
+    usesService(benchmarkExclusivity)
 }
 
 tasks.register<JavaExec>("inspectRaw") {

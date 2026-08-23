@@ -1,9 +1,15 @@
 package com.tagadvance.seastar.bench;
 
+import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.tagadvance.seastar.SeaStarCqlSession;
+import com.tagadvance.seastar.SeaStarDriverContext;
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.apache.cassandra.cql3.CQLFragmentParser;
 import org.apache.cassandra.cql3.CqlParser;
@@ -12,7 +18,7 @@ import org.apache.cassandra.cql3.CqlParser;
  * One cold-JVM sample of SeaStar startup. Run by {@link ColdJvmBenchmark}, which forks a fresh JVM
  * per sample so the class loading that dominates the cold number is never warmed away.
  *
- * <p>Usage: {@code StartupProbe [plain|schema|clinitFirst|parseFirst]}
+ * <p>Usage: {@code StartupProbe [plain|schema|clinitFirst|parseFirst|memory] [rows]}
  */
 public final class StartupProbe {
 
@@ -24,15 +30,22 @@ public final class StartupProbe {
 	private StartupProbe() {
 	}
 
-	public static void main(final String[] args) throws ClassNotFoundException {
+	public static void main(final String[] args) throws ClassNotFoundException, IOException {
+		// First statement of main, before any reference to a com.tagadvance or cassandra-all class,
+		// so that the harness's own clock excludes the JVM's own boot - every test JVM pays that
+		// whether or not it uses SeaStar, so it must not count against any backend.
+		final var mainStart = System.nanoTime();
+		Metrics.millis("jvm.to.main", uptimeNanos());
+
 		final var mode = args.length > 0 ? args[0] : "plain";
 		switch (mode) {
-			case "plain" -> plain();
-			case "schema" -> schema();
+			case "plain" -> plain(mainStart);
+			case "schema" -> schema(mainStart);
 			case "clinitFirst" -> parserSplit(true);
 			case "parseFirst" -> parserSplit(false);
+			case "memory" -> memory(args.length > 1 ? Integer.parseInt(args[1]) : 0);
 			default -> throw new IllegalArgumentException(
-				"mode must be plain, schema, clinitFirst or parseFirst but was " + mode);
+				"mode must be plain, schema, clinitFirst, parseFirst or memory but was " + mode);
 		}
 	}
 
@@ -40,18 +53,20 @@ public final class StartupProbe {
 	 * Builds an empty session, then issues its first query. The first query is where the
 	 * cassandra-all parser is loaded, so it is reported separately from the build.
 	 */
-	private static void plain() {
+	private static void plain(final long mainStart) {
 		final var beforeBuild = System.nanoTime();
 		final var session = SeaStarCqlSession.builder().build();
 		final var afterBuild = System.nanoTime();
 		Metrics.millis("build.cold", afterBuild - beforeBuild);
 		Metrics.millis("jvm.to.build.cold", uptimeNanos());
+		Metrics.millis("main.to.build.cold", afterBuild - mainStart);
 
 		final var beforeQuery = System.nanoTime();
 		session.execute(FIRST_QUERY);
 		final var afterQuery = System.nanoTime();
 		Metrics.millis("query.first", afterQuery - beforeQuery);
 		Metrics.millis("jvm.to.first.query", uptimeNanos());
+		Metrics.millis("main.to.first.query", afterQuery - mainStart);
 
 		final List<Long> builds = new ArrayList<>();
 		final List<Long> queries = new ArrayList<>();
@@ -75,7 +90,7 @@ public final class StartupProbe {
 	 * Builds a session seeded with a realistic fixture schema, which is what a test suite actually
 	 * pays at startup.
 	 */
-	private static void schema() {
+	private static void schema(final long mainStart) {
 		final var cql = BenchmarkSchema.cql();
 
 		final var beforeBuild = System.nanoTime();
@@ -83,11 +98,14 @@ public final class StartupProbe {
 		final var afterBuild = System.nanoTime();
 		Metrics.millis("build.schema.cold", afterBuild - beforeBuild);
 		Metrics.millis("jvm.to.schema.ready", uptimeNanos());
+		Metrics.millis("main.to.schema.ready", afterBuild - mainStart);
 		Metrics.count("schema.statements", BenchmarkSchema.statementCount());
 
 		final var beforeQuery = System.nanoTime();
 		session.execute("SELECT pk FROM bench_ks_0.table_0");
-		Metrics.millis("query.first", System.nanoTime() - beforeQuery);
+		final var afterQuery = System.nanoTime();
+		Metrics.millis("query.first", afterQuery - beforeQuery);
+		Metrics.millis("main.to.first.query", afterQuery - mainStart);
 
 		final List<Long> builds = new ArrayList<>();
 		for (int i = 0; i < WARM_SAMPLES; i++) {
@@ -145,6 +163,79 @@ public final class StartupProbe {
 		final var raw = CQLFragmentParser.parseAny(CqlParser::query, FIRST_QUERY, "query");
 		Metrics.millis("parse.direct", System.nanoTime() - before);
 		Metrics.count("parse.direct.raw.hash", raw.hashCode() == 0 ? 0 : 1);
+	}
+
+	/**
+	 * Builds a session seeded with the fixture schema, loads {@code rows} rows into one extra table,
+	 * and reports the heap retained and the process's RSS. Both are read before and after so the
+	 * reported figure is the delta this session is responsible for, not whatever the JVM itself
+	 * already holds.
+	 */
+	private static void memory(final int rows) throws IOException {
+		final var rssBefore = readRssKb();
+		gcSettle();
+		final var heapBefore = heapUsedBytes();
+
+		final var session = SeaStarCqlSession.builder().withSchema(BenchmarkSchema.cql()).build();
+		session.execute(
+			"CREATE KEYSPACE bench_mem WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }");
+		session.execute("CREATE TABLE bench_mem.rows (id int PRIMARY KEY, name text, age int)");
+
+		if (rows > 0) {
+			final SeaStarDriverContext context = session.getContext();
+			final var table = context.getSeaStarKeyspace(CqlIdentifier.fromInternal("bench_mem"))
+				.flatMap(keyspace -> keyspace.getSeaStarTable(CqlIdentifier.fromInternal("rows")))
+				.orElseThrow(() -> new IllegalStateException("bench_mem.rows must exist after CREATE TABLE"));
+			final var idIndex = table.firstIndexOf(CqlIdentifier.fromInternal("id"));
+			final var nameIndex = table.firstIndexOf(CqlIdentifier.fromInternal("name"));
+			final var ageIndex = table.firstIndexOf(CqlIdentifier.fromInternal("age"));
+			for (int id = 0; id < rows; id++) {
+				final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
+				values.set(idIndex, id);
+				values.set(nameIndex, "name-" + id);
+				values.set(ageIndex, id % 100);
+				table.addRow(values);
+			}
+		}
+
+		gcSettle();
+		final var heapAfter = heapUsedBytes();
+		final var rssAfter = readRssKb();
+
+		Metrics.count("memory.rows", rows);
+		Metrics.value("memory.heap.used.mb", (heapAfter - heapBefore) / (1024.0d * 1024.0d));
+		Metrics.value("memory.rss.kb", rssAfter);
+		Metrics.value("memory.rss.delta.kb", rssAfter - rssBefore);
+
+		session.close();
+	}
+
+	private static void gcSettle() {
+		for (int i = 0; i < 3; i++) {
+			System.gc();
+			try {
+				Thread.sleep(100);
+			} catch (final InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+		}
+	}
+
+	private static long heapUsedBytes() {
+		return ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+	}
+
+	/**
+	 * Linux only - reads VmRSS out of {@code /proc/self/status}. Returns -1 if it cannot be read,
+	 * rather than failing the probe over a metric that is inherently platform specific.
+	 */
+	private static long readRssKb() throws IOException {
+		return Files.readAllLines(Path.of("/proc/self/status")).stream()
+			.filter(line -> line.startsWith("VmRSS:"))
+			.findFirst()
+			.map(line -> Long.parseLong(line.replaceAll("[^0-9]", "")))
+			.orElse(-1L);
 	}
 
 	private static long uptimeNanos() {

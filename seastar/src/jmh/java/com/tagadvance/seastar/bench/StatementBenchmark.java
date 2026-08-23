@@ -147,6 +147,16 @@ public class StatementBenchmark {
 		return session.execute(batch);
 	}
 
+	/**
+	 * As with {@link #deleteByPrimaryKey()}: the table is empty after the first invocation, so
+	 * steady state measures TRUNCATE against an already-empty table, not against 1 000 rows. This is
+	 * SeaStar's side of the TRUNCATE reset cost the README matrix calls out for a container.
+	 */
+	@Benchmark
+	public Object truncate() {
+		return session.execute("TRUNCATE " + BenchmarkFixture.qualify(TABLE));
+	}
+
 	@Benchmark
 	public PreparedStatement prepareCached() {
 		return session.prepare(
