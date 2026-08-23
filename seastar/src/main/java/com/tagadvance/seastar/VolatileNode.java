@@ -28,6 +28,11 @@ class VolatileNode implements Node {
 	private final UUID HOST_ID = UUID.randomUUID();
 	private final UUID SCHEMA_VERSION = UUID.randomUUID();
 
+	/**
+	 * A nominal loopback endpoint - nothing listens on it and nothing ever connects to it. The
+	 * contract requires an endpoint and a metric prefix, so the node names the address a
+	 * single-node cluster would have had.
+	 */
 	@Override
 	@NonNull
 	public EndPoint getEndPoint() {
@@ -46,34 +51,54 @@ class VolatileNode implements Node {
 		};
 	}
 
+	/**
+	 * Always empty - SeaStar binds no address, and the contract already allows this to be unknown.
+	 */
 	@Override
 	@NonNull
 	public Optional<InetSocketAddress> getBroadcastRpcAddress() {
 		return Optional.empty();
 	}
 
+	/**
+	 * Always empty, for the same reason as {@link #getBroadcastRpcAddress()}.
+	 */
 	@Override
 	@NonNull
 	public Optional<InetSocketAddress> getBroadcastAddress() {
 		return Optional.empty();
 	}
 
+	/**
+	 * Always empty, for the same reason as {@link #getBroadcastRpcAddress()}.
+	 */
 	@Override
 	@NonNull
 	public Optional<InetSocketAddress> getListenAddress() {
 		return Optional.empty();
 	}
 
+	/**
+	 * Always {@code datacenter1}, the stock SimpleSnitch answer - the same name a fresh container
+	 * reports, so driver configuration written against one fits the other.
+	 */
 	@Override
 	public String getDatacenter() {
 		return DATACENTER;
 	}
 
+	/**
+	 * Always {@code rack1}, the stock SimpleSnitch answer; see {@link #getDatacenter()}.
+	 */
 	@Override
 	public String getRack() {
 		return RACK;
 	}
 
+	/**
+	 * A constant. SeaStar is not any particular Cassandra release, and nothing in the in-process
+	 * path consults the version.
+	 */
 	@Override
 	public Version getCassandraVersion() {
 		return Version.V6_9_0;
@@ -85,27 +110,47 @@ class VolatileNode implements Node {
 		return Collections.emptyMap();
 	}
 
+	/**
+	 * Always {@link NodeState#UP}: the node is the process itself, so it is up for exactly as long
+	 * as anything exists to ask.
+	 */
 	@Override
 	@NonNull
 	public NodeState getState() {
 		return NodeState.UP;
 	}
 
+	/**
+	 * The epoch, as a constant: the node never transitions state, so there is no real timestamp to
+	 * report.
+	 */
 	@Override
 	public long getUpSinceMillis() {
 		return 0;
 	}
 
+	/**
+	 * Always 1. There are no connections in process, but zero is what a driver shows for a node it
+	 * has lost, and this node is never lost.
+	 */
 	@Override
 	public int getOpenConnections() {
 		return 1;
 	}
 
+	/**
+	 * Always false: with no connections there is nothing to lose, so there is never anything to
+	 * reconnect.
+	 */
 	@Override
 	public boolean isReconnecting() {
 		return false;
 	}
 
+	/**
+	 * Always {@link NodeDistance#LOCAL}: distance is a load-balancing concept, and with a single
+	 * node no other answer would let requests through.
+	 */
 	@Override
 	@NonNull
 	public NodeDistance getDistance() {
@@ -117,6 +162,11 @@ class VolatileNode implements Node {
 		return HOST_ID;
 	}
 
+	/**
+	 * Fixed at construction and never moved by DDL. Nothing in process checks schema agreement;
+	 * {@code seastar-server} keeps its own moving {@code schema_version} in {@code system.local} for
+	 * connected drivers that do.
+	 */
 	@Override
 	public UUID getSchemaVersion() {
 		return SCHEMA_VERSION;

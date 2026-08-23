@@ -18,6 +18,12 @@ import net.jcip.annotations.Immutable;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * The {@link ExecutionInfo} for a statement answered in memory. Most of what the driver's contract
+ * describes - retries, speculation, paging, tracing, a wire - is machinery a single-node fake that
+ * answers on the calling thread does not have, so those methods return the value the driver defines
+ * for "none"; each says so on the method.
+ */
 @Immutable
 class SeaStarExecutionInfo implements ExecutionInfo {
 
@@ -35,21 +41,42 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 		return statement;
 	}
 
+	/**
+	 * The session's single node, always: every statement is answered in process, so there is only
+	 * one coordinator it could be.
+	 */
 	@Override
 	public Node getCoordinator() {
 		return coordinator;
 	}
 
+	/**
+	 * SeaStar never speculates - the answer is computed inline on the calling thread, so there is no
+	 * slow node to hedge against - which the driver defines as a count of zero.
+	 *
+	 * @return {@code 0}, always
+	 */
 	@Override
 	public int getSpeculativeExecutionCount() {
 		return 0;
 	}
 
+	/**
+	 * The initial execution always answers; there are no speculative executions to beat it.
+	 *
+	 * @return {@code 0}, always
+	 */
 	@Override
 	public int getSuccessfulExecutionIndex() {
 		return 0;
 	}
 
+	/**
+	 * With one node and no retries, a statement either succeeds or throws - no errors from previous
+	 * coordinators can accumulate.
+	 *
+	 * @return an empty list, always
+	 */
 	@Override
 	@NonNull
 	public List<Entry<Node, Throwable>> getErrors() {
@@ -68,6 +95,13 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 		return null;
 	}
 
+	/**
+	 * SeaStar never issues a server-side warning: anything a cluster would warn about is either
+	 * answered cleanly or refused with an exception, in keeping with the fidelity goal of failing
+	 * loudly rather than approximating quietly.
+	 *
+	 * @return an empty list, always
+	 */
 	@Override
 	@NonNull
 	public List<String> getWarnings() {
@@ -84,6 +118,11 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 		return Map.of();
 	}
 
+	/**
+	 * A single in-memory node cannot disagree with itself about the schema.
+	 *
+	 * @return {@code true}, always
+	 */
 	@Override
 	public boolean isSchemaInAgreement() {
 		return true;
@@ -116,11 +155,18 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 			new IllegalStateException("Tracing was disabled for this request"));
 	}
 
+	/**
+	 * There is no protocol frame to measure - the rows never cross a wire - so this is the
+	 * {@code -1} the driver defines as "information not available".
+	 */
 	@Override
 	public int getResponseSizeInBytes() {
 		return -1;
 	}
 
+	/**
+	 * {@code -1}, always, for the same reason as {@link #getResponseSizeInBytes()}.
+	 */
 	@Override
 	public int getCompressedResponseSizeInBytes() {
 		return -1;

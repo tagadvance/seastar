@@ -64,11 +64,19 @@ class VolatileUdtValue implements SeaStarUdtValue {
 		});
 	}
 
+	/**
+	 * The value's own lock, the innermost of the hierarchy - nothing else is acquired while it is
+	 * held.
+	 */
 	@Override
 	public ReadWriteLock lock() {
 		return lock;
 	}
 
+	/**
+	 * The live type, not a snapshot: an ALTER TYPE performed after this value was created shows
+	 * through it, while the value keeps the slots it was created with.
+	 */
 	@Override
 	@NonNull
 	public SeaStarUserDefinedType getType() {
@@ -80,6 +88,11 @@ class VolatileUdtValue implements SeaStarUdtValue {
 		return firstIndexOf(CqlIdentifier.fromCql(name));
 	}
 
+	/**
+	 * Answers from the value's own slots rather than from the type, so a field appended by ALTER
+	 * TYPE after this value was created is not found (-1) - every index returned is usable with the
+	 * getters.
+	 */
 	@Override
 	public int firstIndexOf(final @NonNull CqlIdentifier id) {
 		return readLockUnchecked(() -> IntStream.range(0, values.size())
@@ -115,12 +128,15 @@ class VolatileUdtValue implements SeaStarUdtValue {
 		return readLockUnchecked(() -> List.copyOf(values));
 	}
 
+	/**
+	 * A value written before {@code ALTER TYPE ... ADD} has fewer slots than the type now has.
+	 * Reading a missing trailing field as null, rather than throwing, mirrors how a short stored
+	 * payload decodes on a cluster; {@code UdtCodec.encode} probes up to the type's field count, not
+	 * the value's.
+	 */
 	@Override
 	@Nullable
 	public ByteBuffer getBytesUnsafe(final int i) {
-		// A value written before ALTER TYPE ... ADD has fewer slots than the type now has. Reading the
-		// missing trailing fields as null mirrors how a short stored payload decodes on a cluster;
-		// UdtCodec.encode probes up to the type's field count, not the value's.
 		final var entries = entries();
 
 		return i < entries.size() ? entries.get(i).toByteBuffer() : null;
@@ -144,17 +160,29 @@ class VolatileUdtValue implements SeaStarUdtValue {
 		return this;
 	}
 
+	/**
+	 * The value's slot count, which for a value created before {@code ALTER TYPE ... ADD} is
+	 * smaller than the type's field count.
+	 */
 	@Override
 	public int size() {
 		return readLockUnchecked(values::size);
 	}
 
+	/**
+	 * The type the slot was created or last set with. Answers from the value's slots, so an index
+	 * the type gained after this value was created throws {@link IndexOutOfBoundsException}.
+	 */
 	@Override
 	@NonNull
 	public DataType getType(final int i) {
 		return readLockUnchecked(values.get(i)::dataType);
 	}
 
+	/**
+	 * Resolved through the type's attachment point, which takes the keyspace's read lock - never
+	 * call this while holding the value's own lock.
+	 */
 	@Override
 	@NonNull
 	public CodecRegistry codecRegistry() {

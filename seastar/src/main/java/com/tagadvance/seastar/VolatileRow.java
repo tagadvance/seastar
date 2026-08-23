@@ -240,6 +240,11 @@ class VolatileRow implements SeaStarRow {
 		cells.insert(i, value, Cells.microseconds(context.getClock()));
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>Takes no lock, for the same reason as {@link #insertValue(int, Object)}.
+	 */
 	@Override
 	public void removeValue(final int i) {
 		cells.remove(i);
@@ -265,6 +270,10 @@ class VolatileRow implements SeaStarRow {
 					return isDetached;
 				}
 
+				/**
+				 * A snapshot is a frozen copy with no live storage behind it to reattach, so this
+				 * is refused rather than silently ignored.
+				 */
 				@Override
 				public void attach(final @NonNull AttachmentPoint attachmentPoint) {
 					throw new UnsupportedOperationException();
@@ -330,6 +339,10 @@ class VolatileRow implements SeaStarRow {
 		});
 	}
 
+	/**
+	 * The table itself - a live view, not a copy: a column added or dropped by a schema change
+	 * shows up here immediately. {@link #snapshot()} is the copy.
+	 */
 	@NonNull
 	@Override
 	public ColumnDefinitions getColumnDefinitions() {
@@ -440,6 +453,10 @@ class VolatileRow implements SeaStarRow {
 		return table.readLockUnchecked(() -> attachmentPoint == AttachmentPoint.NONE);
 	}
 
+	/**
+	 * Reattaches the row and its table together: the row answers {@link #getColumnDefinitions()}
+	 * with the table, so the two must agree on where they are attached.
+	 */
 	@Override
 	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
 		table.writeLock(() -> {
@@ -449,6 +466,10 @@ class VolatileRow implements SeaStarRow {
 		});
 	}
 
+	/**
+	 * Encodes the stored value on demand, under the table's read lock: SeaStar stores Java objects
+	 * rather than serialized bytes, so this is a serialization, not a lookup.
+	 */
 	@Nullable
 	@Override
 	public ByteBuffer getBytesUnsafe(int i) {

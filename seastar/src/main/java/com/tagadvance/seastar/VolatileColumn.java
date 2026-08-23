@@ -45,6 +45,10 @@ class VolatileColumn implements SeaStarColumn {
 		this.attachmentPoint = context;
 	}
 
+	/**
+	 * The table's lock, which is its keyspace's; a column has none of its own. See the lock
+	 * hierarchy in {@code AGENTS.md}.
+	 */
 	@Override
 	public ReadWriteLock lock() {
 		return table.lock();

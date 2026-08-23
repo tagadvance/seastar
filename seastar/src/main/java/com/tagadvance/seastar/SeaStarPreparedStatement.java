@@ -58,6 +58,11 @@ class SeaStarPreparedStatement implements PreparedStatement {
 		this(context, request, null);
 	}
 
+	/**
+	 * @param keyspace the keyspace the session had selected when this statement was prepared, or
+	 * {@code null}; it stands in wherever the request itself does not name one - in the prepared id
+	 * and when resolving an unqualified table name
+	 */
 	protected SeaStarPreparedStatement(final SeaStarDriverContext context,
 		final PrepareRequest request, final CqlIdentifier keyspace) {
 		this.context = requireNonNull(context, "context must not be null");
@@ -184,6 +189,11 @@ class SeaStarPreparedStatement implements PreparedStatement {
 		return override != null ? override : definitions().resultSet();
 	}
 
+	/**
+	 * Nothing in SeaStar calls this; it exists to satisfy the interface. Note the driver documents
+	 * the update as atomic, and here it is two separate volatile writes - a caller invoking it while
+	 * other threads read could briefly expose the new id alongside the old definitions.
+	 */
 	@Override
 	public void setResultMetadata(final @NonNull ByteBuffer newResultMetadataId,
 		final @NonNull ColumnDefinitions newResultSetDefinitions) {
@@ -216,6 +226,10 @@ class SeaStarPreparedStatement implements PreparedStatement {
 		return new SeaStarBoundStatement(context, this, values);
 	}
 
+	/**
+	 * Built by way of {@link #bind(Object...)}, so the values are checked against the codec registry
+	 * when the builder is created, the same way binding them directly would.
+	 */
 	@Override
 	@NonNull
 	public BoundStatementBuilder boundStatementBuilder(final Object @NonNull ... values) {

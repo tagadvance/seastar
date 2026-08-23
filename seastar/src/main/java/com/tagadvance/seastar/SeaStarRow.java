@@ -12,8 +12,15 @@ import org.jspecify.annotations.Nullable;
  */
 public interface SeaStarRow extends Row {
 
+	/**
+	 * The context this row was created against, which supplies its codec registry and clock.
+	 */
 	SeaStarDriverContext context();
 
+	/**
+	 * The table this row belongs to. Its lock guards the row, and its column list is what the row's
+	 * values are positionally tied to.
+	 */
 	SeaStarTable table();
 
 	/**
@@ -31,6 +38,9 @@ public interface SeaStarRow extends Row {
 		table().writeLock(() -> set(table().firstIndexOf(id), value));
 	}
 
+	/**
+	 * Writes a column at the clock's current time, without a TTL. Takes the table's write lock.
+	 */
 	void set(int i, Object value);
 
 	/**
@@ -96,6 +106,10 @@ public interface SeaStarRow extends Row {
 	 */
 	void removeValue(int i);
 
+	/**
+	 * Rejects a value the column's codec cannot accept, so a bad write fails up front naming the
+	 * column rather than surfacing later as a codec error when the value is read.
+	 */
 	default void validate(final int i, final Object value) {
 		final var dataType = getColumnDefinitions().get(i).getType();
 		final var codec = context().getCodecRegistry().codecFor(dataType);
@@ -106,6 +120,11 @@ public interface SeaStarRow extends Row {
 		}
 	}
 
+	/**
+	 * An immutable copy of this row's values and column definitions, taken under the table's read
+	 * lock. A result set hands out snapshots rather than live rows, so what a caller holds does not
+	 * change when the table does.
+	 */
 	Row snapshot();
 
 }

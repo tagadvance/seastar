@@ -64,6 +64,10 @@ class VolatileKeyspace implements SeaStarKeyspace {
 		this.tables = new LinkedHashMap<>();
 	}
 
+	/**
+	 * The lock this keyspace owns; every table, column, row and UDT inside it hands back this same
+	 * instance.
+	 */
 	@Override
 	public ReadWriteLock lock() {
 		return lock;
@@ -149,6 +153,10 @@ class VolatileKeyspace implements SeaStarKeyspace {
 		return readLockUnchecked(() -> durableWrites);
 	}
 
+	/**
+	 * Always false - SeaStar never creates a virtual keyspace, so any keyspace a caller can reach is
+	 * a regular one.
+	 */
 	@Override
 	public boolean isVirtual() {
 		return false;
@@ -165,6 +173,11 @@ class VolatileKeyspace implements SeaStarKeyspace {
 		return readLockUnchecked(() -> replication);
 	}
 
+	/**
+	 * The driver's view of {@link #getSeaStarTables()}: the map is a snapshot, but the tables in it
+	 * are the live objects and keep mutating - unlike a real driver's metadata, which is a frozen
+	 * copy of the schema at refresh time.
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, TableMetadata> getTables() {
@@ -184,6 +197,12 @@ class VolatileKeyspace implements SeaStarKeyspace {
 		return Map.of();
 	}
 
+	/**
+	 * The driver's view of {@link #getSeaStarUserDefinedTypes()}: a snapshot map over the live
+	 * objects.
+	 *
+	 * @see #getTables()
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, UserDefinedType> getUserDefinedTypes() {

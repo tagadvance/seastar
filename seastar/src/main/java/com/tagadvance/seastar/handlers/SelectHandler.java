@@ -36,20 +36,37 @@ import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement.RawStatement;
 
+/**
+ * {@code SELECT}: the statement is translated into a {@link Query}, matching rows are filtered,
+ * ordered the way a real node would return them, limited, and projected or aggregated into a
+ * single-page {@link AsyncResultSet}.
+ */
 @ThreadSafe
 public class SelectHandler implements CqlHandler<RawStatement> {
 
 	private final Supplier<Optional<CqlIdentifier>> getKeyspace;
 
+	/**
+	 * @param getKeyspace the session's currently selected keyspace, consulted when a statement does
+	 * not qualify its table
+	 */
 	public SelectHandler(final Supplier<Optional<CqlIdentifier>> getKeyspace) {
 		this.getKeyspace = requireNonNull(getKeyspace, "getKeyspace must not be null");
 	}
 
+	/**
+	 * Claims every parsed {@code SELECT}.
+	 */
 	@Override
 	public boolean canProcess(final CQLStatement.Raw raw) {
 		return raw instanceof RawStatement;
 	}
 
+	/**
+	 * Translates and validates the query, then reads the table under its lock: filter, order, limit,
+	 * then project or aggregate. A translation or validation failure is returned as a failed stage
+	 * carrying the {@link InvalidQueryException} a live cluster would have answered with.
+	 */
 	@Override
 	public CompletionStage<AsyncResultSet> processCql(final SeaStarDriverContext context,
 		final ExecutionInfo executionInfo, final RawStatement raw, final Object... bindings) {

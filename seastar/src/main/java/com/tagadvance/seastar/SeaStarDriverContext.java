@@ -18,6 +18,10 @@ import java.util.Optional;
  */
 public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContext, Metadata {
 
+	/**
+	 * The single node this session reports - the same instance for the session's lifetime, and the
+	 * only entry in {@link #getNodes()}.
+	 */
 	Node getNode();
 
 	/**
@@ -27,10 +31,19 @@ public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContex
 	 */
 	Clock getClock();
 
+	/**
+	 * Shortcut for {@link #getSeaStarKeyspace(CqlIdentifier)} with
+	 * {@link CqlIdentifier#fromInternal(String)}: the name is case-sensitive and unquoted, not the
+	 * {@code fromCql} rules {@link Metadata#getKeyspace(String)} applies.
+	 */
 	default Optional<SeaStarKeyspace> getSeaStarKeyspace(final String name) {
 		return getSeaStarKeyspace(CqlIdentifier.fromInternal(name));
 	}
 
+	/**
+	 * Looks up a keyspace under the context read lock. The result is the live keyspace, guarded by
+	 * its own lock - not a copy.
+	 */
 	Optional<SeaStarKeyspace> getSeaStarKeyspace(CqlIdentifier id);
 
 	/**
@@ -46,14 +59,26 @@ public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContex
 	 */
 	boolean DEFAULT_DURABLE_WRITES = true;
 
+	/**
+	 * Shortcut for {@link #newSeaStarKeyspace(CqlIdentifier)} with
+	 * {@link CqlIdentifier#fromInternal(String)}, so the name is case-sensitive and unquoted.
+	 */
 	default SeaStarKeyspace newSeaStarKeyspace(final String name) {
 		return newSeaStarKeyspace(CqlIdentifier.fromInternal(name));
 	}
 
+	/**
+	 * Creates a keyspace with {@link #DEFAULT_REPLICATION} and {@link #DEFAULT_DURABLE_WRITES}.
+	 */
 	default SeaStarKeyspace newSeaStarKeyspace(final CqlIdentifier id) {
 		return newSeaStarKeyspace(id, DEFAULT_REPLICATION, DEFAULT_DURABLE_WRITES);
 	}
 
+	/**
+	 * Creates a keyspace and registers it, bypassing CQL - how a test seeds data directly. Unlike
+	 * {@code CREATE KEYSPACE} there is no already-exists check: a keyspace registered under the same
+	 * id is replaced silently, along with everything in it.
+	 */
 	default SeaStarKeyspace newSeaStarKeyspace(final CqlIdentifier id,
 		final Map<String, String> replication, final boolean durableWrites) {
 		final var keyspace = new VolatileKeyspace(this, id, replication, durableWrites);
@@ -62,10 +87,23 @@ public interface SeaStarDriverContext extends SeaStarReadWriteLock, DriverContex
 		return keyspace;
 	}
 
+	/**
+	 * Registers a keyspace, taking the context write lock. An existing keyspace under the same name
+	 * is replaced silently - {@code CREATE KEYSPACE}'s already-exists check lives in its handler,
+	 * not here.
+	 */
 	void putSeaStarKeyspace(SeaStarKeyspace keyspace);
 
+	/**
+	 * Deregisters a keyspace, taking the context write lock. An id that is not registered is a
+	 * no-op.
+	 */
 	void removeSeaStarKeyspace(CqlIdentifier id);
 
+	/**
+	 * A snapshot taken under the context read lock: the map is a copy, safe to iterate against
+	 * concurrent DDL, but the keyspaces in it are the live objects.
+	 */
 	Map<CqlIdentifier, SeaStarKeyspace> getSeaStarKeyspaces();
 
 }

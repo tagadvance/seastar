@@ -11,6 +11,9 @@ import com.tagadvance.tools.SeaStarReadWriteLock;
  */
 public interface SeaStarColumn extends SeaStarReadWriteLock, ColumnDefinition, ColumnMetadata {
 
+	/**
+	 * The table this column belongs to, which is where {@link #lock()} comes from.
+	 */
 	SeaStarTable table();
 
 }

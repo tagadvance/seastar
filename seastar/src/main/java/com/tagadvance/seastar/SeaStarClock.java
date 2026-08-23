@@ -74,6 +74,10 @@ public final class SeaStarClock extends Clock {
 		return zone;
 	}
 
+	/**
+	 * The copy shares this clock's instant rather than snapshotting it: advancing either clock moves
+	 * both, and only the zone differs.
+	 */
 	@Override
 	@NonNull
 	public Clock withZone(final @NonNull ZoneId zone) {

@@ -45,6 +45,11 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 	private final Iterable<Row> currentPage;
 	private final Row firstRow;
 
+	/**
+	 * Wraps {@code data} as the one and only page. The queue is adopted rather than copied - rows
+	 * are polled from it as they are read - so the caller must hand over a queue it will not touch
+	 * again.
+	 */
 	public SeaStarAsyncResultSet(final @NonNull ColumnDefinitions definitions,
 		final @NonNull ExecutionInfo executionInfo, final @NonNull Queue<Row> data) {
 		this.definitions = requireNonNull(definitions, "definitions must not be null");
@@ -94,6 +99,11 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 		return false;
 	}
 
+	/**
+	 * Always throws {@link IllegalStateException}: every SeaStar result is its only page, so there
+	 * is never a next one to fetch, and that exception is what the driver's contract reserves for
+	 * exactly this case.
+	 */
 	@NonNull
 	@Override
 	public CompletionStage<AsyncResultSet> fetchNextPage() throws IllegalStateException {
@@ -112,6 +122,11 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 		return firstRow.getBoolean("[applied]");
 	}
 
+	/**
+	 * An always-empty single-page result set, the answer to a statement that returns no rows.
+	 * Unlike {@link SeaStarAsyncResultSet} it holds no iterator state, so the returned instance is
+	 * safe for concurrent use.
+	 */
 	public static AsyncResultSet empty(final ExecutionInfo executionInfo) {
 		return new AsyncResultSet() {
 			@NonNull

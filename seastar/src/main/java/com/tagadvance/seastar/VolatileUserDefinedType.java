@@ -70,6 +70,9 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 		this.attachmentPoint = original.context;
 	}
 
+	/**
+	 * The keyspace's lock - a type is guarded by its keyspace and holds no lock of its own.
+	 */
 	@Override
 	public ReadWriteLock lock() {
 		return keyspace.lock();
@@ -96,6 +99,10 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 		return isFrozen;
 	}
 
+	/**
+	 * A copy taken under the keyspace's read lock, not a live view - a concurrent ALTER TYPE does
+	 * not show through a list already handed out.
+	 */
 	@Override
 	@NonNull
 	public List<CqlIdentifier> getFieldNames() {
@@ -132,6 +139,9 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 		return allIndicesOf(CqlIdentifier.fromCql(name));
 	}
 
+	/**
+	 * A copy taken under the keyspace's read lock, not a live view, like {@link #getFieldNames()}.
+	 */
 	@Override
 	@NonNull
 	public List<DataType> getFieldTypes() {
@@ -139,9 +149,11 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 			() -> definitions.stream().map(UserDefinedTypeDefinition::dataType).toList());
 	}
 
-	// Copies share the definitions so that ALTER TYPE stays visible through every frozen and
-	// non-frozen variant handed out as a column type, the way schema propagates on a cluster. They
-	// share a lock too, because they share a keyspace.
+	/**
+	 * Copies share the definitions so that ALTER TYPE stays visible through every frozen and
+	 * non-frozen variant handed out as a column type, the way schema propagates on a cluster. They
+	 * share a lock too, because they share a keyspace.
+	 */
 	@Override
 	@NonNull
 	public UserDefinedType copy(final boolean newFrozen) {
@@ -218,6 +230,9 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 		return Objects.hash(getKeyspace(), name, getFieldNames(), getFieldTypes());
 	}
 
+	/**
+	 * One declared field of the type: its name and data type.
+	 */
 	public record UserDefinedTypeDefinition(@NonNull CqlIdentifier name,
 											@NonNull DataType dataType) {
 

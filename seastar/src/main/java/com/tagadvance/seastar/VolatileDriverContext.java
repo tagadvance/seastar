@@ -132,18 +132,33 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 			"SeaStar does not support the driver's RequestProcessorRegistry; it dispatches through SeaStarRequestProcessorRegistry");
 	}
 
+	/**
+	 * Always empty: with one node reached in process there is nothing to balance, and no policy is
+	 * ever consulted. Note the driver's contract promises an entry for the default profile; SeaStar
+	 * deliberately breaks that, so {@code getLoadBalancingPolicy(profileName)} answers {@code null}.
+	 */
 	@Override
 	@NonNull
 	public Map<String, LoadBalancingPolicy> getLoadBalancingPolicies() {
 		return Collections.emptyMap();
 	}
 
+	/**
+	 * Always empty: a request either succeeds or throws the failure a node would have sent - there
+	 * is no transient network error to retry through. As with the load balancing policies, the
+	 * default profile entry the contract promises is deliberately absent.
+	 */
 	@Override
 	@NonNull
 	public Map<String, RetryPolicy> getRetryPolicies() {
 		return Collections.emptyMap();
 	}
 
+	/**
+	 * Always empty: speculating means racing a second node, and there is no second node. As with the
+	 * load balancing policies, the default profile entry the contract promises is deliberately
+	 * absent.
+	 */
 	@Override
 	@NonNull
 	public Map<String, SpeculativeExecutionPolicy> getSpeculativeExecutionPolicies() {
@@ -164,18 +179,29 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 			"SeaStar does not support reconnection policies; it holds no connection to reconnect");
 	}
 
+	/**
+	 * Translation exists for reaching nodes across network topologies, and no address is ever dialed
+	 * here. The driver already ships the "leave it alone" answer as
+	 * {@link PassThroughAddressTranslator}; any configured translator is ignored.
+	 */
 	@Override
 	@NonNull
 	public AddressTranslator getAddressTranslator() {
 		return new PassThroughAddressTranslator(this);
 	}
 
+	/**
+	 * Always empty, even if authentication was configured: there is no connection to authenticate.
+	 */
 	@Override
 	@NonNull
 	public Optional<AuthProvider> getAuthProvider() {
 		return Optional.empty();
 	}
 
+	/**
+	 * Always empty, even if SSL was configured: there is no socket to encrypt.
+	 */
 	@Override
 	@NonNull
 	public Optional<SslEngineFactory> getSslEngineFactory() {
@@ -260,12 +286,19 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 		return readLockUnchecked(() -> Map.copyOf(keyspaceById));
 	}
 
+	/**
+	 * The single node, keyed by its host id; it never changes for the life of the session.
+	 */
 	@Override
 	@NonNull
 	public Map<UUID, Node> getNodes() {
 		return Map.of(node.getHostId(), node);
 	}
 
+	/**
+	 * A snapshot, built on {@link #getSeaStarKeyspaces()}. Unlike a live driver's metadata it is
+	 * never disabled or incomplete - the metadata being read is the store itself.
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, KeyspaceMetadata> getKeyspaces() {

@@ -391,11 +391,18 @@ class VolatileTable implements SeaStarTable {
 		return rowsByPartition.values().stream().flatMap(List::stream);
 	}
 
+	/**
+	 * Always false - {@code COMPACT STORAGE} no longer exists in Cassandra 5, whose parser SeaStar
+	 * uses, so no table here can be compact.
+	 */
 	@Override
 	public boolean isCompactStorage() {
 		return false;
 	}
 
+	/**
+	 * Always false - SeaStar never creates a virtual table.
+	 */
 	@Override
 	public boolean isVirtual() {
 		return false;
@@ -415,6 +422,10 @@ class VolatileTable implements SeaStarTable {
 		writeLock(() -> indexes.remove(name));
 	}
 
+	/**
+	 * A snapshot, taken under the read lock: a live view would keep mutating under a caller that is
+	 * still walking it.
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, IndexMetadata> getIndexes() {
@@ -433,11 +444,20 @@ class VolatileTable implements SeaStarTable {
 		return name;
 	}
 
+	/**
+	 * An id invented at construction rather than assigned by a server, stable for the table's
+	 * lifetime - which is all the contract asks of it.
+	 */
 	@Override
 	public Optional<UUID> getId() {
 		return Optional.of(uuid);
 	}
 
+	/**
+	 * A snapshot, taken under the read lock.
+	 *
+	 * @see #getIndexes()
+	 */
 	@Override
 	@NonNull
 	public List<ColumnMetadata> getPartitionKey() {
@@ -448,6 +468,11 @@ class VolatileTable implements SeaStarTable {
 			.toList());
 	}
 
+	/**
+	 * A snapshot, taken under the read lock.
+	 *
+	 * @see #getIndexes()
+	 */
 	@Override
 	@NonNull
 	public Map<ColumnMetadata, ClusteringOrder> getClusteringColumns() {
@@ -464,6 +489,11 @@ class VolatileTable implements SeaStarTable {
 		});
 	}
 
+	/**
+	 * A snapshot, taken under the read lock; the columns in it are the live objects.
+	 *
+	 * @see #getIndexes()
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, ColumnMetadata> getColumns() {
@@ -471,6 +501,11 @@ class VolatileTable implements SeaStarTable {
 			.collect(Collectors.toUnmodifiableMap(ColumnMetadata::getName, Function.identity())));
 	}
 
+	/**
+	 * Always empty - SeaStar models no table options. A {@code WITH} clause on {@code CREATE TABLE}
+	 * or {@code ALTER TABLE} is accepted and discarded, because no option it can set changes any
+	 * result an in-memory store produces.
+	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, Object> getOptions() {

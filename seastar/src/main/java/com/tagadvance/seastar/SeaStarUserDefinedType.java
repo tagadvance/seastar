@@ -13,6 +13,10 @@ import java.util.Map;
  */
 public interface SeaStarUserDefinedType extends SeaStarReadWriteLock, UserDefinedType {
 
+	/**
+	 * The context this type belongs to. It doubles as the type's initial attachment point, which is
+	 * what supplies the codec registry and protocol version its values encode with.
+	 */
 	SeaStarDriverContext context();
 
 	/**

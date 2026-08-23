@@ -22,8 +22,14 @@ import org.jspecify.annotations.NonNull;
  */
 public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, ColumnDefinitions {
 
+	/**
+	 * The context this table's keyspace is registered with - the root of the lock hierarchy.
+	 */
 	SeaStarDriverContext context();
 
+	/**
+	 * The keyspace that holds this table and owns the lock {@link #lock()} returns.
+	 */
 	SeaStarKeyspace keyspace();
 
 	/**
@@ -46,15 +52,26 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 		return context().readLockUnchecked(() -> readLockUnchecked(callable));
 	}
 
+	/**
+	 * Shortcut for {@link #addColumn(CqlIdentifier, DataType)
+	 * addColumn(CqlIdentifier.fromInternal(name), type)}.
+	 */
 	default SeaStarColumn addColumn(final @NonNull String name, final @NonNull DataType type) {
 		return addColumn(CqlIdentifier.fromInternal(name), type);
 	}
 
+	/**
+	 * Adds a regular (non-static) column:
+	 * {@link #addColumn(CqlIdentifier, DataType, boolean) addColumn(name, type, false)}.
+	 */
 	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name,
 		final @NonNull DataType type) {
 		return addColumn(name, type, false);
 	}
 
+	/**
+	 * Creates a column, appends it via {@link #addColumn(SeaStarColumn)}, and returns it.
+	 */
 	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name, final @NonNull DataType type,
 		final boolean isStatic) {
 		final var column = new VolatileColumn(context(), this, name, type, isStatic);
@@ -63,6 +80,11 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 		return column;
 	}
 
+	/**
+	 * Appends a column to the end of the column list, opening no slot in existing rows - so this is
+	 * for building a table that has no rows yet. {@link #insertColumn} is the
+	 * {@code ALTER TABLE ... ADD} form that does both.
+	 */
 	void addColumn(final SeaStarColumn column);
 
 	/**
@@ -98,6 +120,9 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 */
 	void markClustering(CqlIdentifier name, ClusteringOrder order);
 
+	/**
+	 * Shortcut for {@link #addRow(List)}: one value per column, in column order.
+	 */
 	default SeaStarRow addRow(final Object... values) {
 		return addRow(List.of(values));
 	}
@@ -137,8 +162,17 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 		return getColumns().values().stream().anyMatch(ColumnMetadata::isStatic);
 	}
 
+	/**
+	 * Files an already-built row under the partition its key values name. Row values are positional
+	 * against the column list - the {@link #addRow(List)} overloads build and validate that for the
+	 * caller.
+	 */
 	void addRow(final SeaStarRow row);
 
+	/**
+	 * Removes every row the predicate matches, in every partition, dropping any partition left
+	 * empty.
+	 */
 	void removeRowIf(Predicate<SeaStarRow> predicate);
 
 	/**
@@ -179,10 +213,26 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 */
 	Stream<SeaStarRow> partition(List<Object> partitionKeyValues);
 
+	/**
+	 * Marks the table dropped by detaching it - {@link #isDetached()} turns true - so anything still
+	 * holding a reference can see it is gone. Removing it from its keyspace is separate:
+	 * {@code DROP TABLE} does both, via
+	 * {@link SeaStarKeyspace#removeSeaStarTable(CqlIdentifier)}.
+	 */
 	void drop();
 
+	/**
+	 * Discards every row and every partition's static cells, leaving the columns, keys and indexes
+	 * in place. This is {@code TRUNCATE}.
+	 */
 	void truncate();
 
+	/**
+	 * A frozen copy of the column definitions, taken under the read lock: it keeps answering the
+	 * same way while the live table is altered underneath it, which is what pins a result set's
+	 * metadata to the schema its statement ran against. The copy cannot be re-attached - its
+	 * {@code attach} throws {@link UnsupportedOperationException}.
+	 */
 	ColumnDefinitions snapshot();
 
 }
