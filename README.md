@@ -1,5 +1,10 @@
 # SeaStar
 
+[![build](https://github.com/tagadvance/seastar/actions/workflows/build.yml/badge.svg)](https://github.com/tagadvance/seastar/actions/workflows/build.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/com.tagadvance/seastar)](https://central.sonatype.com/artifact/com.tagadvance/seastar)
+[![release](https://img.shields.io/github/v/release/tagadvance/seastar)](https://github.com/tagadvance/seastar/releases/latest)
+[![license](https://img.shields.io/github/license/tagadvance/seastar)](LICENSE)
+
 An in-memory implementation of the DataStax Java driver's `CqlSession` — a fast, in-process
 alternative to [TestContainers](https://java.testcontainers.org/modules/databases/cassandra/) for
 tests that exercise CQL. SeaStar implements the driver's own public interfaces, so it drops in
