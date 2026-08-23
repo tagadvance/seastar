@@ -432,4 +432,26 @@ public abstract class AbstractTypeFidelityTest extends AbstractFidelityTest {
 		assertEquals(List.of(), type.allIndicesOf("nope"));
 	}
 
+	@Test
+	@Order(252)
+	@DisplayName("A value stored before ALTER TYPE ADD reads and writes at the type's new width")
+	void testValueGrowsWithAlteredType() {
+		session.execute("CREATE TYPE IF NOT EXISTS types.grow_t (a text)");
+		session.execute(
+			"CREATE TABLE IF NOT EXISTS types.grow (id int PRIMARY KEY, v frozen<grow_t>)");
+		session.execute("INSERT INTO types.grow (id, v) VALUES (252, {a: 'first'})");
+		session.execute("ALTER TYPE types.grow_t ADD b int");
+
+		final var value = session.execute("SELECT v FROM types.grow WHERE id = 252")
+			.one()
+			.getUdtValue("v");
+		assertEquals(2, value.size());
+		assertEquals("first", value.getString("a"));
+		assertTrue(value.isNull("b"));
+
+		final var updated = value.setInt("b", 7);
+		assertEquals(7, updated.getInt("b"));
+		assertEquals("first", updated.getString("a"));
+	}
+
 }

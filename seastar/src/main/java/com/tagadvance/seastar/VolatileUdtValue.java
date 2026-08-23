@@ -75,7 +75,7 @@ class VolatileUdtValue implements SeaStarUdtValue {
 
 	/**
 	 * The live type, not a snapshot: an ALTER TYPE performed after this value was created shows
-	 * through it, while the value keeps the slots it was created with.
+	 * through it, and through this value, which reads and writes at the type's current width.
 	 */
 	@Override
 	@NonNull
@@ -89,16 +89,14 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	}
 
 	/**
-	 * Answers from the value's own slots rather than from the type, so a field appended by ALTER
-	 * TYPE after this value was created is not found (-1) - every index returned is usable with the
-	 * getters.
+	 * Answers from the type rather than from the value's slots, so a field the type gained or
+	 * renamed after this value was created resolves the way it would on a cluster, where names live
+	 * in the schema and not in the stored payload. Every index the type has is safe with the
+	 * getters: a slot this value never grew reads as null.
 	 */
 	@Override
 	public int firstIndexOf(final @NonNull CqlIdentifier id) {
-		return readLockUnchecked(() -> IntStream.range(0, values.size())
-			.filter(i -> values.get(i).name().equals(id))
-			.findFirst()
-			.orElse(-1));
+		return type.getFieldNames().indexOf(id);
 	}
 
 	@Override
@@ -150,33 +148,46 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	@Override
 	@NonNull
 	public UdtValue setBytesUnsafe(final int i, final ByteBuffer bytes) {
-		final var name = type.getFieldNames().get(i);
-		final var dataType = type.getFieldTypes().get(i);
-		final var decode = codecRegistry().codecFor(dataType).decode(bytes, protocolVersion());
-		final var newValue = new UdtValueEntry(name, dataType, decode);
+		final var names = type.getFieldNames();
+		final var dataTypes = type.getFieldTypes();
+		final var decode = codecRegistry().codecFor(dataTypes.get(i))
+			.decode(bytes, protocolVersion());
+		final var newValue = new UdtValueEntry(names.get(i), dataTypes.get(i), decode);
 
-		writeLock(() -> values.set(i, newValue));
+		writeLock(() -> {
+			// A value created before ALTER TYPE ... ADD has fewer slots than the type; setting a
+			// field past them grows the gap as unset slots, the mirror of getBytesUnsafe reading
+			// them as null.
+			while (values.size() <= i) {
+				final var next = values.size();
+				values.add(new UdtValueEntry(names.get(next), dataTypes.get(next), null));
+			}
+			values.set(i, newValue);
+		});
 
 		return this;
 	}
 
 	/**
-	 * The value's slot count, which for a value created before {@code ALTER TYPE ... ADD} is
-	 * smaller than the type's field count.
+	 * The type's field count, not the value's slot count: a value created before
+	 * {@code ALTER TYPE ... ADD} reads at the type's new width - the missing trailing slots as
+	 * null - exactly as its stored payload would re-decode on a cluster.
 	 */
 	@Override
 	public int size() {
-		return readLockUnchecked(values::size);
+		return type.getFieldNames().size();
 	}
 
 	/**
-	 * The type the slot was created or last set with. Answers from the value's slots, so an index
-	 * the type gained after this value was created throws {@link IndexOutOfBoundsException}.
+	 * The type the slot was created or last set with; for a trailing slot this value never grew,
+	 * the type answers.
 	 */
 	@Override
 	@NonNull
 	public DataType getType(final int i) {
-		return readLockUnchecked(values.get(i)::dataType);
+		final var entry = readLockUnchecked(() -> i < values.size() ? values.get(i) : null);
+
+		return entry != null ? entry.dataType() : type.getFieldTypes().get(i);
 	}
 
 	/**
@@ -209,13 +220,15 @@ class VolatileUdtValue implements SeaStarUdtValue {
 			return false;
 		}
 
-		return IntStream.range(0, entries().size())
+		// Over the type's width rather than the value's slots, so a value created before an ALTER
+		// TYPE ADD compares symmetrically against one created after it.
+		return IntStream.range(0, size())
 			.allMatch(i -> Objects.equals(getObject(i), that.getObject(i)));
 	}
 
 	@Override
 	public int hashCode() {
-		final var fields = IntStream.range(0, entries().size()).mapToObj(this::getObject).toList();
+		final var fields = IntStream.range(0, size()).mapToObj(this::getObject).toList();
 
 		return Objects.hash(getType(), fields);
 	}

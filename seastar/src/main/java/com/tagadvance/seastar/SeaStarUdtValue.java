@@ -5,7 +5,6 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.List;
-import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
 
 /**
@@ -14,9 +13,9 @@ import org.jspecify.annotations.NonNull;
  * handed to a caller, not stored state - so no keyspace lock covers it: {@link #lock()} is the
  * value's own, the innermost of the hierarchy in {@code AGENTS.md}, and nothing else may be
  * acquired while it is held. The interface itself promises no thread safety; whether an
- * implementation is safe to share between threads is its own declaration.
+ * implementation is safe to share between threads is its own declaration -
+ * {@link VolatileUdtValue} declares itself thread-safe.
  */
-@NotThreadSafe
 public interface SeaStarUdtValue extends SeaStarReadWriteLock, UdtValue {
 
 	@NonNull SeaStarUserDefinedType getType();

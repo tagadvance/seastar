@@ -36,6 +36,14 @@ called out explicitly.
 - The in-process node reports Cassandra 5.0.8 - the release SeaStar borrows its behavior from and
   what the wire listener already reported - instead of a DSE version constant, and its up-since
   time is the session's start instead of the epoch.
+- `bind()` on a statement with no bind markers now throws `IllegalArgumentException` when handed
+  values, as the driver contract promises; previously extras were silently accepted.
+- A `UdtValue` created before an `ALTER TYPE ... ADD` now reads and writes at the type's new
+  width, the way its stored payload would re-decode on a cluster: the new field resolves by name,
+  reads null, and can be set; `size()` reports the type's field count; and two values of the same
+  type compare symmetrically whichever side of the ALTER they were created on. Previously the new
+  field was unresolvable by name, setting it threw `IndexOutOfBoundsException`, and `equals` could
+  disagree with its mirror image.
 
 - `seastar-server` could corrupt a v5 connection right after the handshake: the `READY` write and
   the switch to segment framing reached the event loop as two separately enqueued tasks, so a
