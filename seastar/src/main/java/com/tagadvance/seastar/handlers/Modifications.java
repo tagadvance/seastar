@@ -199,21 +199,27 @@ final class Modifications {
 			coordinator, bindings);
 		// A counter has no value to compare against: what it reads back depends on every delta that
 		// reached it, so Cassandra will not condition on one.
+		//
+		// A loop, not conditions.stream().filter().findFirst() - this runs on every INSERT, where
+		// conditions is always empty, and profiling batch100 (TODO/batch100-investigation-prompt.md)
+		// found a stream pipeline over an empty collection was not free. Do not revert to a stream.
 		final var table = target.table();
-		conditions.stream()
-			.filter(condition -> DataTypes.COUNTER.equals(table.get(condition.columnIndex()).getType()))
-			.findFirst()
-			.ifPresent(condition -> {
+		for (final var condition : conditions) {
+			if (DataTypes.COUNTER.equals(table.get(condition.columnIndex()).getType())) {
 				throw new InvalidQueryException(coordinator,
 					"Conditions on counter column %s are not supported".formatted(
 						condition.column().asInternal()));
-			});
+			}
+		}
 
 		final var attributes = FieldBindings.MODIFICATION_ATTRIBUTES.require(raw);
-		final var timestamp = timestamp(attributes.timestamp, isCounterTable(target), codecRegistry,
-			coordinator, bindings);
-		final var ttl = ttl(attributes.timeToLive, isCounterTable(target), codecRegistry, coordinator,
+		// Computed once and reused below - timestamp() and ttl() both used to call isCounterTable
+		// independently, tripling the cost of a call that is already made once per INSERT in
+		// insert()/insertJson() above.
+		final var counterTable = isCounterTable(target);
+		final var timestamp = timestamp(attributes.timestamp, counterTable, codecRegistry, coordinator,
 			bindings);
+		final var ttl = ttl(attributes.timeToLive, counterTable, codecRegistry, coordinator, bindings);
 
 		return new Modification(target, List.copyOf(assignments), restrictions, conditions,
 			FieldBindings.MODIFICATION_IF_EXISTS.require(raw),
@@ -497,16 +503,22 @@ final class Modifications {
 	/**
 	 * A counter table is one whose non-key columns are counters. Cassandra will not let the two
 	 * kinds share a table, so any one of them settles it.
+	 *
+	 * <p>A loop, not {@code .stream().filter().anyMatch()} - this is called up to three times per
+	 * INSERT (see {@link #modification}), and profiling batch100
+	 * (TODO/batch100-investigation-prompt.md) found stream pipeline setup dominating the cost. Do
+	 * not revert to a stream.
 	 */
 	private static boolean isCounterTable(final Target target) {
 		final var primaryKey = target.primaryKeyNames();
 
-		return target.table()
-			.getColumns()
-			.values()
-			.stream()
-			.filter(column -> !primaryKey.contains(column.getName()))
-			.anyMatch(column -> DataTypes.COUNTER.equals(column.getType()));
+		for (final var column : target.table().getColumns().values()) {
+			if (!primaryKey.contains(column.getName()) && DataTypes.COUNTER.equals(column.getType())) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private static CqlIdentifier identifier(final ColumnIdentifier name) {

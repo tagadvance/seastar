@@ -11,8 +11,8 @@ import com.tagadvance.seastar.SeaStarDriverContext;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -21,7 +21,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
@@ -76,7 +75,14 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 		final var values = new ArrayList<Object>(Collections.nCopies(table.size(), null));
 		assignments.forEach(assignment -> values.set(assignment.columnIndex(), assignment.value()));
 
-		final var named = assignments.stream().map(Assignment::column).collect(Collectors.toSet());
+		// Loops rather than streams from here through samePrimaryKey below: this method runs once
+		// per statement, including once per BATCH child, and profiling batch100
+		// (TODO/batch100-investigation-prompt.md) found stream pipeline setup dominating the cost
+		// of what are 1-3 element collections. Do not revert to streams here.
+		final var named = new HashSet<CqlIdentifier>();
+		for (final var assignment : assignments) {
+			named.add(assignment.column());
+		}
 		// A statement that writes nothing outside the partition's static columns addresses the
 		// partition rather than a row in it, so it need not name the clustering key.
 		final var required = writesOnlyStatics(target, assignments) ? target.partitionKeyNames()
@@ -100,9 +106,20 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 			}
 		}
 
-		final var pkIndices = primaryKey.stream().mapToInt(table::firstIndexOf).toArray();
-		final Predicate<SeaStarRow> samePrimaryKey = existing -> Arrays.stream(pkIndices)
-			.allMatch(index -> Objects.equals(existing.getObject(index), values.get(index)));
+		final var pkIndices = new int[primaryKey.size()];
+		int pkIndex = 0;
+		for (final var column : primaryKey) {
+			pkIndices[pkIndex++] = table.firstIndexOf(column);
+		}
+		final Predicate<SeaStarRow> samePrimaryKey = existing -> {
+			for (final var index : pkIndices) {
+				if (!Objects.equals(existing.getObject(index), values.get(index))) {
+					return false;
+				}
+			}
+
+			return true;
+		};
 		// The statement names the whole partition key, so the row it would replace can only be in one
 		// partition. Without this an insert walks every row in the table and a bulk load is O(n^2).
 		final var partition = partitionKey(target, values);
@@ -166,18 +183,28 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 	/**
 	 * Whether the statement writes only static columns, which is what lets it leave the clustering
 	 * key out.
+	 *
+	 * <p>Loop, not a stream - this and {@link #partitionKey}, {@link #isStaticRow} and
+	 * {@link #partitionValues} below run per INSERT; see the note at the top of
+	 * {@link #translateCql}.
 	 */
 	private static boolean writesOnlyStatics(final Target target,
 		final List<Assignment> assignments) {
 		final var primaryKey = target.primaryKeyNames();
 		final var table = target.table();
-		final var written = assignments.stream()
-			.filter(assignment -> !primaryKey.contains(assignment.column()))
-			.toList();
+		var wroteAny = false;
+		for (final var assignment : assignments) {
+			if (primaryKey.contains(assignment.column())) {
+				continue;
+			}
+			wroteAny = true;
+			if (!(table.get(assignment.columnIndex()) instanceof ColumnMetadata column)
+				|| !column.isStatic()) {
+				return false;
+			}
+		}
 
-		return !written.isEmpty() && written.stream()
-			.allMatch(assignment -> table.get(assignment.columnIndex()) instanceof ColumnMetadata
-				column && column.isStatic());
+		return wroteAny;
 	}
 
 	/**
@@ -205,31 +232,34 @@ public class InsertHandler implements CqlHandler<ModificationStatement.Parsed> {
 	 */
 	private static List<Object> partitionKey(final Target target, final List<Object> values) {
 		final var table = target.table();
+		final var partitionKeyNames = target.partitionKeyNames();
+		final var partitionKey = new ArrayList<>(partitionKeyNames.size());
+		for (final var column : partitionKeyNames) {
+			partitionKey.add(values.get(table.firstIndexOf(column)));
+		}
 
-		return target.partitionKeyNames()
-			.stream()
-			.mapToInt(table::firstIndexOf)
-			.mapToObj(values::get)
-			.collect(Collectors.toCollection(ArrayList::new));
+		return partitionKey;
 	}
 
 	private static boolean isStaticRow(final SeaStarTable table, final SeaStarRow row) {
-		return table.getClusteringColumns()
-			.keySet()
-			.stream()
-			.map(ColumnMetadata::getName)
-			.mapToInt(table::firstIndexOf)
-			.allMatch(index -> row.getObject(index) == null);
+		for (final var column : table.getClusteringColumns().keySet()) {
+			if (row.getObject(table.firstIndexOf(column.getName())) != null) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private static List<Object> partitionValues(final Target target, final SeaStarRow row) {
 		final var table = target.table();
+		final var partitionKeyNames = target.partitionKeyNames();
+		final var values = new ArrayList<>(partitionKeyNames.size());
+		for (final var column : partitionKeyNames) {
+			values.add(row.getObject(table.firstIndexOf(column)));
+		}
 
-		return target.partitionKeyNames()
-			.stream()
-			.mapToInt(table::firstIndexOf)
-			.mapToObj(row::getObject)
-			.toList();
+		return values;
 	}
 
 }

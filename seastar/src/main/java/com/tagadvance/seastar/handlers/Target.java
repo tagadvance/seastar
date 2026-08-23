@@ -1,13 +1,10 @@
 package com.tagadvance.seastar.handlers;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
-import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.tagadvance.seastar.SeaStarKeyspace;
 import com.tagadvance.seastar.SeaStarTable;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * The keyspace and table a statement operates on, resolved once by {@link Targets} rather than
@@ -18,14 +15,22 @@ import java.util.stream.Stream;
  */
 record Target(SeaStarKeyspace keyspace, SeaStarTable table) {
 
+	// Both methods below are plain loops, not streams, on purpose: they are recomputed on every
+	// single statement (called 2-3x per INSERT alone, including once per BATCH child), and
+	// profiling batch100 (TODO/batch100-investigation-prompt.md) found java.util.stream's
+	// pipeline setup cost - Spliterator, Sink chain, megamorphic dispatch - dominating the whole
+	// per-statement budget for what is a 1-3 element collection. Do not revert to streams here.
+
 	/**
 	 * The partition key columns, in key order.
 	 */
 	Set<CqlIdentifier> partitionKeyNames() {
-		return table.getPartitionKey()
-			.stream()
-			.map(ColumnMetadata::getName)
-			.collect(Collectors.toCollection(LinkedHashSet::new));
+		final var names = new LinkedHashSet<CqlIdentifier>();
+		for (final var column : table.getPartitionKey()) {
+			names.add(column.getName());
+		}
+
+		return names;
 	}
 
 	/**
@@ -33,10 +38,15 @@ record Target(SeaStarKeyspace keyspace, SeaStarTable table) {
 	 * Iteration order matters where a handler reports the first missing part, so the set is ordered.
 	 */
 	Set<CqlIdentifier> primaryKeyNames() {
-		return Stream.concat(table.getPartitionKey().stream(),
-				table.getClusteringColumns().keySet().stream())
-			.map(ColumnMetadata::getName)
-			.collect(Collectors.toCollection(LinkedHashSet::new));
+		final var names = new LinkedHashSet<CqlIdentifier>();
+		for (final var column : table.getPartitionKey()) {
+			names.add(column.getName());
+		}
+		for (final var column : table.getClusteringColumns().keySet()) {
+			names.add(column.getName());
+		}
+
+		return names;
 	}
 
 }
