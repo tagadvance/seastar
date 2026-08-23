@@ -412,7 +412,7 @@ public final class SystemSchema {
 		final var projection = keyspace.newSeaStarTable(CqlIdentifier.fromInternal(table));
 		columns.forEach(
 			column -> projection.addColumn(CqlIdentifier.fromInternal(column.name()), column.type()));
-		values.forEach(value -> projection.addRow(value));
+		values.forEach(projection::addRow);
 
 		final var statement = SimpleStatement.newInstance(
 			"SELECT * FROM %s.%s".formatted(KEYSPACE_NAME, table));

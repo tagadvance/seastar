@@ -2,6 +2,7 @@ package com.tagadvance.seastar.handlers;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.metadata.Node;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.tagadvance.seastar.SeaStarRow;
 import com.tagadvance.seastar.SeaStarTable;
@@ -508,7 +509,7 @@ final class RestrictionRules {
 	}
 
 	private static List<CqlIdentifier> clusteringNames(final Target target) {
-		return target.table().getClusteringColumns().keySet().stream().map(column -> column.getName())
+		return target.table().getClusteringColumns().keySet().stream().map(ColumnMetadata::getName)
 			.toList();
 	}
 
