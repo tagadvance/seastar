@@ -35,7 +35,7 @@ without Claude doing most of the grunt work implementing handlers for all the va
 
 ## Install
 
-The current release is `1.0.0-alpha`, on Maven Central.
+The current release is `1.0.0`, on Maven Central.
 
 There are two artifacts, and **most people need only the first**. Take `seastar-server` only if the
 code under test builds its own `CqlSession` from a host and a port and cannot be handed one — because
@@ -48,8 +48,8 @@ it is another process, another language, or a framework that owns the connection
 
 **Gradle**
 ```kotlin
-testImplementation("com.tagadvance:seastar:1.0.0-alpha")
-testImplementation("com.tagadvance:seastar-server:1.0.0-alpha") // only if you need a socket
+testImplementation("com.tagadvance:seastar:1.0.0")
+testImplementation("com.tagadvance:seastar-server:1.0.0") // only if you need a socket
 ```
 
 **Maven**
@@ -57,7 +57,7 @@ testImplementation("com.tagadvance:seastar-server:1.0.0-alpha") // only if you n
 <dependency>
     <groupId>com.tagadvance</groupId>
     <artifactId>seastar</artifactId>
-    <version>1.0.0-alpha</version>
+    <version>1.0.0</version>
     <scope>test</scope>
 </dependency>
 
@@ -65,7 +65,7 @@ testImplementation("com.tagadvance:seastar-server:1.0.0-alpha") // only if you n
 <dependency>
     <groupId>com.tagadvance</groupId>
     <artifactId>seastar-server</artifactId>
-    <version>1.0.0-alpha</version>
+    <version>1.0.0</version>
     <scope>test</scope>
 </dependency>
 ```

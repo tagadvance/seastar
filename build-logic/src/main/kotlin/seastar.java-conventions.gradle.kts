@@ -21,15 +21,10 @@ plugins {
 // against the core's internals as much as against the driver's, so a mismatched pair is not a
 // combination worth supporting.
 //
-// THE GROUPID IS THIS ONE LINE. If verifying `tagadvance.com` on the Central Portal cannot be
-// resolved, change it to "io.github.tagadvance" - that namespace is verified by creating a GitHub
-// repository of the name the portal gives you, rather than by a DNS record. A Maven groupId does not
-// have to match the Java package: `io.github.tagadvance:seastar` shipping classes in
-// `com.tagadvance.seastar` is legal and unremarkable, because Central only cares that the namespace
-// is yours. So the fallback costs the coordinates in README.md and docs/, and no source change at
-// all. Nothing has been published yet, so it is free now and stops being free at 1.0.0.
+// The groupId is settled: `com.tagadvance` is verified on the Central Portal and 1.0.0-alpha
+// shipped under it, so changing it now would orphan every published coordinate.
 group = "com.tagadvance"
-version = "1.0.0-alpha"
+version = "1.0.0"
 
 repositories {
     mavenCentral()

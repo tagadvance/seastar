@@ -77,7 +77,7 @@ in cassandra.yaml*, both `InvalidQueryException`. SeaStar's reason differs, so t
 
 | Statement | Why not |
 | --- | --- |
-| `CREATE`/`ALTER`/`DROP MATERIALIZED VIEW` | A view is a derived table that has to be maintained on every write. Not for 1.0.0-alpha. `KeyspaceMetadata#getViews()` is always empty, which is what a cluster answers for a keyspace without views. |
+| `CREATE`/`ALTER`/`DROP MATERIALIZED VIEW` | A view is a derived table that has to be maintained on every write. Not in 1.0.0. `KeyspaceMetadata#getViews()` is always empty, which is what a cluster answers for a keyspace without views. |
 | `CREATE`/`DROP FUNCTION` | A user-defined function needs a script engine to run its body. `KeyspaceMetadata#getFunctions()` is always empty. |
 | `CREATE`/`DROP AGGREGATE` | Rests on user-defined functions. `KeyspaceMetadata#getAggregates()` is always empty. |
 | `CREATE`/`DROP TRIGGER` | A trigger loads a class by name and runs it inside the server. |

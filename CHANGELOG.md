@@ -1,10 +1,12 @@
 # Changelog
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). SeaStar is pre-1.0, so
-any release may still change the public API; from `1.0.0` onward this file is where that gets
-called out explicitly.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From `1.0.0` the public
+API is stable, and a change that breaks it is called out here explicitly.
 
-## [Unreleased]
+## [1.0.0] - 2026-08-23
+
+The first stable release. The public API is the one the alpha shipped; what changed since is
+below.
 
 ### Added
 
