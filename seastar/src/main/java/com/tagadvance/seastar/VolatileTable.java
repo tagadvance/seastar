@@ -12,6 +12,7 @@ import com.datastax.oss.driver.api.core.metadata.schema.IndexMetadata;
 import com.datastax.oss.driver.api.core.type.DataType;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -492,13 +493,35 @@ class VolatileTable implements SeaStarTable {
 	/**
 	 * A snapshot, taken under the read lock; the columns in it are the live objects.
 	 *
+	 * <p>Iteration order is the driver's, not the declaration's: the partition key by position,
+	 * the clustering columns by position, then regular and finally static columns each sorted by
+	 * name - the order {@code system_schema} hands a real driver ({@code RawColumn#compareTo}),
+	 * and the order {@code TableMetadata#describe} walks.
+	 *
 	 * @see #getIndexes()
 	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, ColumnMetadata> getColumns() {
-		return readLockUnchecked(() -> columns.stream()
-			.collect(Collectors.toUnmodifiableMap(ColumnMetadata::getName, Function.identity())));
+		return readLockUnchecked(() -> {
+			final Map<CqlIdentifier, ColumnMetadata> result = new LinkedHashMap<>();
+			Stream.concat(partitionKey.stream(), clusteringColumns.keySet().stream())
+				.forEach(id -> {
+					final var column = columnByName(id);
+					if (column != null) {
+						result.put(id, column);
+					}
+				});
+			for (final boolean statics : new boolean[] {false, true}) {
+				columns.stream()
+					.filter(column -> column.isStatic() == statics)
+					.filter(column -> !result.containsKey(column.getName()))
+					.sorted(Comparator.comparing(column -> column.getName().asInternal()))
+					.forEach(column -> result.put(column.getName(), column));
+			}
+
+			return Collections.unmodifiableMap(result);
+		});
 	}
 
 	/**

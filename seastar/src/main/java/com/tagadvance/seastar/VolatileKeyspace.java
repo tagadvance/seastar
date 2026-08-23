@@ -9,12 +9,13 @@ import com.datastax.oss.driver.api.core.metadata.schema.FunctionSignature;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.ViewMetadata;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
 import org.jspecify.annotations.NonNull;
@@ -177,13 +178,14 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * The driver's view of {@link #getSeaStarTables()}: the map is a snapshot, but the tables in it
 	 * are the live objects and keep mutating - unlike a real driver's metadata, which is a frozen
 	 * copy of the schema at refresh time.
+	 *
+	 * <p>Ordered by table name, because {@code system_schema.tables} clusters on it and so that is
+	 * the order a real driver's map iterates in - not creation order.
 	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, TableMetadata> getTables() {
-		return getSeaStarTables().entrySet()
-			.stream()
-			.collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+		return byName(getSeaStarTables());
 	}
 
 	/**
@@ -199,16 +201,28 @@ class VolatileKeyspace implements SeaStarKeyspace {
 
 	/**
 	 * The driver's view of {@link #getSeaStarUserDefinedTypes()}: a snapshot map over the live
-	 * objects.
+	 * objects, ordered by type name for the same reason {@link #getTables()} is.
 	 *
 	 * @see #getTables()
 	 */
 	@Override
 	@NonNull
 	public Map<CqlIdentifier, UserDefinedType> getUserDefinedTypes() {
-		return getSeaStarUserDefinedTypes().entrySet()
+		return byName(getSeaStarUserDefinedTypes());
+	}
+
+	/**
+	 * A name-ordered unmodifiable copy, matching the clustering order the node's schema tables
+	 * would have handed a real driver.
+	 */
+	private static <V> Map<CqlIdentifier, V> byName(final Map<CqlIdentifier, ? extends V> source) {
+		final Map<CqlIdentifier, V> ordered = new LinkedHashMap<>();
+		source.keySet()
 			.stream()
-			.collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+			.sorted(Comparator.comparing(CqlIdentifier::asInternal))
+			.forEach(name -> ordered.put(name, source.get(name)));
+
+		return Collections.unmodifiableMap(ordered);
 	}
 
 	/**

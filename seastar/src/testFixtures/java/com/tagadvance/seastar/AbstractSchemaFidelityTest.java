@@ -456,4 +456,53 @@ public abstract class AbstractSchemaFidelityTest extends AbstractFidelityTest {
 			"ALTER KEYSPACE IF EXISTS nope WITH durable_writes = false"));
 	}
 
+	@Test
+	@Order(249)
+	@DisplayName("Column metadata orders keys by position, then regular and static columns by name")
+	void testColumnMetadataOrder() {
+		// Declared in a deliberately scrambled order: the metadata order is system_schema's, not
+		// the declaration's.
+		session.execute("CREATE TABLE IF NOT EXISTS ddl.colorder (pk2 int, zeta text, ck2 int, "
+			+ "alpha text, pk1 int, stat text STATIC, ck1 int, PRIMARY KEY ((pk2, pk1), ck2, ck1))");
+
+		final var table = session.getMetadata()
+			.getKeyspace("ddl")
+			.orElseThrow()
+			.getTable("colorder")
+			.orElseThrow();
+
+		assertEquals(List.of("pk2", "pk1", "ck2", "ck1", "alpha", "zeta", "stat"),
+			table.getColumns().keySet().stream().map(CqlIdentifier::asInternal).toList());
+		assertEquals(List.of("pk2", "pk1"),
+			table.getPartitionKey().stream().map(c -> c.getName().asInternal()).toList());
+		assertEquals(List.of("ck2", "ck1"), table.getClusteringColumns()
+			.keySet()
+			.stream()
+			.map(c -> c.getName().asInternal())
+			.toList());
+	}
+
+	@Test
+	@Order(250)
+	@DisplayName("Keyspace metadata orders tables and types by name, not by creation")
+	void testKeyspaceMetadataOrder() {
+		session.execute("CREATE TABLE IF NOT EXISTS ddl.zz_last (id int PRIMARY KEY)");
+		session.execute("CREATE TABLE IF NOT EXISTS ddl.aa_first (id int PRIMARY KEY)");
+		session.execute("CREATE TYPE IF NOT EXISTS ddl.zz_type (v text)");
+		session.execute("CREATE TYPE IF NOT EXISTS ddl.aa_type (v text)");
+
+		final var keyspace = session.getMetadata().getKeyspace("ddl").orElseThrow();
+		final var tables = keyspace.getTables().keySet().stream()
+			.map(CqlIdentifier::asInternal)
+			.toList();
+		assertTrue(tables.containsAll(List.of("aa_first", "zz_last")));
+		assertEquals(tables.stream().sorted().toList(), tables);
+
+		final var types = keyspace.getUserDefinedTypes().keySet().stream()
+			.map(CqlIdentifier::asInternal)
+			.toList();
+		assertTrue(types.containsAll(List.of("aa_type", "zz_type")));
+		assertEquals(types.stream().sorted().toList(), types);
+	}
+
 }
