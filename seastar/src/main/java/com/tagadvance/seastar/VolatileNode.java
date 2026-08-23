@@ -24,9 +24,11 @@ class VolatileNode implements Node {
 
 	private static final String DATACENTER = "datacenter1";
 	private static final String RACK = "rack1";
+	private static final Version CASSANDRA_VERSION = Version.parse("5.0.8");
 
 	private final UUID HOST_ID = UUID.randomUUID();
 	private final UUID SCHEMA_VERSION = UUID.randomUUID();
+	private final long upSinceMillis = System.currentTimeMillis();
 
 	/**
 	 * A nominal loopback endpoint - nothing listens on it and nothing ever connects to it. The
@@ -96,12 +98,13 @@ class VolatileNode implements Node {
 	}
 
 	/**
-	 * A constant. SeaStar is not any particular Cassandra release, and nothing in the in-process
-	 * path consults the version.
+	 * Cassandra 5.0.8: the release whose parser SeaStar borrows, the image the container suite
+	 * pins, and what the wire listener's {@code system.local} reports as {@code release_version} -
+	 * the three answers should never disagree.
 	 */
 	@Override
 	public Version getCassandraVersion() {
-		return Version.V6_9_0;
+		return CASSANDRA_VERSION;
 	}
 
 	@Override
@@ -121,12 +124,13 @@ class VolatileNode implements Node {
 	}
 
 	/**
-	 * The epoch, as a constant: the node never transitions state, so there is no real timestamp to
-	 * report.
+	 * When this node was constructed, which is when the session came up. Wall-clock rather than the
+	 * session's injectable {@link SeaStarClock}: a driver stamps this from its own clock when it
+	 * sees the node come up, and moving test time should not rewrite when the session started.
 	 */
 	@Override
 	public long getUpSinceMillis() {
-		return 0;
+		return upSinceMillis;
 	}
 
 	/**

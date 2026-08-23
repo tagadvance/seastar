@@ -123,6 +123,22 @@ class SeaStarCqlSessionTest {
 		}
 	}
 
+	/**
+	 * Not shared with the fidelity suite: what a real driver answers here depends on its own state
+	 * tracking, where SeaStar's answer is simply when the session came up.
+	 */
+	@Test
+	@DisplayName("The node reports the session's start as its up-since time")
+	void testUpSinceMillis() {
+		final var before = System.currentTimeMillis();
+		try (final var session = SeaStarCqlSession.builder().build()) {
+			final var node = session.getMetadata().getNodes().values().iterator().next();
+
+			assertTrue(node.getUpSinceMillis() >= before);
+			assertTrue(node.getUpSinceMillis() <= System.currentTimeMillis());
+		}
+	}
+
 	@Test
 	@DisplayName("A keyspace created outside CQL reports Cassandra's default replication")
 	void testProgrammaticKeyspaceDefaults() {

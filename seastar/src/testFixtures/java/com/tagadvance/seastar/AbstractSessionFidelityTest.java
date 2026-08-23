@@ -3,6 +3,7 @@ package com.tagadvance.seastar;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.Version;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.servererrors.InvalidQueryException;
 import com.datastax.oss.driver.api.core.servererrors.UnauthorizedException;
@@ -256,6 +257,15 @@ public abstract class AbstractSessionFidelityTest extends AbstractFidelityTest {
 		final var query = "SELECT v FROM ids WHERE id = ?";
 
 		assertEquals(md5(keyspace.asInternal() + query), hex(session.prepare(query).getId()));
+	}
+
+	@Test
+	@Order(251)
+	@DisplayName("The node reports Cassandra 5.0.8, the release SeaStar borrows its behavior from")
+	void testCassandraVersion() {
+		final var node = session.getMetadata().getNodes().values().iterator().next();
+
+		assertEquals(Version.parse("5.0.8"), node.getCassandraVersion());
 	}
 
 	@Test

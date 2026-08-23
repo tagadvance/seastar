@@ -29,6 +29,14 @@ called out explicitly.
 
 ### Fixed
 
+- Metadata iteration order now matches a real driver's: `TableMetadata#getColumns` walks the
+  partition key by position, the clustering columns by position, then regular and static columns
+  each by name; `KeyspaceMetadata#getTables` and `#getUserDefinedTypes` order by name. Previously
+  the maps had no defined order, so `describe()` could emit columns in arbitrary order.
+- The in-process node reports Cassandra 5.0.8 - the release SeaStar borrows its behavior from and
+  what the wire listener already reported - instead of a DSE version constant, and its up-since
+  time is the session's start instead of the epoch.
+
 - `seastar-server` could corrupt a v5 connection right after the handshake: the `READY` write and
   the switch to segment framing reached the event loop as two separately enqueued tasks, so a
   client acting on the `READY` quickly could land its first segment while the pipeline was still
