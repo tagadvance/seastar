@@ -93,13 +93,6 @@ dependencies {
     "containerBenchAnnotationProcessor"("org.openjdk.jmh:jmh-generator-annprocess:1.36")
 }
 
-// WireStatementBenchmark needs seastar-server to put the same fixture behind a socket. This is a
-// forward dependency (:seastar-server already depends on :seastar's main sources) but not a cycle:
-// only the jmh source set sees it, so :seastar's published api is untouched.
-dependencies {
-    "jmhImplementation"(project(":seastar-server"))
-}
-
 jmh {
     // Benchmarks measure the library, not the test suite; keep the test source set out of them.
     includeTests = false

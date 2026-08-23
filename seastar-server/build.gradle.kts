@@ -57,6 +57,13 @@ val benchHarness = configurations.resolvable("benchHarness") {
 
 dependencies {
     add("benchHarnessSource", project(path = ":seastar", configuration = "benchHarness"))
+    // WireStatementBenchmark is JMH-annotated but the me.champeau.jmh plugin only wires up a
+    // module's own `jmh` source set, so the generator is added by hand here, same version :seastar's
+    // jmh source set resolves. This module rather than :seastar's jmh source set is where it lives:
+    // it needs SeaStarProtocolServer, and :seastar's jmh classpath stays free of a dependency on the
+    // module that depends on it.
+    "wireBenchImplementation"("org.openjdk.jmh:jmh-core:1.36")
+    "wireBenchAnnotationProcessor"("org.openjdk.jmh:jmh-generator-annprocess:1.36")
 }
 
 wireBench.compileClasspath += sourceSets["main"].output + benchHarness.get()
@@ -74,5 +81,20 @@ tasks.register<JavaExec>("wireStartupBenchmark") {
     systemProperty("logback.configurationFile",
         layout.projectDirectory.file("logback-bench.xml").asFile.absolutePath)
     args("com.tagadvance.seastar.bench.WireStartupProbe", "20")
+    usesService(gradle.sharedServices.registrations["benchmarkExclusivity"].service)
+}
+
+// WireStatementBenchmark is JMH, run through JMH's own Main against wireBench's classpath rather
+// than through the me.champeau.jmh plugin's task, for the same reason ContainerStatementBenchmark
+// is in :seastar - see that task's comment. The annotations on the class carry
+// Fork/Warmup/Measurement/BenchmarkMode, so no CLI options are needed beyond which class to run.
+tasks.register<JavaExec>("wireTurnaroundBenchmark") {
+    description = "Per-statement JMH benchmarks over seastar-server and a stock driver."
+    group = "benchmark"
+    mainClass = "org.openjdk.jmh.Main"
+    classpath = wireBench.runtimeClasspath
+    systemProperty("logback.configurationFile",
+        layout.projectDirectory.file("logback-bench.xml").asFile.absolutePath)
+    args("com.tagadvance.seastar.bench.WireStatementBenchmark")
     usesService(gradle.sharedServices.registrations["benchmarkExclusivity"].service)
 }
