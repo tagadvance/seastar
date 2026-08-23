@@ -5,10 +5,100 @@
 [![release](https://img.shields.io/github/v/release/tagadvance/seastar)](https://github.com/tagadvance/seastar/releases/latest)
 [![license](https://img.shields.io/github/license/tagadvance/seastar)](LICENSE)
 
-An in-memory implementation of the DataStax Java driver's `CqlSession` — a fast, in-process
-alternative to [TestContainers](https://java.testcontainers.org/modules/databases/cassandra/) for
-tests that exercise CQL. SeaStar implements the driver's own public interfaces, so it drops in
-wherever your code already takes a `CqlSession`.
+An in-memory implementation of the DataStax Java driver's `CqlSession`, for tests that exercise
+CQL. SeaStar implements the driver's own public interfaces, so it drops in wherever your code already
+takes a `CqlSession` — no Docker, no embedded node, and **a fresh database per test method for about
+6 ms**.
+
+- **Fast.** ~0.7 s from a cold JVM to the first query — about 50 ms of that is the JVM booting, the
+  rest is class loading paid once per test JVM — and every session after that is ~6 ms, or ~19 ms
+  seeded with a 75-statement schema. A warm Testcontainers Cassandra is ~8 s.
+- **Faithful.** The same 179-test fidelity suite runs in process, over a socket, and against a real
+  `cassandra:5.0.8` node. A query that fails on Cassandra fails on SeaStar with the same driver
+  exception, and every deliberate divergence is written down in
+  [docs/support-matrix.md](docs/support-matrix.md).
+- **Drop-in.** Your code gets a `CqlSession`; if it insists on building its own from a host and port,
+  `seastar-server` puts the same session behind Cassandra's native protocol on a loopback socket.
+
+## Quickstart
+
+```kotlin
+testImplementation("com.tagadvance:seastar:1.0.0")
+```
+
+```java
+class ProductRepositoryTest {
+
+    SeaStarCqlSession session;
+
+    @BeforeEach
+    void freshDatabase() {
+        // ~19 ms, so a new database per test method is affordable: no shared state, no TRUNCATE.
+        session = SeaStarCqlSession.builder()
+            .withSchemaResource("/schema.cql", SchemaImport.LENIENT)
+            .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        session.close();
+    }
+
+    @Test
+    void findsWhatItStored() {
+        var repository = new ProductRepository(session); // takes a CqlSession
+
+        repository.save(new Product(1, "Widget"));
+
+        assertEquals("Widget", repository.findById(1).name());
+    }
+}
+```
+
+`schema.cql` can be the `DESCRIBE SCHEMA` dump off your real cluster — `LENIENT` logs and skips what
+SeaStar does not implement (materialized views, functions, aggregates) instead of failing. Inline
+CQL, a `Path`, a `File` and a hand-built model are in [Seeding a schema](#seeding-a-schema).
+
+## Why SeaStar
+
+The honest framing: **SeaStar is not Cassandra, and it is not trying to be.** It is the thing you
+run a thousand times a day so that you only have to run Cassandra once. Keep a Testcontainers
+Cassandra for the final integration pass; give the other 99 % of your tests a `CqlSession` that
+exists before the container would have finished pulling.
+
+| | SeaStar | [Testcontainers Cassandra](https://java.testcontainers.org/modules/databases/cassandra/) | [cassandra-unit](https://github.com/jsevellec/cassandra-unit) |
+| --- | --- | --- | --- |
+| What it is | In-process implementation of `CqlSession`; CQL is parsed by `cassandra-all` and executed against an in-memory model | Real Cassandra in a Docker container | A real Cassandra node embedded in the test JVM |
+| Time to first query | **0.7 s** cold JVM; **6 ms** per subsequent session | **~8 s** with the image pulled, **~12 s** without | A node boot inside the JVM — seconds; not measured here |
+| Needs Docker | No | Yes | No |
+| Cassandra semantics | 5.0.8: the real parser, plus behavior verified against a `cassandra:5.0.8` node by the fidelity suite | Whatever image you pick | 3.11.5 (bundled) |
+| Driver | Implements the 4.19.3 interfaces | Any | Built against 4.3.1 |
+| Java | 17+ | Any | 8, the JDK Cassandra 3.11 supports |
+| Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests | One node per JVM; clean-up helpers between tests |
+| Code that builds its own connection | Yes, via `seastar-server` on a loopback socket | Yes | Yes |
+| CQL coverage | Most of what an application uses; MVs, UDFs/UDAs, auth, paging and tombstones are the notable gaps — see the [support matrix](docs/support-matrix.md) | Everything | Everything in 3.11 |
+| Maintenance | Active; 1.0.0 released 2026-08 | Active | Last release January 2020, last commit September 2022 |
+
+**When not to use SeaStar:** when the behavior under test *is* the database — tombstones and
+compaction, paging, consistency levels, multi-node topology, materialized views, UDFs. SeaStar
+refuses those by name rather than approximating them, so the test fails loudly; reach for the
+container.
+
+## How it stays honest
+
+Fidelity is a test suite, not a promise. Every behavior claim in this README and the support matrix
+is backed by a fidelity test in `seastar/src/testFixtures`, and each of those tests has three
+runners:
+
+| runner | what it proves | when it runs |
+| --- | --- | --- |
+| `SeaStar*FidelityTest` | the in-process session | every build |
+| `Wire*FidelityTest` | the same session through `seastar-server` and a stock driver | every build |
+| `Container*FidelityTest` | real Cassandra 5.0.8 via Testcontainers — the authority | nightly, and on demand with `./gradlew :seastar:containerTest` |
+
+When SeaStar and the container disagree, the container is right and SeaStar gets fixed. The tests
+assert on exception type and on the offending keyspace, table or column being named; they do not pin
+Cassandra's exact wording, which is the one place the two are allowed to differ.
 
 ## Goals (in order of precedence)
 1. **Fidelity.** A query that fails against real Cassandra should fail in a similar fashion (same
@@ -22,19 +112,6 @@ wherever your code already takes a `CqlSession`.
    make an operation atomically correct; that is what the locks are for. Each statement runs
    atomically under its keyspace's lock, so a concurrent reader never observes a half-applied
    statement.
-
-## Built with AI assistance
-
-AI is a contentious issue that elicits strong emotions, both positive and negative. I,
-[@tagadvance](https://github.com/tagadvance), built the initial scaffolding and fidelity test suite
-by hand. Every commit since [6115072](https://github.com/tagadvance/seastar/commit/6115072) was
-written with help from [Claude](https://claude.com/claude-code), usually Opus 5 or Fable, and
-occasionally reviewed by [Gemini](https://gemini.google.com/).
-
-Here's the thing: if I take my truck to a mechanic and find out they're using wrenches instead of
-an impact to tear down my engine, I'm going to be a little upset — especially if they're charging
-by the hour. AI is a tool like any other, and this library probably never would have been released
-without Claude doing most of the grunt work implementing handlers for all the various query types.
 
 ## Install
 
@@ -73,9 +150,9 @@ testImplementation("com.tagadvance:seastar-server:1.0.0") // only if you need a 
 </dependency>
 ```
 
-## Example
+## Seeding a schema
 
-Seed a schema from CQL and use the session exactly like a real one:
+Inline CQL works the same way as a resource, and the session is then used exactly like a real one:
 
 ```java
 try (var session = SeaStarCqlSession.builder()
@@ -187,8 +264,8 @@ Every deliberate divergence from real Cassandra is catalogued in
 [docs/support-matrix.md](docs/support-matrix.md) rather than duplicated here. The short version: a
 `SELECT` always returns a single page, a delete does not leave a tombstone (a write stamped older
 than one is applied instead of suppressed), a conditional `BATCH` evaluates its `IF` conditions one
-child at a time, and there are no materialized views, UDFs/aggregates, auth, roles, or a token map. Each is a considered trade-off for
-an in-memory fake, not an oversight — the matrix says why.
+child at a time, and there are no materialized views, UDFs/aggregates, auth, roles, or a token map.
+Each is a considered trade-off for an in-memory fake, not an oversight — the matrix says why.
 
 On a socket, `seastar-server` adds its own short list. Compression, TLS and a paging state in a
 request are each refused by name rather than ignored. Consistency, serial consistency, the request's
@@ -213,6 +290,19 @@ Table options read back over the wire as Cassandra 5.0.8 defaults rather than as
 * Rows are stored through the driver's own codecs (deserialize on write, re-serialize on read)
   rather than natively, which is unnecessary overhead this could shed by overriding the default
   getters on the row model.
+
+## Built with AI assistance
+
+AI is a contentious issue that elicits strong emotions, both positive and negative. I,
+[@tagadvance](https://github.com/tagadvance), built the initial scaffolding and fidelity test suite
+by hand. Every commit since [6115072](https://github.com/tagadvance/seastar/commit/6115072) was
+written with help from [Claude](https://claude.com/claude-code), usually Opus 5 or Fable, and
+occasionally reviewed by [Gemini](https://gemini.google.com/).
+
+Here's the thing: if I take my truck to a mechanic and find out they're using wrenches instead of
+an impact to tear down my engine, I'm going to be a little upset — especially if they're charging
+by the hour. AI is a tool like any other, and this library probably never would have been released
+without Claude doing most of the grunt work implementing handlers for all the various query types.
 
 ### What's with the name?
 It's a bad pun. Cassandra is often abbreviated to C*, so I called this library SeaStar.
