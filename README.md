@@ -74,7 +74,7 @@ exists before the container would have finished pulling.
 | Cassandra semantics | 5.0.8: the real parser, plus behavior verified against a `cassandra:5.0.8` node by the fidelity suite | Whatever image you pick | 3.11.5 (bundled) |
 | Driver | Implements the 4.19.3 interfaces | Any | Built against 4.3.1 |
 | Java | 17+ | Any | 8, the JDK Cassandra 3.11 supports |
-| Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests | One node per JVM; clean-up helpers between tests |
+| Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests — which is itself slow, because `auto_snapshot` is on by default and every `TRUNCATE` (and `DROP TABLE`) snapshots the table to disk first, even though the container is thrown away at the end of the run | One node per JVM; clean-up helpers between tests |
 | Code that builds its own connection | Yes, via `seastar-server` on a loopback socket | Yes | Yes |
 | CQL coverage | Most of what an application uses; MVs, UDFs/UDAs, auth, paging and tombstones are the notable gaps — see the [support matrix](docs/support-matrix.md) | Everything | Everything in 3.11 |
 | Maintenance | Active; 1.0.0 released 2026-08 | Active | Last release January 2020, last commit September 2022 |
