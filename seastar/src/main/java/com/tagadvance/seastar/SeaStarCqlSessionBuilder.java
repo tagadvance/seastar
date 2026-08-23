@@ -25,12 +25,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.NotThreadSafe;
 import org.jspecify.annotations.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link SeaStarCqlSessionBuilder} is analogous to {@link CqlSessionBuilder}.
  */
 @NotThreadSafe
 public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
+
+	private static final Logger log = LoggerFactory.getLogger(SeaStarCqlSessionBuilder.class);
 
 	private final List<SchemaSource> schemaSources = new ArrayList<>();
 
@@ -71,8 +75,25 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 */
 	@NonNull
 	public SeaStarCqlSessionBuilder withSchema(final @NonNull String cql) {
+		return withSchema(cql, SchemaImport.STRICT);
+	}
+
+	/**
+	 * Seeds the built session's schema from a CQL script, treating failures per {@code mode}.
+	 * {@link SchemaImport#LENIENT} is meant for a {@code DESCRIBE SCHEMA} dump taken from a live
+	 * cluster; see the enum for exactly what it forgives.
+	 *
+	 * @param cql  a CQL script (one or more statements)
+	 * @param mode how a failing statement is treated
+	 * @return this builder
+	 * @see #withSchema(String)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchema(final @NonNull String cql,
+		final @NonNull SchemaImport mode) {
 		Objects.requireNonNull(cql, "cql must not be null");
-		schemaSources.add(new SchemaSource("CQL string", () -> cql));
+		Objects.requireNonNull(mode, "mode must not be null");
+		schemaSources.add(new SchemaSource("CQL string", () -> cql, mode));
 
 		return this;
 	}
@@ -86,8 +107,24 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 */
 	@NonNull
 	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull Path path) {
+		return withSchemaFile(path, SchemaImport.STRICT);
+	}
+
+	/**
+	 * Seeds the built session's schema from a {@code .cql} file, read as UTF-8, treating failures
+	 * per {@code mode}.
+	 *
+	 * @param path the file to read
+	 * @param mode how a failing statement is treated
+	 * @return this builder
+	 * @see #withSchema(String, SchemaImport)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull Path path,
+		final @NonNull SchemaImport mode) {
 		Objects.requireNonNull(path, "path must not be null");
-		schemaSources.add(new SchemaSource("file " + path, () -> Files.readString(path)));
+		Objects.requireNonNull(mode, "mode must not be null");
+		schemaSources.add(new SchemaSource("file " + path, () -> Files.readString(path), mode));
 
 		return this;
 	}
@@ -107,6 +144,23 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	}
 
 	/**
+	 * Seeds the built session's schema from a {@code .cql} file, read as UTF-8, treating failures
+	 * per {@code mode}.
+	 *
+	 * @param file the file to read
+	 * @param mode how a failing statement is treated
+	 * @return this builder
+	 * @see #withSchema(String, SchemaImport)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull File file,
+		final @NonNull SchemaImport mode) {
+		Objects.requireNonNull(file, "file must not be null");
+
+		return withSchemaFile(file.toPath(), mode);
+	}
+
+	/**
 	 * Seeds the built session's schema from a classpath resource, read as UTF-8.
 	 *
 	 * @param resource the resource path (as passed to {@link ClassLoader#getResourceAsStream})
@@ -115,9 +169,25 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 */
 	@NonNull
 	public SeaStarCqlSessionBuilder withSchemaResource(final @NonNull String resource) {
+		return withSchemaResource(resource, SchemaImport.STRICT);
+	}
+
+	/**
+	 * Seeds the built session's schema from a classpath resource, read as UTF-8, treating failures
+	 * per {@code mode}.
+	 *
+	 * @param resource the resource path (as passed to {@link ClassLoader#getResourceAsStream})
+	 * @param mode     how a failing statement is treated
+	 * @return this builder
+	 * @see #withSchema(String, SchemaImport)
+	 */
+	@NonNull
+	public SeaStarCqlSessionBuilder withSchemaResource(final @NonNull String resource,
+		final @NonNull SchemaImport mode) {
 		Objects.requireNonNull(resource, "resource must not be null");
+		Objects.requireNonNull(mode, "mode must not be null");
 		schemaSources.add(new SchemaSource("classpath resource " + resource,
-			() -> readResource(resource)));
+			() -> readResource(resource), mode));
 
 		return this;
 	}
@@ -256,15 +326,41 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 					"Failed to read schema from " + source.description() + ": " + e.getMessage(), e);
 			}
 
-			for (final var statement : CqlStatements.split(cql)) {
+			for (final var split : CqlStatements.split(cql)) {
+				final var statement = source.mode() == SchemaImport.LENIENT
+					? stripRemovedOptions(split) : split;
 				try {
 					session.execute(statement);
 				} catch (final RuntimeException e) {
+					if (source.mode() == SchemaImport.LENIENT) {
+						log.warn("Skipping schema statement from {} [{}]: {}",
+							source.description(), statement, e.getMessage());
+						continue;
+					}
+
 					throw new IllegalStateException("Failed to execute schema statement from "
 						+ source.description() + " [" + statement + "]: " + e.getMessage(), e);
 				}
 			}
 		}
+	}
+
+	/**
+	 * Strips the table options Cassandra itself removed in 4.0 ({@code read_repair_chance},
+	 * {@code dclocal_read_repair_chance}), which a dump from an older cluster still carries and
+	 * today's parser refuses. Textual on purpose: the statement has not parsed yet - failing to
+	 * parse is the problem - and the option names are too distinctive to appear elsewhere in a
+	 * schema dump.
+	 */
+	private static String stripRemovedOptions(final String statement) {
+		return statement
+			// An option after another: "... AND read_repair_chance = 0.1".
+			.replaceAll("(?i)\\s+AND\\s+(?:dclocal_)?read_repair_chance\\s*=\\s*[\\d.eE+-]+", "")
+			// The first of several: "WITH read_repair_chance = 0.1 AND ..." keeps its WITH.
+			.replaceAll("(?i)(WITH\\s+)(?:dclocal_)?read_repair_chance\\s*=\\s*[\\d.eE+-]+\\s+AND\\s+",
+				"$1")
+			// The only option: the whole WITH clause goes.
+			.replaceAll("(?i)\\s+WITH\\s+(?:dclocal_)?read_repair_chance\\s*=\\s*[\\d.eE+-]+", "");
 	}
 
 	private static String readResource(final String resource) throws IOException {
@@ -287,7 +383,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 
 	}
 
-	private record SchemaSource(String description, CqlLoader loader) {
+	private record SchemaSource(String description, CqlLoader loader, SchemaImport mode) {
 
 	}
 

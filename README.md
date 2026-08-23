@@ -84,7 +84,10 @@ try (var session = SeaStarCqlSession.builder()
 ```
 
 `withSchemaFile(Path)` and `withSchemaResource(String)` do the same from a file or a classpath
-resource. For a fixture that is easier to build in Java than in CQL, populate the model directly
+resource. To seed from a `DESCRIBE SCHEMA` dump taken off a live cluster, pass
+`SchemaImport.LENIENT` as a second argument: statements SeaStar refuses (materialized views,
+functions, aggregates) are logged and skipped instead of failing the build, and table options
+Cassandra itself has removed are stripped. For a fixture that is easier to build in Java than in CQL, populate the model directly
 through `getContext()` instead:
 
 ```java

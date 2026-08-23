@@ -8,6 +8,11 @@ called out explicitly.
 
 ### Added
 
+- `SchemaImport.LENIENT` overloads on `withSchema`/`withSchemaFile`/`withSchemaResource`, for
+  seeding from a `DESCRIBE SCHEMA` dump taken off a live cluster: a statement that fails is logged
+  at WARN and skipped instead of failing the build, and the table options Cassandra removed in 4.0
+  (`read_repair_chance`, `dclocal_read_repair_chance`) are stripped so an old dump keeps its
+  tables. The mode-less methods stay strict.
 - The schema splitter behind `withSchema`/`withSchemaFile`/`withSchemaResource` understands
   `$$`-quoted bodies, so a `DESCRIBE` dump containing a function body with semicolons in it splits
   correctly.

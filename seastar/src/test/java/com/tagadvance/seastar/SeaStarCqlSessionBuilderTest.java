@@ -75,6 +75,62 @@ class SeaStarCqlSessionBuilderTest {
 	}
 
 	/**
+	 * The shape of a {@code DESCRIBE SCHEMA} dump: features SeaStar refuses, non-CQL noise, and a
+	 * statement the parser rejects, mixed in with statements that work. Lenient keeps everything it
+	 * can; strict fails on the first refusal.
+	 */
+	@Test
+	@DisplayName("A lenient import skips what fails and seeds everything else")
+	void testLenientImportSkipsFailures() {
+		final var dump = SCHEMA + """
+			Warnings :
+			CREATE MATERIALIZED VIEW shop.by_name AS SELECT * FROM shop.products
+				WHERE name IS NOT NULL AND id IS NOT NULL PRIMARY KEY (name, id);
+			CREATE FUNCTION shop.f(a int) RETURNS NULL ON NULL INPUT RETURNS int
+				LANGUAGE java AS $$ return a; $$;
+			CREATE OR REPLACE FUNCTION shop.f(a int) RETURNS NULL ON NULL INPUT RETURNS int
+				LANGUAGE java AS $$ return a; $$;
+			CREATE AGGREGATE shop.agg(int) SFUNC f STYPE int;
+			CREATE TABLE shop.orders (id int PRIMARY KEY, total int);
+			""";
+
+		assertThrows(IllegalStateException.class,
+			() -> SeaStarCqlSession.builder().withSchema(dump).build());
+
+		try (final var session = SeaStarCqlSession.builder()
+			.withSchema(dump, SchemaImport.LENIENT)
+			.build()) {
+			final var keyspace = session.getMetadata().getKeyspace("shop").orElseThrow();
+			assertTrue(keyspace.getTable("products").isPresent());
+			assertTrue(keyspace.getTable("orders").isPresent());
+		}
+	}
+
+	@Test
+	@DisplayName("A lenient import strips the table options Cassandra removed in 4.0")
+	void testLenientImportStripsRemovedOptions() {
+		final var dump = """
+			CREATE KEYSPACE legacy WITH replication =
+				{'class': 'SimpleStrategy', 'replication_factor': 1};
+			CREATE TABLE legacy.first (id int PRIMARY KEY)
+				WITH read_repair_chance = 0.0 AND comment = 'kept';
+			CREATE TABLE legacy.middle (id int PRIMARY KEY)
+				WITH comment = 'kept' AND dclocal_read_repair_chance = 0.1 AND gc_grace_seconds = 864000;
+			CREATE TABLE legacy.only (id int PRIMARY KEY) WITH read_repair_chance = 0.0;
+			""";
+
+		try (final var session = SeaStarCqlSession.builder()
+			.withSchema(dump, SchemaImport.LENIENT)
+			.build()) {
+			final var keyspace = session.getMetadata().getKeyspace("legacy").orElseThrow();
+			// The dead option is stripped rather than the statement skipped: the tables exist.
+			assertTrue(keyspace.getTable("first").isPresent());
+			assertTrue(keyspace.getTable("middle").isPresent());
+			assertTrue(keyspace.getTable("only").isPresent());
+		}
+	}
+
+	/**
 	 * Transport settings a caller might set on a builder shared with a
 	 * real session are accepted and ignored rather than rejected.
 	 */
