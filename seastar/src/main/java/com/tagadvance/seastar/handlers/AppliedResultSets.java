@@ -19,7 +19,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
-import org.jspecify.annotations.NonNull;
 
 /**
  * Builds the one-row {@code [applied]} result set that lightweight transactions (IF / IF NOT
@@ -70,25 +69,21 @@ final class AppliedResultSets {
 		return new ColumnDefinition() {
 
 			@Override
-			@NonNull
 			public CqlIdentifier getKeyspace() {
 				return table.getKeyspace();
 			}
 
 			@Override
-			@NonNull
 			public CqlIdentifier getTable() {
 				return table.getName();
 			}
 
 			@Override
-			@NonNull
 			public CqlIdentifier getName() {
 				return APPLIED;
 			}
 
 			@Override
-			@NonNull
 			public DataType getType() {
 				return DataTypes.BOOLEAN;
 			}
@@ -99,7 +94,7 @@ final class AppliedResultSets {
 			}
 
 			@Override
-			public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+			public void attach(final AttachmentPoint attachmentPoint) {
 			}
 
 		};
@@ -114,18 +109,16 @@ final class AppliedResultSets {
 		}
 
 		@Override
-		public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+		public void attach(final AttachmentPoint attachmentPoint) {
 			throw new UnsupportedOperationException();
 		}
 
 		@Override
-		@NonNull
 		public CodecRegistry codecRegistry() {
 			return codecRegistry;
 		}
 
 		@Override
-		@NonNull
 		public ProtocolVersion protocolVersion() {
 			return protocolVersion;
 		}
@@ -136,7 +129,6 @@ final class AppliedResultSets {
 		}
 
 		@Override
-		@NonNull
 		public DataType getType(final int i) {
 			return definitions.get(i).getType();
 		}
@@ -152,13 +144,12 @@ final class AppliedResultSets {
 		}
 
 		@Override
-		public int firstIndexOf(final @NonNull String name) {
+		public int firstIndexOf(final String name) {
 			return definitions.firstIndexOf(name);
 		}
 
 		@Override
-		@NonNull
-		public List<Integer> allIndicesOf(final @NonNull String name) {
+		public List<Integer> allIndicesOf(final String name) {
 			final var indices = definitions.allIndicesOf(name);
 			if (indices.isEmpty()) {
 				throw new IllegalArgumentException(
@@ -169,8 +160,7 @@ final class AppliedResultSets {
 		}
 
 		@Override
-		@NonNull
-		public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+		public List<Integer> allIndicesOf(final CqlIdentifier id) {
 			final var indices = definitions.allIndicesOf(id);
 			if (indices.isEmpty()) {
 				throw new IllegalArgumentException(
@@ -181,24 +171,21 @@ final class AppliedResultSets {
 		}
 
 		@Override
-		@NonNull
-		public DataType getType(final @NonNull String name) {
+		public DataType getType(final String name) {
 			return definitions.get(name).getType();
 		}
 
 		@Override
-		public int firstIndexOf(final @NonNull CqlIdentifier id) {
+		public int firstIndexOf(final CqlIdentifier id) {
 			return definitions.firstIndexOf(id);
 		}
 
 		@Override
-		@NonNull
-		public DataType getType(final @NonNull CqlIdentifier id) {
+		public DataType getType(final CqlIdentifier id) {
 			return definitions.get(id).getType();
 		}
 
 		@Override
-		@NonNull
 		public ColumnDefinitions getColumnDefinitions() {
 			return definitions;
 		}

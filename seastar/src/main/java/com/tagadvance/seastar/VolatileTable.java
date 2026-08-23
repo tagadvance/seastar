@@ -28,7 +28,6 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -426,19 +425,16 @@ class VolatileTable implements SeaStarTable {
 	 * still walking it.
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, IndexMetadata> getIndexes() {
 		return readLockUnchecked(() -> Map.copyOf(indexes));
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getKeyspace() {
 		return keyspace.name();
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getName() {
 		return name;
 	}
@@ -458,7 +454,6 @@ class VolatileTable implements SeaStarTable {
 	 * @see #getIndexes()
 	 */
 	@Override
-	@NonNull
 	public List<ColumnMetadata> getPartitionKey() {
 		return readLockUnchecked(() -> partitionKey.stream()
 			.map(this::columnByName)
@@ -473,7 +468,6 @@ class VolatileTable implements SeaStarTable {
 	 * @see #getIndexes()
 	 */
 	@Override
-	@NonNull
 	public Map<ColumnMetadata, ClusteringOrder> getClusteringColumns() {
 		return readLockUnchecked(() -> {
 			final Map<ColumnMetadata, ClusteringOrder> result = new LinkedHashMap<>();
@@ -499,7 +493,6 @@ class VolatileTable implements SeaStarTable {
 	 * @see #getIndexes()
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, ColumnMetadata> getColumns() {
 		return readLockUnchecked(() -> {
 			final Map<CqlIdentifier, ColumnMetadata> result = new LinkedHashMap<>();
@@ -528,7 +521,6 @@ class VolatileTable implements SeaStarTable {
 	 * result an in-memory store produces.
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, Object> getOptions() {
 		return Collections.emptyMap();
 	}
@@ -539,29 +531,28 @@ class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
-	@NonNull
 	public ColumnDefinition get(final int i) {
 		return readLockUnchecked(() -> columns.get(i));
 	}
 
 	@Override
-	public boolean contains(final @NonNull String name) {
+	public boolean contains(final String name) {
 		return contains(CqlIdentifier.fromInternal(name));
 	}
 
 	@Override
-	public boolean contains(final @NonNull CqlIdentifier id) {
+	public boolean contains(final CqlIdentifier id) {
 		return readLockUnchecked(
 			() -> columns.stream().map(ColumnMetadata::getName).anyMatch(id::equals));
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull String name) {
+	public int firstIndexOf(final String name) {
 		return firstIndexOf(CqlIdentifier.fromInternal(name));
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull CqlIdentifier id) {
+	public int firstIndexOf(final CqlIdentifier id) {
 		return readLockUnchecked(() -> IntStream.range(0, columns.size())
 			.filter(index -> columns.get(index).getName().equals(id))
 			.findFirst()
@@ -569,14 +560,12 @@ class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull String name) {
+	public List<Integer> allIndicesOf(final String name) {
 		return allIndicesOf(CqlIdentifier.fromInternal(name));
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(final CqlIdentifier id) {
 		// Column names are unique within a table, so the first occurrence is the only one. A
 		// missing column is an empty list rather than a throw, matching DefaultColumnDefinitions;
 		// the row wrappers layer their own validation on top.
@@ -604,7 +593,7 @@ class VolatileTable implements SeaStarTable {
 	}
 
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		writeLock(() -> {
 			this.attachmentPoint = requireNonNull(attachmentPoint,
 				"attachmentPoint must not be null");
@@ -619,7 +608,6 @@ class VolatileTable implements SeaStarTable {
 	 * @return an {@link Iterator iterator}
 	 */
 	@Override
-	@NonNull
 	public Iterator<ColumnDefinition> iterator() {
 		return readLockUnchecked(
 			() -> columns.stream().map(ColumnDefinition.class::cast).toList().iterator());
@@ -635,7 +623,6 @@ class VolatileTable implements SeaStarTable {
 			return new ColumnDefinitions() {
 
 				@Override
-				@NonNull
 				public Iterator<ColumnDefinition> iterator() {
 					return columnDefinitions.iterator();
 				}
@@ -646,7 +633,7 @@ class VolatileTable implements SeaStarTable {
 				}
 
 				@Override
-				public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+				public void attach(final AttachmentPoint attachmentPoint) {
 					throw new UnsupportedOperationException();
 				}
 
@@ -656,13 +643,12 @@ class VolatileTable implements SeaStarTable {
 				}
 
 				@Override
-				@NonNull
 				public ColumnDefinition get(final int i) {
 					return columnDefinitions.get(i);
 				}
 
 				@Override
-				public boolean contains(final @NonNull String name) {
+				public boolean contains(final String name) {
 					requireNonNull(name, "name must not be null");
 
 					return columnDefinitions.stream()
@@ -672,7 +658,7 @@ class VolatileTable implements SeaStarTable {
 				}
 
 				@Override
-				public boolean contains(final @NonNull CqlIdentifier id) {
+				public boolean contains(final CqlIdentifier id) {
 					requireNonNull(id, "id must not be null");
 
 					return columnDefinitions.stream()
@@ -681,23 +667,21 @@ class VolatileTable implements SeaStarTable {
 				}
 
 				@Override
-				public int firstIndexOf(final @NonNull String name) {
+				public int firstIndexOf(final String name) {
 					requireNonNull(name, "name must not be null");
 
 					return firstIndexOf(CqlIdentifier.fromInternal(name));
 				}
 
 				@Override
-				@NonNull
-				public List<Integer> allIndicesOf(final @NonNull String name) {
+				public List<Integer> allIndicesOf(final String name) {
 					requireNonNull(name, "name must not be null");
 
 					return allIndicesOf(CqlIdentifier.fromInternal(name));
 				}
 
 				@Override
-				@NonNull
-				public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+				public List<Integer> allIndicesOf(final CqlIdentifier id) {
 					requireNonNull(id, "id must not be null");
 
 					final var index = firstIndexOf(id);
@@ -706,7 +690,7 @@ class VolatileTable implements SeaStarTable {
 				}
 
 				@Override
-				public int firstIndexOf(final @NonNull CqlIdentifier id) {
+				public int firstIndexOf(final CqlIdentifier id) {
 					requireNonNull(id, "id must not be null");
 
 					return IntStream.range(0, columnDefinitions.size())

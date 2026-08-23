@@ -17,7 +17,6 @@ import java.util.stream.IntStream;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.Immutable;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -43,7 +42,7 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	@GuardedBy("lock")
 	private final List<UdtValueEntry> values = new ArrayList<>();
 
-	public VolatileUdtValue(@NonNull SeaStarUserDefinedType type, @NonNull Object... values) {
+	public VolatileUdtValue(SeaStarUserDefinedType type, Object... values) {
 		this(type, List.of(values));
 	}
 
@@ -78,13 +77,12 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	 * through it, and through this value, which reads and writes at the type's current width.
 	 */
 	@Override
-	@NonNull
 	public SeaStarUserDefinedType getType() {
 		return type;
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull String name) {
+	public int firstIndexOf(final String name) {
 		return firstIndexOf(CqlIdentifier.fromCql(name));
 	}
 
@@ -95,19 +93,17 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	 * getters: a slot this value never grew reads as null.
 	 */
 	@Override
-	public int firstIndexOf(final @NonNull CqlIdentifier id) {
+	public int firstIndexOf(final CqlIdentifier id) {
 		return type.getFieldNames().indexOf(id);
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull String name) {
+	public List<Integer> allIndicesOf(final String name) {
 		return allIndicesOf(CqlIdentifier.fromCql(name));
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(final CqlIdentifier id) {
 		// Field names are unique within a type, so the first occurrence is the only one.
 		final var index = firstIndexOf(id);
 		if (index == -1) {
@@ -146,7 +142,6 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	 * way round would be the one lock inversion this class could still make.
 	 */
 	@Override
-	@NonNull
 	public UdtValue setBytesUnsafe(final int i, final ByteBuffer bytes) {
 		final var names = type.getFieldNames();
 		final var dataTypes = type.getFieldTypes();
@@ -183,7 +178,6 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	 * the type answers.
 	 */
 	@Override
-	@NonNull
 	public DataType getType(final int i) {
 		final var entry = readLockUnchecked(() -> i < values.size() ? values.get(i) : null);
 
@@ -195,13 +189,11 @@ class VolatileUdtValue implements SeaStarUdtValue {
 	 * call this while holding the value's own lock.
 	 */
 	@Override
-	@NonNull
 	public CodecRegistry codecRegistry() {
 		return type.getAttachmentPoint().getCodecRegistry();
 	}
 
 	@Override
-	@NonNull
 	public ProtocolVersion protocolVersion() {
 		return type.context().getProtocolVersion();
 	}
@@ -240,7 +232,7 @@ class VolatileUdtValue implements SeaStarUdtValue {
 		private final DataType dataType;
 		private final Object value;
 
-		private UdtValueEntry(@NonNull CqlIdentifier name, @NonNull DataType dataType,
+		private UdtValueEntry(CqlIdentifier name, DataType dataType,
 			@Nullable Object value) {
 			this.name = requireNonNull(name, "name must not be null");
 			this.dataType = requireNonNull(dataType, "dataType must not be null");

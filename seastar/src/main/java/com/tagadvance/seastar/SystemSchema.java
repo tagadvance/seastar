@@ -30,7 +30,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * The {@code system_schema} tables, projected from the live model.
@@ -199,8 +198,8 @@ public final class SystemSchema {
 	 * of that name - which a caller serving the wire should answer the way a node answers an
 	 * unconfigured table
 	 */
-	public static Optional<AsyncResultSet> select(final @NonNull SeaStarDriverContext context,
-		final @NonNull String table) {
+	public static Optional<AsyncResultSet> select(final SeaStarDriverContext context,
+		final String table) {
 		requireNonNull(context, "context must not be null");
 		requireNonNull(table, "table must not be null");
 

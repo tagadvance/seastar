@@ -4,7 +4,6 @@ import com.datastax.oss.driver.shaded.guava.common.util.concurrent.UncheckedExec
 import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
-import org.jspecify.annotations.NonNull;
 
 /**
  * Provides utility methods for working with {@link Lock locks}.
@@ -23,13 +22,11 @@ public interface SeaStarReadWriteLock extends ReadWriteLock {
 	ReadWriteLock lock();
 
 	@Override
-	@NonNull
 	default Lock readLock() {
 		return lock().readLock();
 	}
 
 	@Override
-	@NonNull
 	default Lock writeLock() {
 		return lock().writeLock();
 	}

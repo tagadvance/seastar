@@ -10,7 +10,6 @@ import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
 import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
 import java.nio.ByteBuffer;
 import java.util.List;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -39,18 +38,16 @@ final class ValueRow implements Row {
 	}
 
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		throw new UnsupportedOperationException();
 	}
 
 	@Override
-	@NonNull
 	public CodecRegistry codecRegistry() {
 		return codecRegistry;
 	}
 
 	@Override
-	@NonNull
 	public ProtocolVersion protocolVersion() {
 		return version;
 	}
@@ -61,7 +58,6 @@ final class ValueRow implements Row {
 	}
 
 	@Override
-	@NonNull
 	public DataType getType(final int i) {
 		return definitions.get(i).getType();
 	}
@@ -74,13 +70,12 @@ final class ValueRow implements Row {
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull String name) {
+	public int firstIndexOf(final String name) {
 		return definitions.firstIndexOf(name);
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull String name) {
+	public List<Integer> allIndicesOf(final String name) {
 		final var indices = definitions.allIndicesOf(name);
 		if (indices.isEmpty()) {
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(name));
@@ -90,8 +85,7 @@ final class ValueRow implements Row {
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(final CqlIdentifier id) {
 		final var indices = definitions.allIndicesOf(id);
 		if (indices.isEmpty()) {
 			throw new IllegalArgumentException("%s is not a column in this row".formatted(id));
@@ -101,24 +95,21 @@ final class ValueRow implements Row {
 	}
 
 	@Override
-	@NonNull
-	public DataType getType(final @NonNull String name) {
+	public DataType getType(final String name) {
 		return definitions.get(name).getType();
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull CqlIdentifier id) {
+	public int firstIndexOf(final CqlIdentifier id) {
 		return definitions.firstIndexOf(id);
 	}
 
 	@Override
-	@NonNull
-	public DataType getType(final @NonNull CqlIdentifier id) {
+	public DataType getType(final CqlIdentifier id) {
 		return definitions.get(id).getType();
 	}
 
 	@Override
-	@NonNull
 	public ColumnDefinitions getColumnDefinitions() {
 		return definitions;
 	}

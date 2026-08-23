@@ -49,7 +49,6 @@ import org.apache.cassandra.cql3.statements.UpdateStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedInsert;
 import org.apache.cassandra.cql3.statements.UpdateStatement.ParsedUpdate;
 import org.apache.cassandra.utils.Pair;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -619,25 +618,21 @@ public final class BindMarkers {
 		return new ColumnDefinition() {
 
 			@Override
-			@NonNull
 			public CqlIdentifier getKeyspace() {
 				return keyspace;
 			}
 
 			@Override
-			@NonNull
 			public CqlIdentifier getTable() {
 				return tableName;
 			}
 
 			@Override
-			@NonNull
 			public CqlIdentifier getName() {
 				return columnName;
 			}
 
 			@Override
-			@NonNull
 			public DataType getType() {
 				return type;
 			}
@@ -648,7 +643,7 @@ public final class BindMarkers {
 			}
 
 			@Override
-			public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+			public void attach(final AttachmentPoint attachmentPoint) {
 			}
 
 		};

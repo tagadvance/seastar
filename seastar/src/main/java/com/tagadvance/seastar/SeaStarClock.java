@@ -9,7 +9,6 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicReference;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A {@link Clock} a test moves by hand, so that expiry can be observed without waiting for it.
@@ -44,7 +43,6 @@ public final class SeaStarClock extends Clock {
 	/**
 	 * A clock started at the current time and stopped there until it is advanced.
 	 */
-	@NonNull
 	public static SeaStarClock now() {
 		return at(Instant.now());
 	}
@@ -52,8 +50,7 @@ public final class SeaStarClock extends Clock {
 	/**
 	 * A clock started at the given instant and stopped there until it is advanced.
 	 */
-	@NonNull
-	public static SeaStarClock at(final @NonNull Instant instant) {
+	public static SeaStarClock at(final Instant instant) {
 		requireNonNull(instant, "instant must not be null");
 
 		return new SeaStarClock(new AtomicReference<>(instant), ZoneOffset.UTC);
@@ -62,14 +59,13 @@ public final class SeaStarClock extends Clock {
 	/**
 	 * Moves the clock forward. A negative duration moves it back.
 	 */
-	public void advance(final @NonNull Duration duration) {
+	public void advance(final Duration duration) {
 		requireNonNull(duration, "duration must not be null");
 
 		instant.updateAndGet(current -> current.plus(duration));
 	}
 
 	@Override
-	@NonNull
 	public ZoneId getZone() {
 		return zone;
 	}
@@ -79,14 +75,12 @@ public final class SeaStarClock extends Clock {
 	 * both, and only the zone differs.
 	 */
 	@Override
-	@NonNull
-	public Clock withZone(final @NonNull ZoneId zone) {
+	public Clock withZone(final ZoneId zone) {
 		// Shares the instant, so a view in another zone still moves when this clock is advanced.
 		return new SeaStarClock(instant, zone);
 	}
 
 	@Override
-	@NonNull
 	public Instant instant() {
 		return instant.get();
 	}

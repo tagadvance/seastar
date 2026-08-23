@@ -4,7 +4,6 @@ import static java.util.Objects.requireNonNull;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.jspecify.annotations.NonNull;
 
 /**
  * Splits a CQL script into its individual statements on top-level semicolons, ignoring semicolons
@@ -19,7 +18,7 @@ final class CqlStatements {
 	private CqlStatements() {
 	}
 
-	static List<String> split(final @NonNull String cql) {
+	static List<String> split(final String cql) {
 		requireNonNull(cql, "cql must not be null");
 
 		final var statements = new ArrayList<String>();

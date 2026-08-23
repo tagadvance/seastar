@@ -15,7 +15,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.Immutable;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -36,7 +35,6 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	}
 
 	@Override
-	@NonNull
 	public Statement<?> getStatement() {
 		return statement;
 	}
@@ -78,7 +76,6 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	 * @return an empty list, always
 	 */
 	@Override
-	@NonNull
 	public List<Entry<Node, Throwable>> getErrors() {
 		return Collections.emptyList();
 	}
@@ -103,7 +100,6 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	 * @return an empty list, always
 	 */
 	@Override
-	@NonNull
 	public List<String> getWarnings() {
 		return List.of();
 	}
@@ -113,7 +109,6 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	 * answer a live cluster gives when nothing set one.
 	 */
 	@Override
-	@NonNull
 	public Map<String, ByteBuffer> getIncomingPayload() {
 		return Map.of();
 	}
@@ -149,7 +144,6 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	 * @return a stage failed with {@link IllegalStateException}, always
 	 */
 	@Override
-	@NonNull
 	public CompletionStage<QueryTrace> getQueryTraceAsync() {
 		return CompletableFuture.failedFuture(
 			new IllegalStateException("Tracing was disabled for this request"));

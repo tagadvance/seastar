@@ -23,7 +23,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.IntStream;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -133,25 +132,21 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	 * leaves it drained for the next one.
 	 */
 	@Override
-	@NonNull
 	public ByteBuffer getId() {
 		return id;
 	}
 
 	@Override
-	@NonNull
 	public String getQuery() {
 		return prepareRequest.getQuery();
 	}
 
 	@Override
-	@NonNull
 	public ColumnDefinitions getVariableDefinitions() {
 		return definitions().variables();
 	}
 
 	@Override
-	@NonNull
 	public List<Integer> getPartitionKeyIndices() {
 		return definitions().partitionKeyIndices();
 	}
@@ -182,7 +177,6 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	}
 
 	@Override
-	@NonNull
 	public ColumnDefinitions getResultSetDefinitions() {
 		final var override = resultSetOverride;
 
@@ -195,8 +189,8 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	 * other threads read could briefly expose the new id alongside the old definitions.
 	 */
 	@Override
-	public void setResultMetadata(final @NonNull ByteBuffer newResultMetadataId,
-		final @NonNull ColumnDefinitions newResultSetDefinitions) {
+	public void setResultMetadata(final ByteBuffer newResultMetadataId,
+		final ColumnDefinitions newResultSetDefinitions) {
 		this.resultMetadataId = requireNonNull(newResultMetadataId,
 			"newResultMetadataId must not be null");
 		this.resultSetOverride = requireNonNull(newResultSetDefinitions,
@@ -211,7 +205,7 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	 * markers are simply left unset.
 	 */
 	@Override
-	public @NonNull BoundStatement bind(final Object @NonNull ... values) {
+	public BoundStatement bind(final Object ... values) {
 		final var variables = getVariableDefinitions();
 		if (values.length > variables.size()) {
 			throw new IllegalArgumentException(
@@ -231,8 +225,7 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	 * when the builder is created, the same way binding them directly would.
 	 */
 	@Override
-	@NonNull
-	public BoundStatementBuilder boundStatementBuilder(final Object @NonNull ... values) {
+	public BoundStatementBuilder boundStatementBuilder(final Object ... values) {
 		final var variables = getVariableDefinitions();
 		final var bound = (SeaStarBoundStatement) bind(values);
 		final var encoded = bound.getValues().toArray(new ByteBuffer[variables.size()]);

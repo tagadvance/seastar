@@ -37,7 +37,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * The root of the storage model, and the outermost lock of the hierarchy.
@@ -102,7 +101,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	}
 
 	@Override
-	@NonNull
 	public String getSessionName() {
 		return sessionName;
 	}
@@ -126,7 +124,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * @see #buildRequestProcessorRegistry()
 	 */
 	@Override
-	@NonNull
 	public RequestProcessorRegistry getRequestProcessorRegistry() {
 		throw new UnsupportedOperationException(
 			"SeaStar does not support the driver's RequestProcessorRegistry; it dispatches through SeaStarRequestProcessorRegistry");
@@ -138,7 +135,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * deliberately breaks that, so {@code getLoadBalancingPolicy(profileName)} answers {@code null}.
 	 */
 	@Override
-	@NonNull
 	public Map<String, LoadBalancingPolicy> getLoadBalancingPolicies() {
 		return Collections.emptyMap();
 	}
@@ -149,7 +145,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * default profile entry the contract promises is deliberately absent.
 	 */
 	@Override
-	@NonNull
 	public Map<String, RetryPolicy> getRetryPolicies() {
 		return Collections.emptyMap();
 	}
@@ -160,7 +155,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * absent.
 	 */
 	@Override
-	@NonNull
 	public Map<String, SpeculativeExecutionPolicy> getSpeculativeExecutionPolicies() {
 		return Collections.emptyMap();
 	}
@@ -173,7 +167,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * @throws UnsupportedOperationException always
 	 */
 	@Override
-	@NonNull
 	public ReconnectionPolicy getReconnectionPolicy() {
 		throw new UnsupportedOperationException(
 			"SeaStar does not support reconnection policies; it holds no connection to reconnect");
@@ -185,7 +178,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * {@link PassThroughAddressTranslator}; any configured translator is ignored.
 	 */
 	@Override
-	@NonNull
 	public AddressTranslator getAddressTranslator() {
 		return new PassThroughAddressTranslator(this);
 	}
@@ -194,7 +186,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * Always empty, even if authentication was configured: there is no connection to authenticate.
 	 */
 	@Override
-	@NonNull
 	public Optional<AuthProvider> getAuthProvider() {
 		return Optional.empty();
 	}
@@ -203,7 +194,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * Always empty, even if SSL was configured: there is no socket to encrypt.
 	 */
 	@Override
-	@NonNull
 	public Optional<SslEngineFactory> getSslEngineFactory() {
 		return Optional.empty();
 	}
@@ -213,7 +203,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * driver already ships the "no limit" answer as {@link PassThroughRequestThrottler}.
 	 */
 	@Override
-	@NonNull
 	public RequestThrottler getRequestThrottler() {
 		return new PassThroughRequestThrottler(this);
 	}
@@ -223,7 +212,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * already ships the "nobody is listening" answer as {@link NoopNodeStateListener}.
 	 */
 	@Override
-	@NonNull
 	public NodeStateListener getNodeStateListener() {
 		return new NoopNodeStateListener(this);
 	}
@@ -249,7 +237,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * detached {@code UdtValue} compares like for like.
 	 */
 	@Override
-	@NonNull
 	public ProtocolVersion getProtocolVersion() {
 		return ProtocolVersion.DEFAULT;
 	}
@@ -290,7 +277,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * The single node, keyed by its host id; it never changes for the life of the session.
 	 */
 	@Override
-	@NonNull
 	public Map<UUID, Node> getNodes() {
 		return Map.of(node.getHostId(), node);
 	}
@@ -300,7 +286,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * never disabled or incomplete - the metadata being read is the store itself.
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, KeyspaceMetadata> getKeyspaces() {
 		return getSeaStarKeyspaces().entrySet()
 			.stream()
@@ -316,7 +301,6 @@ class VolatileDriverContext extends DefaultDriverContext implements SeaStarDrive
 	 * @return {@link Optional#empty()}, always
 	 */
 	@Override
-	@NonNull
 	public Optional<TokenMap> getTokenMap() {
 		return Optional.empty();
 	}

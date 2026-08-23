@@ -8,7 +8,6 @@ import com.datastax.oss.driver.api.core.type.DataType;
 import java.util.concurrent.locks.ReadWriteLock;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * One column of a table. Holds no lock of its own; it is guarded by its table's, which is its
@@ -36,8 +35,8 @@ class VolatileColumn implements SeaStarColumn {
 	@GuardedBy("table.lock()")
 	private AttachmentPoint attachmentPoint;
 
-	public VolatileColumn(@NonNull SeaStarDriverContext context, @NonNull SeaStarTable table,
-		@NonNull CqlIdentifier name, @NonNull DataType type, boolean isStatic) {
+	public VolatileColumn(SeaStarDriverContext context, SeaStarTable table,
+		CqlIdentifier name, DataType type, boolean isStatic) {
 		this.table = requireNonNull(table, "table must not be null");
 		this.name = requireNonNull(name, "name must not be null");
 		this.type = requireNonNull(type, "type must not be null");
@@ -60,31 +59,26 @@ class VolatileColumn implements SeaStarColumn {
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getKeyspace() {
 		return table.getKeyspace();
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getParent() {
 		return table.getName();
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getTable() {
 		return table.getName();
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getName() {
 		return name;
 	}
 
 	@Override
-	@NonNull
 	public DataType getType() {
 		return type;
 	}
@@ -100,7 +94,7 @@ class VolatileColumn implements SeaStarColumn {
 	}
 
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		writeLock(() -> {
 			this.attachmentPoint = requireNonNull(attachmentPoint,
 				"attachmentPoint must not be null");

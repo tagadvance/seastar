@@ -22,7 +22,6 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import net.jcip.annotations.NotThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * Not safe for concurrent use, unlike the driver's own {@code BoundStatement}: the real driver's
@@ -53,8 +52,8 @@ class SeaStarBoundStatement implements BoundStatement {
 	private ConsistencyLevel serialConsistencyLevel = ConsistencyLevel.LOCAL_SERIAL;
 
 	public SeaStarBoundStatement(final SeaStarDriverContext context,
-		final @NonNull PreparedStatement preparedStatement,
-		final Object @NonNull ... values) {
+		final PreparedStatement preparedStatement,
+		final Object ... values) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.preparedStatement = requireNonNull(preparedStatement,
 			"preparedStatement must not be null");
@@ -64,7 +63,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public PreparedStatement getPreparedStatement() {
 		return preparedStatement;
 	}
@@ -78,7 +76,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public List<ByteBuffer> getValues() {
 		return IntStream.range(0, size())
 			.mapToObj(this::getBytesUnsafe)
@@ -91,7 +88,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * this one.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setExecutionProfileName(final String newConfigProfileName) {
 		this.executionProfileName = newConfigProfileName;
 
@@ -102,7 +98,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * @see #setExecutionProfileName(String)
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setExecutionProfile(final DriverExecutionProfile newProfile) {
 		this.executionProfile = newProfile;
 
@@ -110,7 +105,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setRoutingKeyspace(final CqlIdentifier newRoutingKeyspace) {
 		this.routingKeyspace = newRoutingKeyspace;
 
@@ -122,7 +116,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * route to. See {@link #getNode()}.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setNode(final Node node) {
 		this.node = node;
 
@@ -130,7 +123,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setRoutingKey(final ByteBuffer newRoutingKey) {
 		this.routingKey = newRoutingKey;
 
@@ -142,7 +134,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * See {@link #getRoutingToken()}.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setRoutingToken(final Token newRoutingToken) {
 		this.routingToken = newRoutingToken;
 
@@ -150,9 +141,8 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setCustomPayload(
-		final @NonNull Map<String, ByteBuffer> newCustomPayload) {
+		final Map<String, ByteBuffer> newCustomPayload) {
 		this.customPayload = Map.copyOf(
 			requireNonNull(newCustomPayload, "newCustomPayload must not be null"));
 
@@ -160,7 +150,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setIdempotent(final Boolean newIdempotence) {
 		this.idempotent = newIdempotence;
 
@@ -172,7 +161,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * memory on the calling thread, so there is no coordinator round trip to trace.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setTracing(final boolean newTracing) {
 		this.tracing = newTracing;
 
@@ -185,7 +173,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setQueryTimestamp(final long newTimestamp) {
 		timestamp.set(newTimestamp);
 
@@ -197,7 +184,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * memory, so a request never has the chance to run long enough for this to matter.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setTimeout(final Duration newTimeout) {
 		this.timeout = newTimeout;
 
@@ -214,7 +200,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * page (see {@code AGENTS.md}), so there is no paging state to resume from.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setPagingState(final ByteBuffer newPagingState) {
 		this.pagingState = newPagingState;
 
@@ -231,7 +216,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * page, so nothing consults a page size.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setPageSize(final int newPageSize) {
 		this.pageSize = newPageSize;
 
@@ -248,7 +232,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * level against.
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setConsistencyLevel(final ConsistencyLevel newConsistencyLevel) {
 		this.consistencyLevel = newConsistencyLevel;
 
@@ -264,7 +247,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	 * @see #setConsistencyLevel(ConsistencyLevel)
 	 */
 	@Override
-	@NonNull
 	public BoundStatement setSerialConsistencyLevel(
 		final ConsistencyLevel newSerialConsistencyLevel) {
 		this.serialConsistencyLevel = newSerialConsistencyLevel;
@@ -278,8 +260,7 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull String name) {
+	public List<Integer> allIndicesOf(final String name) {
 		final var indices = preparedStatement.getVariableDefinitions().allIndicesOf(name);
 		if (indices.isEmpty()) {
 			throw new IllegalArgumentException(
@@ -290,8 +271,7 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(final CqlIdentifier id) {
 		final var indices = preparedStatement.getVariableDefinitions().allIndicesOf(id);
 		if (indices.isEmpty()) {
 			throw new IllegalArgumentException(
@@ -302,7 +282,7 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull String name) {
+	public int firstIndexOf(final String name) {
 		final var index = preparedStatement.getVariableDefinitions().firstIndexOf(name);
 		if (index < 0) {
 			throw new IllegalArgumentException(
@@ -313,7 +293,7 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull CqlIdentifier id) {
+	public int firstIndexOf(final CqlIdentifier id) {
 		final var index = preparedStatement.getVariableDefinitions().firstIndexOf(id);
 		if (index < 0) {
 			throw new IllegalArgumentException(
@@ -336,7 +316,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public BoundStatement setBytesUnsafe(final int i, final ByteBuffer v) {
 		if (i >= values.length) {
 			values = Arrays.copyOf(values, i + 1);
@@ -352,19 +331,16 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public DataType getType(final int i) {
 		return preparedStatement.getVariableDefinitions().get(i).getType();
 	}
 
 	@Override
-	@NonNull
 	public CodecRegistry codecRegistry() {
 		return context.getCodecRegistry();
 	}
 
 	@Override
-	@NonNull
 	public ProtocolVersion protocolVersion() {
 		return context.getProtocolVersion();
 	}
@@ -414,7 +390,6 @@ class SeaStarBoundStatement implements BoundStatement {
 	}
 
 	@Override
-	@NonNull
 	public Map<String, ByteBuffer> getCustomPayload() {
 		return customPayload;
 	}

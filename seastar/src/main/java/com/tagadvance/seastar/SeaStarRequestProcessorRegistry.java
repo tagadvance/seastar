@@ -8,7 +8,6 @@ import com.datastax.oss.driver.internal.core.session.RequestProcessorRegistry;
 import java.util.Arrays;
 import java.util.Objects;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,8 +23,8 @@ class SeaStarRequestProcessorRegistry {
 	private final String logPrefix;
 	private final SeaStarRequestProcessor<?, ?>[] processors;
 
-	public SeaStarRequestProcessorRegistry(final @NonNull String logPrefix,
-		final @NonNull SeaStarRequestProcessor<?, ?>... processors) {
+	public SeaStarRequestProcessorRegistry(final String logPrefix,
+		final SeaStarRequestProcessor<?, ?>... processors) {
 		this.logPrefix = requireNonNull(logPrefix, "logPrefix must not be null");
 		this.processors = requireNonNull(processors, "processors must not be null");
 		Arrays.stream(processors).forEach(Objects::requireNonNull);

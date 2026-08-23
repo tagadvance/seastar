@@ -12,7 +12,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.jspecify.annotations.NonNull;
 
 public interface CqlHandler<T extends CQLStatement.Raw> {
 
@@ -25,8 +24,8 @@ public interface CqlHandler<T extends CQLStatement.Raw> {
 		return newAsyncResultSet(EmptyColumnDefinitions.INSTANCE, executionInfo, Stream.empty());
 	}
 
-	default AsyncResultSet newAsyncResultSet(final @NonNull ColumnDefinitions columnDefinitions,
-		final @NonNull ExecutionInfo executionInfo, final @NonNull Stream<SeaStarRow> rows) {
+	default AsyncResultSet newAsyncResultSet(final ColumnDefinitions columnDefinitions,
+		final ExecutionInfo executionInfo, final Stream<SeaStarRow> rows) {
 		final var data = rows.map(SeaStarRow::snapshot)
 			.collect(Collectors.toCollection(LinkedList::new));
 

@@ -24,7 +24,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.NotThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,8 +56,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @param clock the clock to read the current time from
 	 * @return this builder
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withClock(final @NonNull Clock clock) {
+	public SeaStarCqlSessionBuilder withClock(final Clock clock) {
 		this.clock = Objects.requireNonNull(clock, "clock must not be null");
 
 		return this;
@@ -73,8 +71,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @param cql a CQL script (one or more statements)
 	 * @return this builder
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchema(final @NonNull String cql) {
+	public SeaStarCqlSessionBuilder withSchema(final String cql) {
 		return withSchema(cql, SchemaImport.STRICT);
 	}
 
@@ -88,9 +85,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchema(final @NonNull String cql,
-		final @NonNull SchemaImport mode) {
+	public SeaStarCqlSessionBuilder withSchema(final String cql,
+		final SchemaImport mode) {
 		Objects.requireNonNull(cql, "cql must not be null");
 		Objects.requireNonNull(mode, "mode must not be null");
 		schemaSources.add(new SchemaSource("CQL string", () -> cql, mode));
@@ -105,8 +101,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull Path path) {
+	public SeaStarCqlSessionBuilder withSchemaFile(final Path path) {
 		return withSchemaFile(path, SchemaImport.STRICT);
 	}
 
@@ -119,9 +114,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String, SchemaImport)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull Path path,
-		final @NonNull SchemaImport mode) {
+	public SeaStarCqlSessionBuilder withSchemaFile(final Path path,
+		final SchemaImport mode) {
 		Objects.requireNonNull(path, "path must not be null");
 		Objects.requireNonNull(mode, "mode must not be null");
 		schemaSources.add(new SchemaSource("file " + path, () -> Files.readString(path), mode));
@@ -136,8 +130,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull File file) {
+	public SeaStarCqlSessionBuilder withSchemaFile(final File file) {
 		Objects.requireNonNull(file, "file must not be null");
 
 		return withSchemaFile(file.toPath());
@@ -152,9 +145,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String, SchemaImport)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaFile(final @NonNull File file,
-		final @NonNull SchemaImport mode) {
+	public SeaStarCqlSessionBuilder withSchemaFile(final File file,
+		final SchemaImport mode) {
 		Objects.requireNonNull(file, "file must not be null");
 
 		return withSchemaFile(file.toPath(), mode);
@@ -167,8 +159,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaResource(final @NonNull String resource) {
+	public SeaStarCqlSessionBuilder withSchemaResource(final String resource) {
 		return withSchemaResource(resource, SchemaImport.STRICT);
 	}
 
@@ -181,9 +172,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @return this builder
 	 * @see #withSchema(String, SchemaImport)
 	 */
-	@NonNull
-	public SeaStarCqlSessionBuilder withSchemaResource(final @NonNull String resource,
-		final @NonNull SchemaImport mode) {
+	public SeaStarCqlSessionBuilder withSchemaResource(final String resource,
+		final SchemaImport mode) {
 		Objects.requireNonNull(resource, "resource must not be null");
 		Objects.requireNonNull(mode, "mode must not be null");
 		schemaSources.add(new SchemaSource("classpath resource " + resource,
@@ -200,9 +190,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @throws UnsupportedOperationException always
 	 */
 	@Override
-	@NonNull
 	public CqlSessionBuilder addContactPoints(
-		final @NonNull Collection<InetSocketAddress> contactPoints) {
+		final Collection<InetSocketAddress> contactPoints) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -211,8 +200,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
-	public CqlSessionBuilder addContactPoint(final @NonNull InetSocketAddress contactPoint) {
+	public CqlSessionBuilder addContactPoint(final InetSocketAddress contactPoint) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -221,9 +209,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
 	public CqlSessionBuilder addContactEndPoints(
-		final @NonNull Collection<EndPoint> contactPoints) {
+		final Collection<EndPoint> contactPoints) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -232,8 +219,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
-	public CqlSessionBuilder addContactEndPoint(final @NonNull EndPoint contactPoint) {
+	public CqlSessionBuilder addContactEndPoint(final EndPoint contactPoint) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -242,7 +228,6 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
 	public CqlSessionBuilder withCloudProxyAddress(final InetSocketAddress cloudProxyAddress) {
 		throw new UnsupportedOperationException();
 	}
@@ -252,8 +237,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
-	public CqlSessionBuilder withCloudSecureConnectBundle(final @NonNull URL cloudConfigUrl) {
+	public CqlSessionBuilder withCloudSecureConnectBundle(final URL cloudConfigUrl) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -262,9 +246,8 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
 	public CqlSessionBuilder withCloudSecureConnectBundle(
-		final @NonNull InputStream cloudConfigInputStream) {
+		final InputStream cloudConfigInputStream) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -273,8 +256,7 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	 * @see #addContactPoints(Collection)
 	 */
 	@Override
-	@NonNull
-	public CqlSessionBuilder withCloudSecureConnectBundle(final @NonNull Path cloudConfigPath) {
+	public CqlSessionBuilder withCloudSecureConnectBundle(final Path cloudConfigPath) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -286,13 +268,11 @@ public class SeaStarCqlSessionBuilder extends CqlSessionBuilder {
 	// builder-configuration code between a real session and a SeaStar one.
 
 	@Override
-	@NonNull
 	public CompletionStage<CqlSession> buildAsync() {
 		return CompletableFuture.completedFuture(build());
 	}
 
 	@Override
-	@NonNull
 	public SeaStarCqlSession build() {
 		final var programmaticArguments = programmaticArgumentsBuilder.build();
 		final var configLoader = this.configLoader != null ? this.configLoader

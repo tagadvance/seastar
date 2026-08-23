@@ -15,7 +15,6 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.stream.IntStream;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A user defined type. Holds no lock of its own; a type belongs to a keyspace and is guarded by that
@@ -89,7 +88,6 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getName() {
 		return name;
 	}
@@ -104,14 +102,13 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	 * not show through a list already handed out.
 	 */
 	@Override
-	@NonNull
 	public List<CqlIdentifier> getFieldNames() {
 		return readLockUnchecked(
 			() -> definitions.stream().map(UserDefinedTypeDefinition::name).toList());
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull CqlIdentifier id) {
+	public int firstIndexOf(final CqlIdentifier id) {
 		return readLockUnchecked(() -> IntStream.range(0, definitions.size())
 			.filter(i -> definitions.get(i).name().equals(id))
 			.findFirst()
@@ -119,13 +116,12 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	}
 
 	@Override
-	public int firstIndexOf(final @NonNull String name) {
+	public int firstIndexOf(final String name) {
 		return firstIndexOf(CqlIdentifier.fromCql(name));
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(final CqlIdentifier id) {
 		// Field names are unique within a type, so the first occurrence is the only one. A missing
 		// field is an empty list rather than a throw, matching DefaultUserDefinedType.
 		final var index = firstIndexOf(id);
@@ -134,8 +130,7 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	}
 
 	@Override
-	@NonNull
-	public List<Integer> allIndicesOf(final @NonNull String name) {
+	public List<Integer> allIndicesOf(final String name) {
 		return allIndicesOf(CqlIdentifier.fromCql(name));
 	}
 
@@ -143,7 +138,6 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	 * A copy taken under the keyspace's read lock, not a live view, like {@link #getFieldNames()}.
 	 */
 	@Override
-	@NonNull
 	public List<DataType> getFieldTypes() {
 		return readLockUnchecked(
 			() -> definitions.stream().map(UserDefinedTypeDefinition::dataType).toList());
@@ -155,7 +149,6 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	 * share a lock too, because they share a keyspace.
 	 */
 	@Override
-	@NonNull
 	public UserDefinedType copy(final boolean newFrozen) {
 		return new VolatileUserDefinedType(this, newFrozen);
 	}
@@ -178,19 +171,16 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	}
 
 	@Override
-	@NonNull
 	public SeaStarUdtValue newValue() {
 		return readLockUnchecked(() -> new VolatileUdtValue(this));
 	}
 
 	@Override
-	@NonNull
-	public UdtValue newValue(final Object @NonNull ... values) {
+	public UdtValue newValue(final Object ... values) {
 		return readLockUnchecked(() -> new VolatileUdtValue(this, values));
 	}
 
 	@Override
-	@NonNull
 	public AttachmentPoint getAttachmentPoint() {
 		return readLockUnchecked(() -> attachmentPoint);
 	}
@@ -201,7 +191,7 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	}
 
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		writeLock(() -> {
 			this.attachmentPoint = requireNonNull(attachmentPoint,
 				"attachmentPoint must not be null");
@@ -233,8 +223,8 @@ public class VolatileUserDefinedType implements SeaStarUserDefinedType {
 	/**
 	 * One declared field of the type: its name and data type.
 	 */
-	public record UserDefinedTypeDefinition(@NonNull CqlIdentifier name,
-											@NonNull DataType dataType) {
+	public record UserDefinedTypeDefinition(CqlIdentifier name,
+											DataType dataType) {
 
 		public UserDefinedTypeDefinition {
 			requireNonNull(name, "name must not be null");

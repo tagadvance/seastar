@@ -18,7 +18,6 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A keyspace, and the one lock everything inside it is guarded by.
@@ -144,7 +143,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getName() {
 		return name;
 	}
@@ -169,7 +167,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * a string.
 	 */
 	@Override
-	@NonNull
 	public Map<String, String> getReplication() {
 		return readLockUnchecked(() -> replication);
 	}
@@ -183,7 +180,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * the order a real driver's map iterates in - not creation order.
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, TableMetadata> getTables() {
 		return byName(getSeaStarTables());
 	}
@@ -194,7 +190,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * without views, and it keeps metadata walkers such as {@link #describe(boolean)} working.
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, ViewMetadata> getViews() {
 		return Map.of();
 	}
@@ -206,7 +201,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * @see #getTables()
 	 */
 	@Override
-	@NonNull
 	public Map<CqlIdentifier, UserDefinedType> getUserDefinedTypes() {
 		return byName(getSeaStarUserDefinedTypes());
 	}
@@ -230,7 +224,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * keyspace never holds one, and an empty map is the same answer a live cluster gives.
 	 */
 	@Override
-	@NonNull
 	public Map<FunctionSignature, FunctionMetadata> getFunctions() {
 		return Map.of();
 	}
@@ -240,7 +233,6 @@ class VolatileKeyspace implements SeaStarKeyspace {
 	 * keyspace never holds one, and an empty map is the same answer a live cluster gives.
 	 */
 	@Override
-	@NonNull
 	public Map<FunctionSignature, AggregateMetadata> getAggregates() {
 		return Map.of();
 	}

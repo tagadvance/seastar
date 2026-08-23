@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 import net.jcip.annotations.GuardedBy;
 import net.jcip.annotations.ThreadSafe;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -80,8 +79,8 @@ class VolatileRow implements SeaStarRow {
 	@GuardedBy("table.lock()")
 	private AttachmentPoint attachmentPoint;
 
-	protected VolatileRow(final @NonNull SeaStarDriverContext context,
-		final @NonNull SeaStarTable table, final @NonNull List<Object> data) {
+	protected VolatileRow(final SeaStarDriverContext context,
+		final SeaStarTable table, final List<Object> data) {
 		this(context, table, data, Cells.microseconds(context.getClock()));
 	}
 
@@ -89,8 +88,8 @@ class VolatileRow implements SeaStarRow {
 	 * @param writeTime the microsecond timestamp every cell of the new row carries, which is what
 	 *                  {@code writetime()} reports and what a later write is resolved against
 	 */
-	protected VolatileRow(final @NonNull SeaStarDriverContext context,
-		final @NonNull SeaStarTable table, final @NonNull List<Object> data, final long writeTime) {
+	protected VolatileRow(final SeaStarDriverContext context,
+		final SeaStarTable table, final List<Object> data, final long writeTime) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.table = requireNonNull(table, "table must not be null");
 		this.volatileTable = table instanceof VolatileTable paired ? paired : null;
@@ -108,7 +107,7 @@ class VolatileRow implements SeaStarRow {
 		}
 	}
 
-	private List<Object> validate(final @NonNull List<Object> values)
+	private List<Object> validate(final List<Object> values)
 		throws IllegalArgumentException {
 		requireNonNull(values, "values must not be null");
 
@@ -275,18 +274,16 @@ class VolatileRow implements SeaStarRow {
 				 * is refused rather than silently ignored.
 				 */
 				@Override
-				public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+				public void attach(final AttachmentPoint attachmentPoint) {
 					throw new UnsupportedOperationException();
 				}
 
 				@Override
-				@NonNull
 				public CodecRegistry codecRegistry() {
 					return VolatileRow.this.codecRegistry();
 				}
 
 				@Override
-				@NonNull
 				public ProtocolVersion protocolVersion() {
 					return VolatileRow.this.protocolVersion();
 				}
@@ -297,7 +294,6 @@ class VolatileRow implements SeaStarRow {
 				}
 
 				@Override
-				@NonNull
 				public DataType getType(final int i) {
 					return columnDefinitions.get(i).getType();
 				}
@@ -308,29 +304,26 @@ class VolatileRow implements SeaStarRow {
 				}
 
 				@Override
-				public int firstIndexOf(final @NonNull String name) {
+				public int firstIndexOf(final String name) {
 					return columnDefinitions.firstIndexOf(name);
 				}
 
 				@Override
-				@NonNull
-				public DataType getType(final @NonNull String name) {
+				public DataType getType(final String name) {
 					return columnDefinitions.get(name).getType();
 				}
 
 				@Override
-				public int firstIndexOf(final @NonNull CqlIdentifier id) {
+				public int firstIndexOf(final CqlIdentifier id) {
 					return columnDefinitions.firstIndexOf(id);
 				}
 
 				@Override
-				@NonNull
-				public DataType getType(final @NonNull CqlIdentifier id) {
+				public DataType getType(final CqlIdentifier id) {
 					return columnDefinitions.get(id).getType();
 				}
 
 				@Override
-				@NonNull
 				public ColumnDefinitions getColumnDefinitions() {
 					return columnDefinitions;
 				}
@@ -343,7 +336,6 @@ class VolatileRow implements SeaStarRow {
 	 * The table itself - a live view, not a copy: a column added or dropped by a schema change
 	 * shows up here immediately. {@link #snapshot()} is the copy.
 	 */
-	@NonNull
 	@Override
 	public ColumnDefinitions getColumnDefinitions() {
 		return table;
@@ -354,15 +346,13 @@ class VolatileRow implements SeaStarRow {
 		return table.size();
 	}
 
-	@NonNull
 	@Override
 	public DataType getType(int i) {
 		return table.get(i).getType();
 	}
 
-	@NonNull
 	@Override
-	public List<Integer> allIndicesOf(@NonNull CqlIdentifier id) {
+	public List<Integer> allIndicesOf(CqlIdentifier id) {
 		final var indices = table.allIndicesOf(id);
 		if (indices.isEmpty()) {
 			// A caller almost always uses the result immediately (row.getString(name), etc.); an
@@ -376,7 +366,7 @@ class VolatileRow implements SeaStarRow {
 	}
 
 	@Override
-	public int firstIndexOf(@NonNull CqlIdentifier id) {
+	public int firstIndexOf(CqlIdentifier id) {
 		final int indexOf = table.firstIndexOf(id);
 		if (indexOf == -1) {
 			// See the allIndicesOf(CqlIdentifier) overload just above for why this validates
@@ -387,9 +377,8 @@ class VolatileRow implements SeaStarRow {
 		return indexOf;
 	}
 
-	@NonNull
 	@Override
-	public DataType getType(@NonNull CqlIdentifier id) {
+	public DataType getType(CqlIdentifier id) {
 		return table.readLockUnchecked(() -> {
 			final var index = firstIndexOf(id);
 
@@ -397,9 +386,8 @@ class VolatileRow implements SeaStarRow {
 		});
 	}
 
-	@NonNull
 	@Override
-	public List<Integer> allIndicesOf(@NonNull String name) {
+	public List<Integer> allIndicesOf(String name) {
 		final var indices = table.allIndicesOf(name);
 		if (indices.isEmpty()) {
 			// A caller almost always uses the result immediately (row.getString(name), etc.); an
@@ -413,7 +401,7 @@ class VolatileRow implements SeaStarRow {
 	}
 
 	@Override
-	public int firstIndexOf(@NonNull String name) {
+	public int firstIndexOf(String name) {
 		final int indexOf = table.firstIndexOf(name);
 		if (indexOf == -1) {
 			// A caller almost always uses the result immediately (row.getString(name), etc.); an
@@ -426,9 +414,8 @@ class VolatileRow implements SeaStarRow {
 		return indexOf;
 	}
 
-	@NonNull
 	@Override
-	public DataType getType(@NonNull String name) {
+	public DataType getType(String name) {
 		return table.readLockUnchecked(() -> {
 			final var index = firstIndexOf(name);
 
@@ -436,13 +423,11 @@ class VolatileRow implements SeaStarRow {
 		});
 	}
 
-	@NonNull
 	@Override
 	public CodecRegistry codecRegistry() {
 		return table.readLockUnchecked(() -> attachmentPoint).getCodecRegistry();
 	}
 
-	@NonNull
 	@Override
 	public ProtocolVersion protocolVersion() {
 		return table.readLockUnchecked(() -> attachmentPoint).getProtocolVersion();
@@ -458,7 +443,7 @@ class VolatileRow implements SeaStarRow {
 	 * with the table, so the two must agree on where they are attached.
 	 */
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		table.writeLock(() -> {
 			this.attachmentPoint = requireNonNull(attachmentPoint,
 				"attachmentPoint must not be null");

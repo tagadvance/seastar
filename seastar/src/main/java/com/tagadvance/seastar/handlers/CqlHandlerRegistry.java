@@ -7,7 +7,6 @@ import java.util.Arrays;
 import java.util.Objects;
 import net.jcip.annotations.ThreadSafe;
 import org.apache.cassandra.cql3.CQLStatement;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,8 +18,8 @@ public class CqlHandlerRegistry {
 	private final String logPrefix;
 	private final CqlHandler<?>[] processors;
 
-	public CqlHandlerRegistry(final @NonNull String logPrefix,
-		final @NonNull CqlHandler<?>... processors) {
+	public CqlHandlerRegistry(final String logPrefix,
+		final CqlHandler<?>... processors) {
 		this.logPrefix = requireNonNull(logPrefix, "logPrefix must not be null");
 		this.processors = requireNonNull(processors, "processors must not be null");
 		Arrays.stream(processors).forEach(Objects::requireNonNull);

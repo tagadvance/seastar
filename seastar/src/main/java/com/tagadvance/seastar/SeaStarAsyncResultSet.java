@@ -12,7 +12,6 @@ import java.util.Collections;
 import java.util.Queue;
 import java.util.concurrent.CompletionStage;
 import net.jcip.annotations.NotThreadSafe;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A result set that is always a single page.
@@ -50,8 +49,8 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 	 * are polled from it as they are read - so the caller must hand over a queue it will not touch
 	 * again.
 	 */
-	public SeaStarAsyncResultSet(final @NonNull ColumnDefinitions definitions,
-		final @NonNull ExecutionInfo executionInfo, final @NonNull Queue<Row> data) {
+	public SeaStarAsyncResultSet(final ColumnDefinitions definitions,
+		final ExecutionInfo executionInfo, final Queue<Row> data) {
 		this.definitions = requireNonNull(definitions, "definitions must not be null");
 		this.executionInfo = requireNonNull(executionInfo, "executionInfo must not be null");
 		requireNonNull(data, "data must not be null");
@@ -68,19 +67,16 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 		this.currentPage = () -> iterator;
 	}
 
-	@NonNull
 	@Override
 	public ColumnDefinitions getColumnDefinitions() {
 		return definitions;
 	}
 
-	@NonNull
 	@Override
 	public ExecutionInfo getExecutionInfo() {
 		return executionInfo;
 	}
 
-	@NonNull
 	@Override
 	public Iterable<Row> currentPage() {
 		return currentPage;
@@ -104,7 +100,6 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 	 * is never a next one to fetch, and that exception is what the driver's contract reserves for
 	 * exactly this case.
 	 */
-	@NonNull
 	@Override
 	public CompletionStage<AsyncResultSet> fetchNextPage() throws IllegalStateException {
 		throw new IllegalStateException(
@@ -129,19 +124,16 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 	 */
 	public static AsyncResultSet empty(final ExecutionInfo executionInfo) {
 		return new AsyncResultSet() {
-			@NonNull
 			@Override
 			public ColumnDefinitions getColumnDefinitions() {
 				return EmptyColumnDefinitions.INSTANCE;
 			}
 
-			@NonNull
 			@Override
 			public ExecutionInfo getExecutionInfo() {
 				return executionInfo;
 			}
 
-			@NonNull
 			@Override
 			public Iterable<Row> currentPage() {
 				return Collections.emptyList();
@@ -157,7 +149,6 @@ public class SeaStarAsyncResultSet implements AsyncResultSet {
 				return false;
 			}
 
-			@NonNull
 			@Override
 			public CompletionStage<AsyncResultSet> fetchNextPage() throws IllegalStateException {
 				throw new IllegalStateException(

@@ -5,7 +5,6 @@ import static java.util.Objects.requireNonNull;
 import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.tagadvance.tools.SeaStarReadWriteLock;
 import java.util.List;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A value of a {@link SeaStarUserDefinedType}: one Java value per declared field, positional the
@@ -18,7 +17,7 @@ import org.jspecify.annotations.NonNull;
  */
 public interface SeaStarUdtValue extends SeaStarReadWriteLock, UdtValue {
 
-	@NonNull SeaStarUserDefinedType getType();
+	SeaStarUserDefinedType getType();
 
 	/**
 	 * Validates candidate field values against the type - no more values than the type has fields,
@@ -26,7 +25,7 @@ public interface SeaStarUdtValue extends SeaStarReadWriteLock, UdtValue {
 	 * {@link com.datastax.oss.driver.api.core.type.UserDefinedType#newValue(Object...)} promises.
 	 * Takes the type's lock (the keyspace's read lock), so call it before taking the value's own.
 	 */
-	default void validate(final @NonNull List<Object> values)
+	default void validate(final List<Object> values)
 		throws IllegalArgumentException {
 		requireNonNull(values, "values must not be null");
 

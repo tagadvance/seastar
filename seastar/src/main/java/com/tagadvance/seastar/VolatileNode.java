@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.jcip.annotations.Immutable;
-import org.jspecify.annotations.NonNull;
 
 /**
  * The single node SeaStar reports. Every field is immutable and nothing about a node ever changes,
@@ -36,17 +35,14 @@ class VolatileNode implements Node {
 	 * single-node cluster would have had.
 	 */
 	@Override
-	@NonNull
 	public EndPoint getEndPoint() {
 		return new EndPoint() {
 			@Override
-			@NonNull
 			public SocketAddress resolve() {
 				return InetSocketAddress.createUnresolved("127.0.0.1", 9042);
 			}
 
 			@Override
-			@NonNull
 			public String asMetricPrefix() {
 				return "127_0_0_1_9042";
 			}
@@ -57,7 +53,6 @@ class VolatileNode implements Node {
 	 * Always empty - SeaStar binds no address, and the contract already allows this to be unknown.
 	 */
 	@Override
-	@NonNull
 	public Optional<InetSocketAddress> getBroadcastRpcAddress() {
 		return Optional.empty();
 	}
@@ -66,7 +61,6 @@ class VolatileNode implements Node {
 	 * Always empty, for the same reason as {@link #getBroadcastRpcAddress()}.
 	 */
 	@Override
-	@NonNull
 	public Optional<InetSocketAddress> getBroadcastAddress() {
 		return Optional.empty();
 	}
@@ -75,7 +69,6 @@ class VolatileNode implements Node {
 	 * Always empty, for the same reason as {@link #getBroadcastRpcAddress()}.
 	 */
 	@Override
-	@NonNull
 	public Optional<InetSocketAddress> getListenAddress() {
 		return Optional.empty();
 	}
@@ -108,7 +101,6 @@ class VolatileNode implements Node {
 	}
 
 	@Override
-	@NonNull
 	public Map<String, Object> getExtras() {
 		return Collections.emptyMap();
 	}
@@ -118,7 +110,6 @@ class VolatileNode implements Node {
 	 * as anything exists to ask.
 	 */
 	@Override
-	@NonNull
 	public NodeState getState() {
 		return NodeState.UP;
 	}
@@ -156,7 +147,6 @@ class VolatileNode implements Node {
 	 * node no other answer would let requests through.
 	 */
 	@Override
-	@NonNull
 	public NodeDistance getDistance() {
 		return NodeDistance.LOCAL;
 	}

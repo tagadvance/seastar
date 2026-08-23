@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
-import org.jspecify.annotations.NonNull;
 
 /**
  * A table, its column list and its rows.
@@ -56,7 +55,7 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 * Shortcut for {@link #addColumn(CqlIdentifier, DataType)
 	 * addColumn(CqlIdentifier.fromInternal(name), type)}.
 	 */
-	default SeaStarColumn addColumn(final @NonNull String name, final @NonNull DataType type) {
+	default SeaStarColumn addColumn(final String name, final DataType type) {
 		return addColumn(CqlIdentifier.fromInternal(name), type);
 	}
 
@@ -64,15 +63,15 @@ public interface SeaStarTable extends SeaStarReadWriteLock, TableMetadata, Colum
 	 * Adds a regular (non-static) column:
 	 * {@link #addColumn(CqlIdentifier, DataType, boolean) addColumn(name, type, false)}.
 	 */
-	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name,
-		final @NonNull DataType type) {
+	default SeaStarColumn addColumn(final CqlIdentifier name,
+		final DataType type) {
 		return addColumn(name, type, false);
 	}
 
 	/**
 	 * Creates a column, appends it via {@link #addColumn(SeaStarColumn)}, and returns it.
 	 */
-	default SeaStarColumn addColumn(final @NonNull CqlIdentifier name, final @NonNull DataType type,
+	default SeaStarColumn addColumn(final CqlIdentifier name, final DataType type,
 		final boolean isStatic) {
 		final var column = new VolatileColumn(context(), this, name, type, isStatic);
 		addColumn(column);

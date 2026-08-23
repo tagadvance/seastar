@@ -5,7 +5,6 @@ import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.detach.AttachmentPoint;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.tagadvance.seastar.SeaStarRow;
-import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -64,25 +63,21 @@ record Selector(CqlIdentifier keyspace, CqlIdentifier table, CqlIdentifier name,
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getKeyspace() {
 		return keyspace;
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getTable() {
 		return table;
 	}
 
 	@Override
-	@NonNull
 	public CqlIdentifier getName() {
 		return name;
 	}
 
 	@Override
-	@NonNull
 	public DataType getType() {
 		return type;
 	}
@@ -93,7 +88,7 @@ record Selector(CqlIdentifier keyspace, CqlIdentifier table, CqlIdentifier name,
 	}
 
 	@Override
-	public void attach(final @NonNull AttachmentPoint attachmentPoint) {
+	public void attach(final AttachmentPoint attachmentPoint) {
 		// A selector holds no encoded value of its own, so there is nothing to re-attach.
 	}
 

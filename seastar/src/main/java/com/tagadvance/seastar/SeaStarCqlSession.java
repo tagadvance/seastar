@@ -51,7 +51,7 @@ public class SeaStarCqlSession implements CqlSession {
 	private final AtomicBoolean closed = new AtomicBoolean();
 	private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
 
-	public SeaStarCqlSession(final @NonNull SeaStarDriverContext context,
+	public SeaStarCqlSession(final SeaStarDriverContext context,
 		final @Nullable CqlIdentifier keyspace) {
 		this.context = requireNonNull(context, "context must not be null");
 		this.keyspace.set(keyspace);
@@ -97,13 +97,11 @@ public class SeaStarCqlSession implements CqlSession {
 	}
 
 	@Override
-	@NonNull
 	public String getName() {
 		return context.getSessionName();
 	}
 
 	@Override
-	@NonNull
 	public Metadata getMetadata() {
 		return context;
 	}
@@ -114,7 +112,6 @@ public class SeaStarCqlSession implements CqlSession {
 	}
 
 	@Override
-	@NonNull
 	public CompletionStage<Metadata> setSchemaMetadataEnabled(final Boolean newValue) {
 		return CompletableFuture.completedFuture(context);
 	}
@@ -127,25 +124,21 @@ public class SeaStarCqlSession implements CqlSession {
 	 * so a no-op returning the live context is the correct implementation, not a stub.
 	 */
 	@Override
-	@NonNull
 	public CompletionStage<Metadata> refreshSchemaAsync() {
 		return CompletableFuture.completedFuture(context);
 	}
 
 	@Override
-	@NonNull
 	public CompletionStage<Boolean> checkSchemaAgreementAsync() {
 		return CompletableFuture.completedFuture(true);
 	}
 
 	@Override
-	@NonNull
 	public SeaStarDriverContext getContext() {
 		return context;
 	}
 
 	@Override
-	@NonNull
 	public Optional<CqlIdentifier> getKeyspace() {
 		return Optional.ofNullable(keyspace.get());
 	}
@@ -176,7 +169,6 @@ public class SeaStarCqlSession implements CqlSession {
 	 * @return {@link Optional#empty()}, always
 	 */
 	@Override
-	@NonNull
 	public Optional<Metrics> getMetrics() {
 		return Optional.empty();
 	}
@@ -188,7 +180,7 @@ public class SeaStarCqlSession implements CqlSession {
 	 */
 	@Override
 	public <RequestT extends Request, ResultT> ResultT execute(@NonNull final RequestT request,
-		final @NonNull GenericType<ResultT> resultType) {
+		final GenericType<ResultT> resultType) {
 		final var processor = registry.processorFor(request, resultType);
 
 		return closed.get() ? processor.newFailure(new IllegalStateException("Session is closed"))
@@ -196,7 +188,6 @@ public class SeaStarCqlSession implements CqlSession {
 	}
 
 	@Override
-	@NonNull
 	public CompletionStage<Void> closeFuture() {
 		return closeFuture;
 	}
@@ -211,7 +202,6 @@ public class SeaStarCqlSession implements CqlSession {
 	 * fidelity.
 	 */
 	@Override
-	@NonNull
 	public CompletionStage<Void> closeAsync() {
 		if (closed.compareAndSet(false, true)) {
 			closeFuture.complete(null);
@@ -225,12 +215,10 @@ public class SeaStarCqlSession implements CqlSession {
 	 * never an in-flight request to abort; a forced close is an ordinary close.
 	 */
 	@Override
-	@NonNull
 	public CompletionStage<Void> forceCloseAsync() {
 		return closeAsync();
 	}
 
-	@NonNull
 	public static SeaStarCqlSessionBuilder builder() {
 		return new SeaStarCqlSessionBuilder();
 	}
