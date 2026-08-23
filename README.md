@@ -16,9 +16,7 @@ wherever your code already takes a `CqlSession`.
    and thread safety alone is the floor, not the goal. Being safe to call from two threads does not
    make an operation atomically correct; that is what the locks are for. Each statement runs
    atomically under its keyspace's lock, so a concurrent reader never observes a half-applied
-   statement, and a `BATCH` holds the locks of every keyspace it touches for the whole batch. The
-   one deliberate carve-out — condition evaluation inside a conditional batch — is called out in
-   the support matrix.
+   statement.
 
 ## Built with AI assistance
 
