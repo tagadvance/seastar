@@ -10,8 +10,8 @@ CQL. SeaStar implements the driver's own public interfaces, so it drops in where
 takes a `CqlSession` — no Docker, no embedded node, and **a fresh database per test method for about
 6 ms**.
 
-- **Fast.** ~0.63 s from the first instruction of a cold JVM's `main` to the first query — that
-  excludes the JVM's own ~61 ms boot, which every backend pays whether or not it uses SeaStar — and
+- **Fast.** ~0.61 s from the first instruction of a cold JVM's `main` to the first query — that
+  excludes the JVM's own ~60 ms boot, which every backend pays whether or not it uses SeaStar — and
   every session after that is ~6 ms, or ~18 ms seeded with a 75-statement schema. A warm
   Testcontainers Cassandra is ~8.2 s on the same clock.
 - **Faithful.** The same 179-test fidelity suite runs in process, over a socket, and against a real
@@ -34,7 +34,7 @@ class ProductRepositoryTest {
 
     @BeforeEach
     void freshDatabase() {
-        // ~19 ms, so a new database per test method is affordable: no shared state, no TRUNCATE.
+        // ~18 ms, so a new database per test method is affordable: no shared state, no TRUNCATE.
         session = SeaStarCqlSession.builder()
             .withSchemaResource("/schema.cql", SchemaImport.LENIENT)
             .build();
@@ -70,12 +70,12 @@ exists before the container would have finished pulling.
 | | SeaStar | [Testcontainers Cassandra](https://java.testcontainers.org/modules/databases/cassandra/) | [cassandra-unit](https://github.com/jsevellec/cassandra-unit) |
 | --- | --- | --- | --- |
 | What it is | In-process implementation of `CqlSession`; CQL is parsed by `cassandra-all` and executed against an in-memory model | Real Cassandra in a Docker container | A real Cassandra node embedded in the test JVM |
-| Time to first query | **0.63 s** cold JVM; **6 ms** per subsequent session | **~8.2 s** with the image pulled, **~14.8 s** without | **~4.1 s** — embedded node boot (~2.1 s) plus schema replay and driver connect |
+| Time to first query | **0.61 s** cold JVM; **6 ms** per subsequent session | **~8.2 s** with the image pulled, **~15.0 s** without | **~4.0 s** — embedded node boot (~2.1 s) plus schema replay and driver connect |
 | Needs Docker | No | Yes | No |
 | Cassandra semantics | 5.0.8: the real parser, plus behavior verified against a `cassandra:5.0.8` node by the fidelity suite | Whatever image you pick | 3.11.5 (bundled) |
 | Driver | Implements the 4.19.3 interfaces | Any | Built against 4.3.1 |
 | Java | 17+ | Any | 8, the JDK Cassandra 3.11 supports |
-| Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests — measured at **~215-285 ms per TRUNCATE** here, against SeaStar's own **~1.3 us** (no disk, nothing to snapshot) | One node per JVM; clean-up helpers between tests |
+| Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests — measured at **~225 ms per TRUNCATE** here, against SeaStar's own **~1.35 us** (no disk, nothing to snapshot) | One node per JVM; clean-up helpers between tests |
 | Code that builds its own connection | Yes, via `seastar-server` on a loopback socket | Yes | Yes |
 | CQL coverage | Most of what an application uses; MVs, UDFs/UDAs, auth, paging and tombstones are the notable gaps — see the [support matrix](docs/support-matrix.md) | Everything | Everything in 3.11 |
 | Maintenance | Active; 1.0.0 released 2026-08 | Active | Last release January 2020, last commit September 2022 |
@@ -250,23 +250,23 @@ comparison. See "The first-instruction clock" in benchmarks.md for why that chan
 
 | | SeaStar | TestContainers Cassandra |
 | --- | --- | --- |
-| Ready for the first query (warm image) | **626 ms** | 8,189 ms |
-| Ready for the first query (cold, image not present) | 626 ms | 14,841 ms |
+| Ready for the first query (warm image) | **605 ms** | 8,169 ms |
+| Ready for the first query (cold, image not present) | 605 ms | 15,026 ms |
 | Second and subsequent sessions in the same JVM | **6.2 ms** | a second container, so ~8 s again |
 | Heap retained after 100,000 rows | **63 MB** | 1,024 MB reserved (TestContainers pins the container's heap; unconstrained, this box's own sizing formula would pick 8 GB and the node gets OOM-killed here) |
 
-Roughly **13x faster than a warm container** and **24x faster than a cold one** to first query, and
+Roughly **13.5x faster than a warm container** and **25x faster than a cold one** to first query, and
 roughly **1,320x faster** for every session after the first in the same JVM.
 
 Serving the same session over a socket costs about half a second of startup, and both the startup and
 per-statement gap are the driver and the round trip rather than SeaStar. Measured three ways in one
-sitting: **626 ms** to first query in process, **1,157 ms** over `seastar-server`, **8,189 ms** for a
+sitting: **605 ms** to first query in process, **1,152 ms** over `seastar-server`, **8,169 ms** for a
 warm TestContainers Cassandra — so even through the whole native protocol it is still 7.1x faster to
 a usable session.
 
 Per statement, steady state (JMH, not a cold-JVM harness — see benchmarks.md for why the two differ
-by an order of magnitude for the wire path): a point select costs **13.4 us** in process, **90.7 us**
-over the socket, and **167.4 us** against a real container — the wire path pays the round trip and
+by an order of magnitude for the wire path): a point select costs **12.5 us** in process, **91.3 us**
+over the socket, and **166.5 us** against a real container — the wire path pays the round trip and
 the driver's request pipeline, and the container adds a real replica write and commit log on top of
 that.
 
