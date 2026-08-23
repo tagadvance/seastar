@@ -38,7 +38,7 @@ import org.openjdk.jmh.annotations.Warmup;
  *
  * <p>The fixture is seeded in process, on the wrapped {@link #inProcess} session, using the same
  * bulk-load trick {@link BenchmarkFixture} uses (bypassing {@code INSERT}'s table scan) - seeding
- * 1 000 rows through the wire one {@code INSERT} at a time is setup cost, not what this measures.
+ * 1,000 rows through the wire one {@code INSERT} at a time is setup cost, not what this measures.
  * Every {@code @Benchmark} method below runs against {@link #session}, the driver connected through
  * the socket, which is the whole point.
  */

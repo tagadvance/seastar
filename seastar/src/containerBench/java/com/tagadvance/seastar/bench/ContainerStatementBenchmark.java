@@ -41,7 +41,7 @@ import org.testcontainers.utility.DockerImageName;
  * HANDOVER trap 4 for why TestContainers cannot share a classpath with the pinned driver.
  *
  * <p>The fixture is seeded through the driver, not the storage-model shortcut
- * {@link BenchmarkFixture} uses: there is no bypassing {@code INSERT} against a real node. 1 000
+ * {@link BenchmarkFixture} uses: there is no bypassing {@code INSERT} against a real node. 1,000
  * rows are pushed with a bounded window of async requests so setup does not dominate the run.
  */
 @BenchmarkMode(Mode.AverageTime)

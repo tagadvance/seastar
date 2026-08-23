@@ -250,17 +250,17 @@ comparison. See "The first-instruction clock" in benchmarks.md for why that chan
 
 | | SeaStar | TestContainers Cassandra |
 | --- | --- | --- |
-| Ready for the first query (warm image) | **626 ms** | 8 189 ms |
-| Ready for the first query (cold, image not present) | 626 ms | 14 841 ms |
+| Ready for the first query (warm image) | **626 ms** | 8,189 ms |
+| Ready for the first query (cold, image not present) | 626 ms | 14,841 ms |
 | Second and subsequent sessions in the same JVM | **6.2 ms** | a second container, so ~8 s again |
-| Heap retained after 100 000 rows | **63 MB** | 1 024 MB reserved (TestContainers pins the container's heap; unconstrained, this box's own sizing formula would pick 8 GB and the node gets OOM-killed here) |
+| Heap retained after 100,000 rows | **63 MB** | 1,024 MB reserved (TestContainers pins the container's heap; unconstrained, this box's own sizing formula would pick 8 GB and the node gets OOM-killed here) |
 
 Roughly **13x faster than a warm container** and **24x faster than a cold one** to first query, and
-roughly **1 320x faster** for every session after the first in the same JVM.
+roughly **1,320x faster** for every session after the first in the same JVM.
 
 Serving the same session over a socket costs about half a second of startup, and both the startup and
 per-statement gap are the driver and the round trip rather than SeaStar. Measured three ways in one
-sitting: **626 ms** to first query in process, **1 157 ms** over `seastar-server`, **8 189 ms** for a
+sitting: **626 ms** to first query in process, **1,157 ms** over `seastar-server`, **8,189 ms** for a
 warm TestContainers Cassandra — so even through the whole native protocol it is still 7.1x faster to
 a usable session.
 

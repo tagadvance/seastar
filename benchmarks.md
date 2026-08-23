@@ -57,11 +57,11 @@ Time from the first instruction of the harness to a query that has returned. Med
 | | ms | versus a warm container |
 | --- | ---: | ---: |
 | SeaStar, in process | **626** | **13.1x faster** |
-| SeaStar, over the wire (`seastar-server` and a stock driver) | **1 157** | **7.1x faster** |
-| A second SeaStar session in the same JVM | **6.2** | ~1 320x faster |
-| cassandra-unit (embedded Cassandra 3.11.5) | 4 059 | 2.0x faster |
-| TestContainers Cassandra, image already pulled | 8 189 | — |
-| TestContainers Cassandra, image not present | 14 841 (3 774 pull + ~11 067) | — |
+| SeaStar, over the wire (`seastar-server` and a stock driver) | **1,157** | **7.1x faster** |
+| A second SeaStar session in the same JVM | **6.2** | ~1,320x faster |
+| cassandra-unit (embedded Cassandra 3.11.5) | 4,059 | 2.0x faster |
+| TestContainers Cassandra, image already pulled | 8,189 | — |
+| TestContainers Cassandra, image not present | 14,841 (3,774 pull + ~11,067) | — |
 
 ("A second SeaStar session" is `build.warm` from the startup table below, 6.21 ms — building the
 session only, same convention as the previous sitting; add `query.warm`'s 0.44 ms for build-and-query.
@@ -79,21 +79,21 @@ not the difference between rows.
 ## Memory
 
 Two numbers per backend, both after the same sequence: build/boot, seed the 75-statement fixture
-schema, then load *N* rows into one extra table, *N* in {0, 1 000, 100 000}. Heap is the test JVM's
+schema, then load *N* rows into one extra table, *N* in {0, 1,000, 100,000}. Heap is the test JVM's
 own `MemoryMXBean` reading after three `System.gc()` passes, minus the same reading taken before
 anything happened; RSS is `/proc/self/status` `VmRSS` (Linux only).
 
 | backend | rows | heap used (MB) | RSS delta (MB) |
 | --- | ---: | ---: | ---: |
 | SeaStar, in process | 0 | 7.5 | 81.6 |
-| SeaStar, in process | 1 000 | 8.1 | 80.2 |
-| SeaStar, in process | 100 000 | 63.1 | 265.3 |
+| SeaStar, in process | 1,000 | 8.1 | 80.2 |
+| SeaStar, in process | 100,000 | 63.1 | 265.3 |
 | Container, driver side | 0 | 18.0 | 227.3 |
-| Container, driver side | 1 000 | 18.0 | 256.6 |
-| Container, driver side | 100 000 | 17.9 | 351.6 |
+| Container, driver side | 1,000 | 18.0 | 256.6 |
+| Container, driver side | 100,000 | 17.9 | 351.6 |
 | cassandra-unit, embedded (schema only, no row sweep) | — | 54.4 | — |
 
-SeaStar's heap grows **~0.6 MB per 1 000 rows** at low counts and **~56 MB for 100 000** — call it
+SeaStar's heap grows **~0.6 MB per 1,000 rows** at low counts and **~56 MB for 100,000** — call it
 **~560 bytes/row**, which matches the "rows are stored deserialized" note in
 [Per statement, warm](#per-statement-warm): a row is a handful of boxed `Integer`/`String`/`Double`
 objects, not a byte-packed record. The container's driver-side heap barely moves with row count (it
@@ -106,7 +106,7 @@ in-process backend — there is no second process. For the container:
 | | RSS | notes |
 | --- | ---: | --- |
 | Container process (`docker stats`) | ~2.1–2.4 GB | grows slightly with row count; single samples, not a tight range |
-| Container heap reservation (`nodetool info`, committed) | **1 024 MB** | see below |
+| Container heap reservation (`nodetool info`, committed) | **1,024 MB** | see below |
 | cassandra-unit JVM (`VmRSS`) | ~648–708 MB | one process holds both the embedded node and the test |
 
 `cassandra-env.sh`'s own formula — `max(min(RAM/2, 1 GB), min(RAM/4, 8 GB))` — would pick **8 GB**
@@ -126,7 +126,7 @@ actually governs.
 The README used to say a warm container answers a point select "in about the same millisecond" as
 SeaStar's wire path — that was one un-JITted shot from `WireStartupProbe`'s 100-sample warm median,
 unfair to both sides. Below is the real comparison: `StatementBenchmark`'s core set, run three ways
-against the same fixture (1 000 rows, `AverageTime`, 1 fork, 5 x 1 s warmup, 5 x 1 s measurement).
+against the same fixture (1,000 rows, `AverageTime`, 1 fork, 5 x 1 s warmup, 5 x 1 s measurement).
 Microseconds per operation.
 
 | benchmark | in process | wire | container |
@@ -135,8 +135,8 @@ Microseconds per operation.
 | `insertPrepared` | **14.2** | 85.9 | 177.2 |
 | `update` | **17.8** | 94.9 | 170.4 |
 | `deleteByPrimaryKey` | **15.3** | 88.6 | 162.9 |
-| `selectScan` (1 000 rows) | **676.5** | 1 214.0 | 2 961.3 |
-| `batch100` | **1 337.1** | 1 559.5 | **1 239.5** |
+| `selectScan` (1,000 rows) | **676.5** | 1,214.0 | 2,961.3 |
+| `batch100` | **1,337.1** | 1,559.5 | **1,239.5** |
 
 The wire path is 6-7x SeaStar's in-process cost for a single statement — the socket round trip and
 the driver's request pipeline, same as before — and the container adds another 1.5-2x on top of
@@ -161,7 +161,7 @@ and "steady state" in a 5 x 1 s JMH run are different things, and conflating the
 mistake goal 2's "about the same millisecond" line made once already.
 
 **Batch atomicity's cost, one sitting later:** `insertPrepared` moved 13.2 -> 14.2 us/op and
-`batch100` moved 1 257.7 -> 1 337.1 us/op since `f7d21b5` (both +6-8%) — the write-lock-for-the-whole-batch
+`batch100` moved 1,257.7 -> 1,337.1 us/op since `f7d21b5` (both +6-8%) — the write-lock-for-the-whole-batch
 change `7bbe242` shipped is exactly this shape of cost, and it is small.
 
 ### TRUNCATE's reset cost
@@ -198,13 +198,13 @@ because cassandra-unit leaves non-daemon threads running after `stopEmbeddedCass
 
 | metric | median | min-max |
 | --- | ---: | :--- |
-| `boot` — `startEmbeddedCassandra` | **2 118** | 2 081-2 153 |
+| `boot` — `startEmbeddedCassandra` | **2,118** | 2,081-2,153 |
 | `connect` — driver 4.3.1 to 127.0.0.1:9142 | **630** | 608-652 |
-| `schema` — 75 statements, replayed one at a time | **1 211** | 1 199-1 238 |
-| `main.to.first.query` | **4 059** | 4 013-4 104 |
+| `schema` — 75 statements, replayed one at a time | **1,211** | 1,199-1,238 |
+| `main.to.first.query` | **4,059** | 4,013-4,104 |
 | `query.warm` | **0.50** | 0.35-0.52 |
 | `memory.heap.used.mb` | **54.4** | 54.2-55.6 |
-| `memory.rss.kb` | **686 092** (≈670 MB) | 663 852-725 480 |
+| `memory.rss.kb` | **686,092** (≈670 MB) | 663,852-725,480 |
 
 Like the container and wire benchmarks, the schema replay is measured with the driver's schema
 debouncer shortened to 1 ms — left alone, 75 DDL statements cost **~76 seconds** here, almost
@@ -246,9 +246,9 @@ of scope — the version numbers already carry the point.
 | `query.warm` — subsequent first-queries in the same JVM | **0.44** | 0.39-0.51 |
 
 Nearly all of `query.first` is cassandra-all's CQL parser loading itself. `:seastar:parserCostBenchmark`
-measures a bare JVM that does nothing but parse one statement at **312 ms and 1 195 classes**, and
+measures a bare JVM that does nothing but parse one statement at **312 ms and 1,195 classes**, and
 reaching the parser through `QueryProcessor.parseStatement` rather than `CQLFragmentParser` would
-cost **495 ms, 1 125 more classes** — which is why `handlers.CqlParsers` calls the latter.
+cost **495 ms, 1,125 more classes** — which is why `handlers.CqlParsers` calls the latter.
 
 ### Seeded with a fixture schema
 
@@ -281,8 +281,8 @@ stock driver in front of the same in-memory session. Milliseconds, median.
 | `jvm.to.listening` | 517 |
 | `driver.connect.cold` — handshake, `system.local`, schema metadata | 504.4 |
 | `query.first` — a `CREATE KEYSPACE` over the socket | 175.3 |
-| **`main.to.first.query`** | **1 157.3** |
-| `jvm.to.first.query` | 1 199 |
+| **`main.to.first.query`** | **1,157.3** |
+| `jvm.to.first.query` | 1,199 |
 | `driver.connect.warm` — a second `CqlSession` in the same JVM | 76.1 |
 
 The driver is still the expensive part: half a second to connect is more than the whole of SeaStar's
@@ -307,7 +307,7 @@ number quoted in [cassandra-unit](#cassandra-unit) above is the shortened one.
 
 `:seastar:jmh`. `AverageTime`, 1 fork, 5 x 1 s measurement (`StatementBenchmark` warms 5 x 1 s,
 `SelectScalingBenchmark` 3 x 1 s). Microseconds per operation. Every statement with a WHERE clause
-runs against a table holding **1 000 rows**.
+runs against a table holding **1,000 rows**.
 
 | benchmark | us/op |
 | --- | ---: |
@@ -321,12 +321,12 @@ runs against a table holding **1 000 rows**.
 | `deleteByPrimaryKey` | **15.328** ± 0.622 |
 | `insertLiteral` — literal values in the CQL string | **15.910** ± 0.621 |
 | `update` — `UPDATE ... SET name = ? WHERE id = ?` | **17.773** ± 1.090 |
-| `selectScan` — `SELECT *`, all 1 000 rows | **676.454** ± 16.570 |
-| `batch100` — driver `BatchStatement` of 100 INSERTs | **1 337.101** ± 28.081 |
+| `selectScan` — `SELECT *`, all 1,000 rows | **676.454** ± 16.570 |
+| `batch100` — driver `BatchStatement` of 100 INSERTs | **1,337.101** ± 28.081 |
 
 - **`prepare` is eager**, same as before: `prepareUncached`/`prepareUncachedResolved` measure the
   same full parse (~7.5 us); `prepareCached` is a cache lookup (0.39 us).
-- `truncate()`'s first invocation empties a 1 000-row table; steady state is TRUNCATE against an
+- `truncate()`'s first invocation empties a 1,000-row table; steady state is TRUNCATE against an
   already-empty one, the same caveat `deleteByPrimaryKey` has always carried.
 - `deleteByPrimaryKey` removes the row on its first invocation, so steady state measures the parse
   and a lookup that finds nothing.
@@ -340,12 +340,12 @@ runs against a table holding **1 000 rows**.
 | rows | `selectPoint` | `selectAll` |
 | ---: | ---: | ---: |
 | 10 | 14.00 ± 1.79 | 10.22 ± 0.24 |
-| 1 000 | 14.45 ± 0.37 | 680.90 ± 51.34 |
-| 100 000 | 14.65 ± 0.62 | 102 381.90 ± 12 492.34 |
+| 1,000 | 14.45 ± 0.37 | 680.90 ± 51.34 |
+| 100,000 | 14.65 ± 0.62 | 102,381.90 ± 12,492.34 |
 
 Unchanged story from last sitting: a point lookup does not scale with the table (14.0 us at 10 rows,
-14.7 us at 100 000), so what is left is the per-statement parse cost, not the store. `selectAll`
-stays O(rows), settling at roughly **1.02 us/row** at 100 000.
+14.7 us at 100,000), so what is left is the per-statement parse cost, not the store. `selectAll`
+stays O(rows), settling at roughly **1.02 us/row** at 100,000.
 
 ## What is not benchmarked
 
@@ -392,7 +392,7 @@ the default build and their classes are not in the published jar.
 # Startup with a 75-statement fixture schema. ~20 seconds.
 ./gradlew :seastar:startupSchemaBenchmark
 
-# Heap/RSS after seeding the fixture schema and loading 0/1 000/100 000 rows. ~15 seconds.
+# Heap/RSS after seeding the fixture schema and loading 0/1,000/100,000 rows. ~15 seconds.
 ./gradlew :seastar:startupMemoryBenchmark
 
 # Standalone parser cost attribution. ~30 seconds.
@@ -410,7 +410,7 @@ the default build and their classes are not in the published jar.
 ./gradlew :seastar:containerWarmBenchmark
 ./gradlew :seastar:containerColdBenchmark
 
-# Container and driver-side memory after seeding the schema and 0/1 000/100 000 rows. Needs Docker.
+# Container and driver-side memory after seeding the schema and 0/1,000/100,000 rows. Needs Docker.
 # ~1 minute.
 ./gradlew :seastar:containerMemoryBenchmark
 
