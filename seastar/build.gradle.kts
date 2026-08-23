@@ -1,3 +1,5 @@
+import org.gradle.jvm.toolchain.JavaToolchainService
+
 plugins {
     id("seastar.java-conventions")
     id("seastar.benchmark-conventions")
@@ -196,6 +198,56 @@ tasks.register<JavaExec>("containerTurnaroundBenchmark") {
     classpath = containerBench.runtimeClasspath
     systemProperty("logback.configurationFile", logbackConfiguration)
     args("com.tagadvance.seastar.bench.ContainerStatementBenchmark")
+    usesService(benchmarkExclusivity)
+}
+
+// M4: cassandra-unit, isolated from every other classpath in this build. cassandra-all 3.11.5 and
+// driver 4.3.1, both bundled by cassandra-unit, would shadow the pinned 5.0.8/4.19.3 versions the
+// same way TestContainers' 3.x driver does (HANDOVER trap 4), so this source set gets its own
+// configurations extending nothing, and depends on nothing from :seastar itself - see
+// CassandraUnitProbe's javadoc for why it duplicates rather than reuses BenchmarkSchema/Metrics.
+val cassandraUnitBench: SourceSet by sourceSets.creating
+
+dependencies {
+    "cassandraUnitBenchImplementation"("org.cassandraunit:cassandra-unit:4.3.1.0")
+    // cassandra-unit declares java-driver-core <optional>true</optional> - it needs to be added
+    // by hand, at the exact version its own POM pins (cu.cassandra.driver.version).
+    "cassandraUnitBenchImplementation"("com.datastax.oss:java-driver-core:4.3.1")
+}
+
+val javaToolchains = extensions.getByType<JavaToolchainService>()
+
+// Cassandra 3.11 runs on JDK 8 only, so the probe is RUN on a JDK 8 toolchain that foojay
+// downloads on first use (see the task below). Compiling with an actual JDK 8 javac turned out not
+// to work - it predates the --release flag Gradle's toolchain compiler support always passes - so
+// this compiles with the build's normal (17) compiler using -source/-target 8 instead, exactly the
+// fallback the brief calls for. The probe is simple enough that the difference is invisible.
+tasks.named<JavaCompile>("compileCassandraUnitBenchJava") {
+    // seastar.java-conventions sets options.release = 17 for every JavaCompile task; --release and
+    // -source/-target cannot be combined, so it has to be cleared here rather than just appended to.
+    options.release = null
+    options.compilerArgs.addAll(listOf("-source", "8", "-target", "8"))
+}
+
+// ColdJvmBenchmark itself still runs on this build's normal JDK (the jmh classpath, so the same
+// class every other cold-JVM task uses); only the forked child - CassandraUnitProbe - runs under a
+// JDK 8 launcher with its own classpath, via the probe.javaLauncher/probe.classpath overrides
+// ColdJvmBenchmark reads. Resolved directly in this registration block, not in doFirst: tasks.register
+// already defers the block until the task is actually requested, and doFirst would capture a live
+// JavaToolchainService reference, which the configuration cache rejects.
+tasks.register<JavaExec>("cassandraUnitBenchmark") {
+    description = "cassandra-unit startup/schema/memory/compatibility, one fresh JDK 8 JVM per " +
+        "sample. Downloads a JDK 8 toolchain via foojay on first run."
+    group = "benchmark"
+    mainClass = "com.tagadvance.seastar.bench.ColdJvmBenchmark"
+    classpath = sourceSets["jmh"].runtimeClasspath
+    systemProperty("logback.configurationFile", logbackConfiguration)
+    systemProperty("probe.classpath", cassandraUnitBench.runtimeClasspath.asPath)
+    val jdk8 = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(8)
+    }.get()
+    systemProperty("probe.javaLauncher", jdk8.executablePath.asFile.absolutePath)
+    args("com.tagadvance.seastar.bench.CassandraUnitProbe", "5")
     usesService(benchmarkExclusivity)
 }
 

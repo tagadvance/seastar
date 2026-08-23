@@ -78,13 +78,19 @@ public final class ColdJvmBenchmark {
 	private static Map<String, Double> run(final String probe, final List<String> probeArgs)
 		throws IOException, InterruptedException {
 		final var command = new ArrayList<String>();
-		command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+		final var launcher = System.getProperty("probe.javaLauncher");
+		command.add(launcher != null ? launcher
+			: Path.of(System.getProperty("java.home"), "bin", "java").toString());
 		final var logback = System.getProperty("logback.configurationFile");
 		if (logback != null) {
 			command.add("-Dlogback.configurationFile=" + logback);
 		}
 		command.add("-cp");
-		command.add(System.getProperty("java.class.path"));
+		// A probe that needs its own classpath - cassandra-unit's JDK 8 probe, isolated from
+		// everything this JVM (running on a modern JDK, for every other probe) has loaded - passes
+		// probe.classpath rather than reusing this process's own.
+		final var classpath = System.getProperty("probe.classpath");
+		command.add(classpath != null ? classpath : System.getProperty("java.class.path"));
 		command.add(probe);
 		command.addAll(probeArgs);
 
