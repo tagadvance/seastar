@@ -24,7 +24,7 @@ plugins {
 // The groupId is settled: `com.tagadvance` is verified on the Central Portal and 1.0.0-alpha
 // shipped under it, so changing it now would orphan every published coordinate.
 group = "com.tagadvance"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()

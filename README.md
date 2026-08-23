@@ -24,7 +24,7 @@ takes a `CqlSession` — no Docker, no embedded node, and **a fresh database per
 ## Quickstart
 
 ```kotlin
-testImplementation("com.tagadvance:seastar:1.0.0")
+testImplementation("com.tagadvance:seastar:1.0.1")
 ```
 
 ```java
@@ -78,7 +78,7 @@ exists before the container would have finished pulling.
 | Fresh database per test | A new session, ~6 ms | A new container, ~8 s; in practice one container per class and `TRUNCATE` between tests — measured at **~225 ms per TRUNCATE** here, against SeaStar's own **~1.35 us** (no disk, nothing to snapshot) | One node per JVM; clean-up helpers between tests |
 | Code that builds its own connection | Yes, via `seastar-server` on a loopback socket | Yes | Yes |
 | CQL coverage | Most of what an application uses; MVs, UDFs/UDAs, auth, paging and tombstones are the notable gaps — see the [support matrix](docs/support-matrix.md) | Everything | Everything in 3.11 |
-| Maintenance | Active; 1.0.0 released 2026-08 | Active | Last release January 2020, last commit September 2022 |
+| Maintenance | Active; 1.0.1 released 2026-08 | Active | Last release January 2020, last commit September 2022 |
 
 **When not to use SeaStar:** when the behavior under test *is* the database — tombstones and
 compaction, paging, consistency levels, multi-node topology, materialized views, UDFs. SeaStar
@@ -116,7 +116,7 @@ Cassandra's exact wording, which is the one place the two are allowed to differ.
 
 ## Install
 
-The current release is `1.0.0`, on Maven Central.
+The current release is `1.0.1`, on Maven Central.
 
 There are two artifacts, and **most people need only the first**. Take `seastar-server` only if the
 code under test builds its own `CqlSession` from a host and a port and cannot be handed one — because
@@ -129,8 +129,8 @@ it is another process, another language, or a framework that owns the connection
 
 **Gradle**
 ```kotlin
-testImplementation("com.tagadvance:seastar:1.0.0")
-testImplementation("com.tagadvance:seastar-server:1.0.0") // only if you need a socket
+testImplementation("com.tagadvance:seastar:1.0.1")
+testImplementation("com.tagadvance:seastar-server:1.0.1") // only if you need a socket
 ```
 
 **Maven**
@@ -138,7 +138,7 @@ testImplementation("com.tagadvance:seastar-server:1.0.0") // only if you need a 
 <dependency>
     <groupId>com.tagadvance</groupId>
     <artifactId>seastar</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <scope>test</scope>
 </dependency>
 
@@ -146,7 +146,7 @@ testImplementation("com.tagadvance:seastar-server:1.0.0") // only if you need a 
 <dependency>
     <groupId>com.tagadvance</groupId>
     <artifactId>seastar-server</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <scope>test</scope>
 </dependency>
 ```

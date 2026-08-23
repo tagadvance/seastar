@@ -3,6 +3,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From `1.0.0` the public
 API is stable, and a change that breaks it is called out here explicitly.
 
+## [1.0.1] - 2026-08-23
+
+### Changed
+
+- The INSERT translation path no longer builds `java.util.stream` pipelines per statement.
+  Profiling a 100-statement `BatchStatement` showed stream pipeline setup as the single largest
+  cost, ahead of the ANTLR re-parse of each child; the hot paths in `InsertHandler`,
+  `Modifications` and `Target` now use plain loops. A prepared INSERT drops from 14.4 to
+  9.7 us/op and the 100-statement batch from 1,337 to 930 us/op in process - past the
+  `cassandra:5.0.8` container's 1,240 us/op, which had been the one table row where the container
+  beat SeaStar. No behavior change; `benchmarks.md` was re-measured in full in one sitting.
+
 ## [1.0.0] - 2026-08-23
 
 The first stable release. The public API is the one the alpha shipped; what changed since is
