@@ -213,7 +213,7 @@ class SeaStarPreparedStatement implements PreparedStatement {
 	@Override
 	public @NonNull BoundStatement bind(final Object @NonNull ... values) {
 		final var variables = getVariableDefinitions();
-		if (variables.size() > 0 && values.length > variables.size()) {
+		if (values.length > variables.size()) {
 			throw new IllegalArgumentException(
 				"Too many variables (expected %d, got %d)".formatted(variables.size(), values.length));
 		}

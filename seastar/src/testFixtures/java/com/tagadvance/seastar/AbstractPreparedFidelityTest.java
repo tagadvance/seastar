@@ -111,6 +111,10 @@ public abstract class AbstractPreparedFidelityTest extends AbstractFidelityTest 
 
 		final var prepared = session.prepare("INSERT INTO meta.people (id, name) VALUES (?, ?)");
 		assertThrows(IllegalArgumentException.class, () -> prepared.bind(ANN_ID, "Ann", "extra"));
+
+		// Also with no markers at all: zero declared variables still bounds the value count.
+		final var noMarkers = session.prepare("SELECT * FROM meta.people");
+		assertThrows(IllegalArgumentException.class, () -> noMarkers.bind("extra"));
 	}
 
 	private void createSimpleTable() {
