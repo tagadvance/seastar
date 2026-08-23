@@ -80,7 +80,7 @@ try (var session = SeaStarCqlSession.builder()
             CREATE KEYSPACE shop WITH replication =
                 {'class': 'SimpleStrategy', 'replication_factor': 1};
             CREATE TABLE shop.products (id int PRIMARY KEY, name text);
-            """)
+            """, SchemaImport.LENIENT)
         .build()) {
     session.execute("INSERT INTO shop.products (id, name) VALUES (1, 'Widget')");
 
@@ -90,11 +90,13 @@ try (var session = SeaStarCqlSession.builder()
 ```
 
 `withSchemaFile(Path)` and `withSchemaResource(String)` do the same from a file or a classpath
-resource. To seed from a `DESCRIBE SCHEMA` dump taken off a live cluster, pass
-`SchemaImport.LENIENT` as a second argument: statements SeaStar refuses (materialized views,
-functions, aggregates) are logged and skipped instead of failing the build, and table options
-Cassandra itself has removed are stripped. For a fixture that is easier to build in Java than in CQL, populate the model directly
-through `getContext()` instead:
+resource. `SchemaImport.LENIENT` is what lets a `DESCRIBE SCHEMA` dump taken off a live cluster
+seed as-is: statements SeaStar refuses (materialized views, functions, aggregates) are logged and
+skipped instead of failing the build, and table options Cassandra itself has removed are stripped.
+Leave the argument off for strict mode, where the first statement that fails fails the build - the
+better choice for CQL you wrote by hand, since a typo is then an error rather than a warning. For a
+fixture that is easier to build in Java than in CQL, populate the model directly through
+`getContext()` instead:
 
 ```java
 try (var session = SeaStarCqlSession.builder().build()) {
@@ -115,7 +117,9 @@ When the code under test cannot be given a `CqlSession`, `seastar-server` puts t
 session behind Cassandra's native protocol. That is the whole harness:
 
 ```java
-try (var session = SeaStarCqlSession.builder().withSchemaResource("/schema.cql").build();
+try (var session = SeaStarCqlSession.builder()
+         .withSchemaResource("/schema.cql", SchemaImport.LENIENT)
+         .build();
      var server = SeaStarProtocolServer.builder().session(session).build().start()) {
 
     var contactPoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), server.port());
