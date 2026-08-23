@@ -6,6 +6,7 @@ import com.datastax.oss.driver.api.core.cql.ExecutionInfo;
 import com.datastax.oss.driver.api.core.cql.QueryTrace;
 import com.datastax.oss.driver.api.core.cql.Statement;
 import com.datastax.oss.driver.api.core.metadata.Node;
+import com.datastax.oss.driver.api.core.session.Request;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
@@ -35,6 +36,16 @@ class SeaStarExecutionInfo implements ExecutionInfo {
 	}
 
 	@Override
+	public Request getRequest() {
+		return statement;
+	}
+
+	/**
+	 * @deprecated the driver deprecated this in favor of {@link #getRequest()}; it stays because
+	 * the interface still declares it abstract.
+	 */
+	@Override
+	@Deprecated
 	public Statement<?> getStatement() {
 		return statement;
 	}
