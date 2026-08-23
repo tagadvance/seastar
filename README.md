@@ -12,7 +12,12 @@ wherever your code already takes a `CqlSession`.
    trade-off.
 2. **Startup time**, to be a viable alternative to a per-test-class container. See
    [Benchmarks](#benchmarks) below.
-3. All code is thread-safe unless a class is explicitly documented otherwise.
+3. **Concurrency.** All code is thread-safe unless a class is explicitly documented otherwise —
+   and thread safety alone is the floor, not the goal. Being safe to call from two threads does not
+   make an operation atomically correct; that is what the locks are for. Each statement runs
+   atomically under its keyspace's lock, so a concurrent reader never observes a half-applied
+   statement. What is deliberately not atomic — a multi-statement `BATCH` — is called out in the
+   support matrix.
 
 ## Built with AI assistance
 
