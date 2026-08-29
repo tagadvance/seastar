@@ -5,6 +5,10 @@
 [![release](https://img.shields.io/github/v/release/tagadvance/seastar)](https://github.com/tagadvance/seastar/releases/latest)
 [![license](https://img.shields.io/github/license/tagadvance/seastar)](LICENSE)
 
+> **TL;DR** — Use SeaStar anywhere you would otherwise mock a `CqlSession`. You get real CQL
+> parsing and a real result set instead of a stubbed one, for about the cost of the mock. Keep
+> Testcontainers for the merge and nightly runs.
+
 An in-memory implementation of the DataStax Java driver's `CqlSession`, for tests that exercise
 CQL. SeaStar implements the driver's own public interfaces, so it drops in wherever your code already
 takes a `CqlSession` — no Docker, no embedded node, and **a fresh database per test method for about
